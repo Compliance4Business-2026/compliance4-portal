@@ -1,0 +1,23 @@
+{
+    "The Marx Ventures": [
+        "Purchase: Beverages",
+        "Purchase: Raw Materials",
+        "Purchase: Food & Groceries",
+        "Packaging Supplies",
+        "Kitchen Consumables",
+        "Freight & Delivery Inward"
+    ],
+    "Indbuy Global Pvt Ltd": [
+        "Trading Goods Purchase",
+        "Freight & Forwarding Charges",
+        "Warehouse Storage Expense",
+        "Office Supplies Expense",
+        "Printing & Stationery"
+    ],
+    "Default Client": [
+        "Purchase Account",
+        "Office Supplies Expense",
+        "Repairs & Maintenance",
+        "Miscellaneous Expenses"
+    ]
+}
