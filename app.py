@@ -387,42 +387,37 @@ else:
                         )
 
                         if resp.text:
-                            candidate_models = ['gemini-2.5-flash', 'gemini-1.5-flash', 'gemini-2.5-pro']
-                    extracted_successfully = False
+                            parsed = InvoiceExtraction.model_validate_json(resp.text)
+                            bill_entry = parsed.model_dump()
+                            bill_entry["file_name"] = file.name
+                            bill_entry["file_bytes"] = file_bytes
+                            bill_entry["mime_type"] = mime
+                            bill_entry["gst_treatment"] = "Regular"
+                            bill_entry["client_name"] = selected_client
 
-                    for mod_name in candidate_models:
-                        try:
-                            status_placeholder.text(f"Extracting ({idx + 1}/{len(uploaded_files)}): {file.name} using {mod_name}...")
-                            resp = client.models.generate_content(
-                                model=mod_name,
-                                contents=[
-                                    types.Part.from_bytes(data=file_bytes, mime_type=mime),
-                                    prompt
-                                ],
-                                config=types.GenerateContentConfig(
-                                    response_mime_type="application/json",
-                                    response_schema=InvoiceExtraction,
-                                ),
-                            )
+                            st.session_state["needs_review"].append(bill_entry)
+                            success_count += 1
+                        else:
+                            st.error(f"⚠️ Empty response returned for {file.name}")
+                    except Exception as e:
+                        st.error(f"❌ Failed to extract {file.name}: {e}")
 
-                            if resp.text:
-                                parsed = InvoiceExtraction.model_validate_json(resp.text)
-                                bill_entry = parsed.model_dump()
-                                bill_entry["file_name"] = file.name
-                                bill_entry["file_bytes"] = file_bytes
-                                bill_entry["mime_type"] = mime
-                                bill_entry["gst_treatment"] = "Regular"
-                                bill_entry["client_name"] = selected_client
+                    progress_bar.progress((idx + 1) / len(uploaded_files))
 
-                                st.session_state["needs_review"].append(bill_entry)
-                                success_count += 1
-                                extracted_successfully = True
-                                break
-                        except Exception as model_err:
-                            continue
+                if success_count > 0:
+                    st.session_state["active_review_index"] = 0
+                    st.rerun()
 
-                    if not extracted_successfully:
-                        st.error(f"❌ Failed to extract {file.name}: Google API is temporarily congested across all models. Please retry in a few moments.")
+    # TAB 2: NEEDS REVIEW
+    with tab_review:
+        st.subheader("Invoices Pending Review & Ledger Verification")
+        if not st.session_state["needs_review"]:
+            st.info("No bills pending review. Upload invoices in the 'Bill Uploads' tab.")
+        else:
+            for idx, item in enumerate(st.session_state["needs_review"]):
+                c1, c2, c3, c4 = st.columns([4, 2, 2, 2])
+                with c1:
+                    st.write(f"**{item['vendor_name']}**")
                     st.caption(f"Client: {item.get('client_name', 'General')} | {item['file_name']} | Inv #{item['invoice_number']}")
                 with c2:
                     st.write(f"Date: **{item['invoice_date']}**")
