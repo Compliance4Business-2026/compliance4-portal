@@ -8,6 +8,7 @@ import io
 import json
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from PIL import Image
 
 # 1. Page Config & Custom Styling
@@ -199,6 +200,61 @@ def generate_tally_xml(approved_bills):
 </ENVELOPE>"""
     return xml
 
+# Helper function to compress images before API upload
+def optimize_file(file_name, raw_bytes):
+    ext = file_name.lower().split('.')[-1]
+    if ext in ['jpg', 'jpeg', 'png']:
+        try:
+            img = Image.open(io.BytesIO(raw_bytes))
+            if img.mode in ("RGBA", "P"):
+                img = img.convert("RGB")
+            img.thumbnail((1600, 1600), Image.Resampling.LANCZOS)
+            buf = io.BytesIO()
+            img.save(buf, format="JPEG", quality=85, optimize=True)
+            return "image/jpeg", buf.getvalue()
+        except Exception:
+            return "image/jpeg", raw_bytes
+    return "application/pdf", raw_bytes
+
+# Helper worker function to extract an invoice with auto-retry
+def process_single_bill(file_name, file_bytes, mime, client, ledgers_str, client_name):
+    prompt = f"""
+    Extract invoice details accurately into structured format.
+    For each line item, assign the best matching accounting ledger strictly from this list of ledgers available for this client:
+    {ledgers_str}
+    """
+    for attempt in range(1, 4):
+        try:
+            resp = client.models.generate_content(
+                model='gemini-3.6-flash',
+                contents=[
+                    types.Part.from_bytes(data=file_bytes, mime_type=mime),
+                    prompt
+                ],
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    response_schema=InvoiceExtraction,
+                    thinking_config=types.ThinkingConfig(thinking_budget=0)
+                ),
+            )
+
+            if resp.text:
+                parsed = InvoiceExtraction.model_validate_json(resp.text)
+                bill_entry = parsed.model_dump()
+                bill_entry["file_name"] = file_name
+                bill_entry["file_bytes"] = file_bytes
+                bill_entry["mime_type"] = mime
+                bill_entry["gst_treatment"] = "Regular"
+                bill_entry["client_name"] = client_name
+                return True, bill_entry, None
+        except Exception as err:
+            err_str = str(err)
+            if ("503" in err_str or "UNAVAILABLE" in err_str) and attempt < 3:
+                time.sleep(2)
+                continue
+            return False, None, f"{file_name}: {err_str}"
+    return False, None, f"{file_name}: Google servers busy after 3 retries."
+
 # 5. Sidebar Branding & Client Selection
 if os.path.exists(LOGO_PATH):
     st.sidebar.image(LOGO_PATH, width=180)
@@ -360,62 +416,45 @@ else:
                 client = genai.Client(api_key=api_key)
                 progress_bar = st.progress(0)
                 status_placeholder = st.empty()
+                status_placeholder.text("Optimizing files and running fast extraction...")
+
+                prepared_files = []
+                for f in uploaded_files:
+                    f.seek(0)
+                    mime, optimized_bytes = optimize_file(f.name, f.read())
+                    prepared_files.append((f.name, optimized_bytes, mime))
+
+                ledgers_str = ", ".join(active_ledgers)
+                completed_count = 0
+                total_files = len(prepared_files)
                 success_count = 0
 
-                for idx, file in enumerate(uploaded_files):
-                    status_placeholder.text(f"Extracting ({idx + 1}/{len(uploaded_files)}): {file.name}...")
-                    mime = "application/pdf" if file.name.lower().endswith(".pdf") else "image/jpeg"
-                    file.seek(0)
-                    file_bytes = file.read()
+                # Process files concurrently with ThreadPoolExecutor
+                max_workers = min(4, total_files)
+                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    futures = [
+                        executor.submit(
+                            process_single_bill,
+                            fname,
+                            fbytes,
+                            fmime,
+                            client,
+                            ledgers_str,
+                            selected_client
+                        )
+                        for fname, fbytes, fmime in prepared_files
+                    ]
 
-                    prompt = f"""
-                    Extract invoice details accurately into structured format.
-                    For each line item, assign the best matching accounting ledger strictly from this list of ledgers available for this client:
-                    {', '.join(active_ledgers)}
-                    """
+                    for future in as_completed(futures):
+                        success, bill_data, err_msg = future.result()
+                        if success:
+                            st.session_state["needs_review"].append(bill_data)
+                            success_count += 1
+                        else:
+                            st.error(f"❌ {err_msg}")
 
-                    extracted = False
-                    for attempt in range(1, 4):
-                        try:
-                            resp = client.models.generate_content(
-                                model='gemini-3.6-flash',
-                                contents=[
-                                    types.Part.from_bytes(data=file_bytes, mime_type=mime),
-                                    prompt
-                                ],
-                                config=types.GenerateContentConfig(
-                                    response_mime_type="application/json",
-                                    response_schema=InvoiceExtraction,
-                                ),
-                            )
-
-                            if resp.text:
-                                parsed = InvoiceExtraction.model_validate_json(resp.text)
-                                bill_entry = parsed.model_dump()
-                                bill_entry["file_name"] = file.name
-                                bill_entry["file_bytes"] = file_bytes
-                                bill_entry["mime_type"] = mime
-                                bill_entry["gst_treatment"] = "Regular"
-                                bill_entry["client_name"] = selected_client
-
-                                st.session_state["needs_review"].append(bill_entry)
-                                success_count += 1
-                                extracted = True
-                                break
-                        except Exception as err:
-                            err_str = str(err)
-                            if "503" in err_str or "UNAVAILABLE" in err_str:
-                                status_placeholder.warning(f"Google server busy, retrying in 2 seconds (attempt {attempt}/3)...")
-                                time.sleep(2)
-                                continue
-                            else:
-                                st.error(f"❌ Error extracting {file.name}: {err_str}")
-                                break
-
-                    if not extracted:
-                        st.error(f"❌ Could not process {file.name} after retries. Google servers are temporarily under high load.")
-
-                    progress_bar.progress((idx + 1) / len(uploaded_files))
+                        completed_count += 1
+                        progress_bar.progress(completed_count / total_files)
 
                 if success_count > 0:
                     st.session_state["active_review_index"] = 0
