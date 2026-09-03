@@ -16,10 +16,10 @@ st.set_page_config(
     layout="wide"
 )
 
-# Simple Team Password Gate
+# Team Passcode Gate
 def check_password():
     def password_entered():
-        correct_password = str(st.secrets.get("APP_PASSWORD", "Compliance4@2026")).strip()
+        correct_password = str(st.secrets.get("APP_PASSWORD", "Bhargavi@2003")).strip()
         entered = st.session_state.get("password_input", "").strip()
         if entered == correct_password:
             st.session_state["password_correct"] = True
@@ -43,8 +43,6 @@ if not check_password():
     st.stop()
 
 LOGO_PATH = "logo.png"
-
-# Master File for Clients & Ledgers
 CLIENTS_FILE = "client_ledgers.json"
 
 DEFAULT_CLIENTS = {
@@ -86,7 +84,6 @@ def save_client_masters(data):
     with open(CLIENTS_FILE, "w") as f:
         json.dump(data, f, indent=4)
 
-# Load Client Masters
 client_masters = load_client_masters()
 
 GST_TREATMENTS = ["Regular", "Composition", "Unregistered", "Overseas / Import"]
@@ -203,7 +200,7 @@ def generate_tally_xml(approved_bills):
 
 # 5. Sidebar Branding & Client Selection
 if os.path.exists(LOGO_PATH):
-    st.sidebar.image(LOGO_PATH, use_container_width=True)
+    st.sidebar.image(LOGO_PATH, width=180)
 else:
     st.sidebar.title("Compliance4 Business")
 
@@ -256,7 +253,7 @@ if st.session_state["active_review_index"] is not None:
     with col_left:
         st.subheader(f"📄 {bill['file_name']}")
         if bill["mime_type"].startswith("image"):
-            st.image(bill["file_bytes"], use_container_width=True)
+            st.image(bill["file_bytes"], width=450)
         else:
             st.info("PDF document preview active")
 
@@ -347,25 +344,25 @@ else:
     # TAB 1: UPLOADS
     with tab_uploads:
         st.subheader(f"Upload Purchase Invoices for: {selected_client}")
-        # TAB 1: UPLOADS
-    with tab_uploads:
-        st.subheader(f"Upload Purchase Invoices for: {selected_client}")
         uploaded_files = st.file_uploader(
             "Upload Bills (PDF, JPG, PNG)",
             type=["pdf", "jpg", "jpeg", "png"],
             accept_multiple_files=True,
-            key="bill_uploader"
+            key="bill_uploader_field"
         )
 
         if not api_key:
-            st.warning("⚠️ Please provide a Gemini API Key in Streamlit Secrets or via the sidebar.")
+            st.warning("⚠️ Please provide a Gemini API Key in Streamlit Secrets or sidebar.")
 
         if uploaded_files and api_key:
             if st.button("🚀 Process Invoices for " + selected_client, type="primary"):
-                # Processing loop continues here...
+                client = genai.Client(api_key=api_key)
+                progress_bar = st.progress(0)
+                status_placeholder = st.empty()
+                success_count = 0
 
                 for idx, file in enumerate(uploaded_files):
-                    status.text(f"Extracting ({idx + 1}/{len(uploaded_files)}): {file.name}...")
+                    status_placeholder.text(f"Extracting ({idx + 1}/{len(uploaded_files)}): {file.name}...")
                     mime = "application/pdf" if file.name.lower().endswith(".pdf") else "image/jpeg"
                     file.seek(0)
                     file_bytes = file.read()
@@ -401,17 +398,16 @@ else:
                             st.session_state["needs_review"].append(bill_entry)
                             success_count += 1
                         else:
-                            st.error(f"⚠️ Model returned an empty response for {file.name}")
+                            st.error(f"⚠️ Empty response returned for {file.name}")
                     except Exception as e:
                         st.error(f"❌ Failed to extract {file.name}: {e}")
 
-                    progress.progress((idx + 1) / len(uploaded_files))
+                    progress_bar.progress((idx + 1) / len(uploaded_files))
 
                 if success_count > 0:
-                    status.success(f"✅ Extracted {success_count} invoice(s)! Switch to the 'Needs Review' tab.")
+                    st.session_state["active_review_index"] = 0
                     st.rerun()
-                else:
-                    status.error("Extraction failed. Review the error details above.")
+
     # TAB 2: NEEDS REVIEW
     with tab_review:
         st.subheader("Invoices Pending Review & Ledger Verification")
