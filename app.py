@@ -8,6 +8,7 @@ import io
 import json
 import os
 import time
+import base64
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from PIL import Image
 
@@ -45,7 +46,11 @@ if not check_password():
     st.stop()
 
 LOGO_PATH = "logo.png"
+
+# Persistent File Stores
 CLIENTS_FILE = "client_ledgers.json"
+PENDING_BILLS_FILE = "pending_bills.json"
+APPROVED_BILLS_FILE = "approved_bills.json"
 
 DEFAULT_CLIENTS = {
     "The Marx Ventures": [
@@ -86,6 +91,32 @@ def save_client_masters(data):
     with open(CLIENTS_FILE, "w") as f:
         json.dump(data, f, indent=4)
 
+def load_pending_bills():
+    if os.path.exists(PENDING_BILLS_FILE):
+        try:
+            with open(PENDING_BILLS_FILE, "r") as f:
+                return json.load(f)
+        except Exception:
+            return []
+    return []
+
+def save_pending_bills(bills):
+    with open(PENDING_BILLS_FILE, "w") as f:
+        json.dump(bills, f, indent=4)
+
+def load_approved_bills():
+    if os.path.exists(APPROVED_BILLS_FILE):
+        try:
+            with open(APPROVED_BILLS_FILE, "r") as f:
+                return json.load(f)
+        except Exception:
+            return []
+    return []
+
+def save_approved_bills(bills):
+    with open(APPROVED_BILLS_FILE, "w") as f:
+        json.dump(bills, f, indent=4)
+
 client_masters = load_client_masters()
 
 GST_TREATMENTS = ["Regular", "Composition", "Unregistered", "Overseas / Import"]
@@ -115,13 +146,13 @@ class InvoiceExtraction(BaseModel):
     igst: float = Field(default=0.0, description="IGST amount")
     grand_total: float = Field(description="Grand invoice total")
 
-# 3. State Initialization
-if "needs_review" not in st.session_state:
-    st.session_state["needs_review"] = []
-if "all_bills" not in st.session_state:
-    st.session_state["all_bills"] = []
+# 3. Active Review Index
 if "active_review_index" not in st.session_state:
     st.session_state["active_review_index"] = None
+
+# Always read latest persisted data from disk
+pending_bills_list = load_pending_bills()
+approved_bills_list = load_approved_bills()
 
 # 4. Multi-Ledger Tally XML Generator
 def generate_tally_xml(approved_bills):
@@ -200,7 +231,7 @@ def generate_tally_xml(approved_bills):
 </ENVELOPE>"""
     return xml
 
-# Image optimization
+# Helper function to optimize and base64-encode image files
 def optimize_file(file_name, raw_bytes):
     ext = file_name.lower().split('.')[-1]
     if ext in ['jpg', 'jpeg', 'png']:
@@ -216,7 +247,7 @@ def optimize_file(file_name, raw_bytes):
             return "image/jpeg", raw_bytes
     return "application/pdf", raw_bytes
 
-# Worker function with clean config
+# Worker function for single invoice extraction
 def process_single_bill(file_name, file_bytes, mime, client, ledgers_str, client_name):
     prompt = f"""
     Extract invoice details accurately into structured format.
@@ -241,7 +272,8 @@ def process_single_bill(file_name, file_bytes, mime, client, ledgers_str, client
                 parsed = InvoiceExtraction.model_validate_json(resp.text)
                 bill_entry = parsed.model_dump()
                 bill_entry["file_name"] = file_name
-                bill_entry["file_bytes"] = file_bytes
+                # Persist bytes as base64 string for JSON compatibility
+                bill_entry["file_base64"] = base64.b64encode(file_bytes).decode("utf-8")
                 bill_entry["mime_type"] = mime
                 bill_entry["gst_treatment"] = "Regular"
                 bill_entry["client_name"] = client_name
@@ -278,28 +310,31 @@ selected_client = st.sidebar.selectbox("🏢 Active Client / Company", options=c
 active_ledgers = client_masters.get(selected_client, ["Purchase Account"])
 
 # --- DETAIL REVIEW SCREEN ---
-if st.session_state["active_review_index"] is not None:
+if st.session_state["active_review_index"] is not None and st.session_state["active_review_index"] < len(pending_bills_list):
     idx = st.session_state["active_review_index"]
-    bill = st.session_state["needs_review"][idx]
+    bill = pending_bills_list[idx]
 
     top_c1, top_c2 = st.columns([8, 2])
     with top_c1:
-        if st.button("← Back to List"):
+        if st.button("← Back to Pending List"):
             st.session_state["active_review_index"] = None
             st.rerun()
     with top_c2:
         col_del, col_app = st.columns(2)
         with col_del:
             if st.button("🗑️ Delete Bill", type="secondary"):
-                st.session_state["needs_review"].pop(idx)
+                pending_bills_list.pop(idx)
+                save_pending_bills(pending_bills_list)
                 st.session_state["active_review_index"] = None
                 st.rerun()
         with col_app:
             if st.button("✅ Approve", type="primary"):
-                approved_entry = st.session_state["needs_review"].pop(idx)
-                st.session_state["all_bills"].append(approved_entry)
+                approved_entry = pending_bills_list.pop(idx)
+                approved_bills_list.append(approved_entry)
+                save_pending_bills(pending_bills_list)
+                save_approved_bills(approved_bills_list)
                 st.session_state["active_review_index"] = None
-                st.success("Invoice Approved!")
+                st.success("Invoice Approved & Saved!")
                 st.rerun()
 
     st.divider()
@@ -308,10 +343,12 @@ if st.session_state["active_review_index"] is not None:
 
     with col_left:
         st.subheader(f"📄 {bill['file_name']}")
-        if bill["mime_type"].startswith("image"):
-            st.image(bill["file_bytes"], width=450)
-        else:
-            st.info("PDF document preview active")
+        if bill.get("file_base64"):
+            img_bytes = base64.b64decode(bill["file_base64"])
+            if bill.get("mime_type", "").startswith("image"):
+                st.image(img_bytes, width=450)
+            else:
+                st.info("PDF document preview active")
 
     with col_right:
         st.subheader("Invoice Header & Tax Details")
@@ -320,16 +357,18 @@ if st.session_state["active_review_index"] is not None:
         
         r1_c1, r1_c2 = st.columns(2)
         with r1_c1:
-            bill["gst_treatment"] = st.selectbox("GST Treatment", GST_TREATMENTS, index=0)
+            curr_gst = bill.get("gst_treatment", "Regular")
+            gst_idx = GST_TREATMENTS.index(curr_gst) if curr_gst in GST_TREATMENTS else 0
+            bill["gst_treatment"] = st.selectbox("GST Treatment", GST_TREATMENTS, index=gst_idx)
         with r1_c2:
-            bill["vendor_gstin"] = st.text_input("GSTIN", value=bill["vendor_gstin"])
+            bill["vendor_gstin"] = st.text_input("GSTIN", value=bill.get("vendor_gstin", ""))
 
         r2_c1, r2_c2 = st.columns(2)
         with r2_c1:
-            src_idx = STATES.index(bill["source_state"]) if bill["source_state"] in STATES else 0
+            src_idx = STATES.index(bill["source_state"]) if bill.get("source_state") in STATES else 0
             bill["source_state"] = st.selectbox("Source of Supply", STATES, index=src_idx)
         with r2_c2:
-            dest_idx = STATES.index(bill["destination_state"]) if bill["destination_state"] in STATES else 0
+            dest_idx = STATES.index(bill["destination_state"]) if bill.get("destination_state") in STATES else 0
             bill["destination_state"] = st.selectbox("Destination of Supply", STATES, index=dest_idx)
 
         st.subheader(f"Item Details ({selected_client} Ledgers)")
@@ -372,12 +411,19 @@ if st.session_state["active_review_index"] is not None:
         with t_c3:
             bill["igst"] = st.number_input("IGST (₹)", value=float(bill["igst"]), step=1.0)
 
-        bill["narration"] = st.text_area("Narration", value=f"Purchase from {bill['vendor_name']} via Inv #{bill['invoice_number']}")
+        bill["narration"] = st.text_area(
+            "Narration",
+            value=bill.get("narration", f"Purchase from {bill['vendor_name']} via Inv #{bill['invoice_number']}")
+        )
 
         subtotal = sum([float(row.get("amount", 0.0)) for row in bill["items"]])
         grand_total = subtotal + bill["cgst"] + bill["sgst"] + bill["igst"]
         bill["subtotal"] = subtotal
         bill["grand_total"] = grand_total
+
+        # Save active edits directly to disk
+        pending_bills_list[idx] = bill
+        save_pending_bills(pending_bills_list)
 
         st.markdown(f"""
         <div style="background-color: #f0f2f6; padding: 15px; border-radius: 8px; margin-top: 10px;">
@@ -388,12 +434,16 @@ if st.session_state["active_review_index"] is not None:
 
 # --- MAIN DASHBOARD TABS ---
 else:
+    # Reset review pointer if list changed
+    if st.session_state["active_review_index"] is not None:
+        st.session_state["active_review_index"] = None
+
     st.markdown('<h1 style="color: #1a2a4b; margin-bottom: 0;">Compliance4 Business</h1><p style="color: #4a5568; font-size: 1.1rem; margin-top: -5px;">Automated Purchases & Tally Integration Portal</p>', unsafe_allow_html=True)
 
     tab_uploads, tab_review, tab_all, tab_settings = st.tabs([
         "📤 Bill Uploads",
-        f"📝 Needs Review ({len(st.session_state['needs_review'])})",
-        f"✅ All Bills ({len(st.session_state['all_bills'])})",
+        f"📝 Needs Review ({len(pending_bills_list)})",
+        f"✅ All Bills ({len(approved_bills_list)})",
         "⚙️ Client Master Settings"
     ])
 
@@ -426,7 +476,7 @@ else:
                 ledgers_str = ", ".join(active_ledgers)
                 completed_count = 0
                 total_files = len(prepared_files)
-                success_count = 0
+                newly_extracted = []
 
                 max_workers = min(4, total_files)
                 with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -446,32 +496,34 @@ else:
                     for future in as_completed(futures):
                         success, bill_data, err_msg = future.result()
                         if success:
-                            st.session_state["needs_review"].append(bill_data)
-                            success_count += 1
+                            newly_extracted.append(bill_data)
                         else:
                             st.error(f"❌ {err_msg}")
 
                         completed_count += 1
                         progress_bar.progress(completed_count / total_files)
 
-                if success_count > 0:
-                    st.session_state["active_review_index"] = 0
+                if newly_extracted:
+                    pending_bills_list.extend(newly_extracted)
+                    save_pending_bills(pending_bills_list)
+                    status_placeholder.success(f"✅ Added {len(newly_extracted)} invoice(s) to 'Needs Review'!")
+                    time.sleep(1)
                     st.rerun()
 
     # TAB 2: NEEDS REVIEW
     with tab_review:
         st.subheader("Invoices Pending Review & Ledger Verification")
-        if not st.session_state["needs_review"]:
-            st.info("No bills pending review. Upload invoices in the 'Bill Uploads' tab.")
+        if not pending_bills_list:
+            st.info("No bills pending review. Invoices uploaded at the office will appear here automatically.")
         else:
-            for idx, item in enumerate(st.session_state["needs_review"]):
+            for idx, item in enumerate(pending_bills_list):
                 c1, c2, c3, c4 = st.columns([4, 2, 2, 2])
                 with c1:
                     st.write(f"**{item['vendor_name']}**")
                     st.caption(f"Client: {item.get('client_name', 'General')} | {item['file_name']} | Inv #{item['invoice_number']}")
                 with c2:
                     st.write(f"Date: **{item['invoice_date']}**")
-                    st.caption(f"GSTIN: {item['vendor_gstin']}")
+                    st.caption(f"GSTIN: {item.get('vendor_gstin', '')}")
                 with c3:
                     st.write(f"Subtotal: ₹{item['subtotal']:,.2f}")
                     st.caption(f"Total: ₹{item['grand_total']:,.2f}")
@@ -484,17 +536,17 @@ else:
     # TAB 3: ALL BILLS (APPROVED)
     with tab_all:
         st.subheader("Approved Invoices (Ready for Tally / Excel Export)")
-        if not st.session_state["all_bills"]:
-            st.info("No approved bills yet. Approve bills from the 'Needs Review' tab.")
+        if not approved_bills_list:
+            st.info("No approved bills yet. Approved bills will sync here in real time.")
         else:
             summary_rows = []
             itemized_rows = []
 
-            for b in st.session_state["all_bills"]:
+            for b in approved_bills_list:
                 summary_rows.append({
                     "Client": b.get("client_name", ""),
                     "Vendor Name": b["vendor_name"],
-                    "GSTIN": b["vendor_gstin"],
+                    "GSTIN": b.get("vendor_gstin", ""),
                     "Invoice No": b["invoice_number"],
                     "Date": b["invoice_date"],
                     "Taxable Subtotal (₹)": b["subtotal"],
@@ -526,7 +578,7 @@ else:
                 df_summary.to_excel(writer, sheet_name="Invoice Summary", index=False)
                 df_items_approved.to_excel(writer, sheet_name="Item-Wise Ledgers", index=False)
 
-            exp_c1, exp_c2 = st.columns(2)
+            exp_c1, exp_c2, exp_c3 = st.columns(3)
             with exp_c1:
                 st.download_button(
                     label="📥 Download Approved Excel Register",
@@ -535,13 +587,19 @@ else:
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
             with exp_c2:
-                xml_data = generate_tally_xml(st.session_state["all_bills"])
+                xml_data = generate_tally_xml(approved_bills_list)
                 st.download_button(
                     label="📥 Download Multi-Ledger Tally XML",
                     data=xml_data,
                     file_name="Approved_Tally_Import.xml",
                     mime="application/xml"
                 )
+            with exp_c3:
+                if st.button("🧹 Clear Exported Bills"):
+                    approved_bills_list = []
+                    save_approved_bills(approved_bills_list)
+                    st.success("Approved register cleared for next batch!")
+                    st.rerun()
 
     # TAB 4: CLIENT MASTER SETTINGS
     with tab_settings:
