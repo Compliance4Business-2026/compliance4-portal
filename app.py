@@ -200,7 +200,7 @@ def generate_tally_xml(approved_bills):
 </ENVELOPE>"""
     return xml
 
-# Helper function to compress images before API upload
+# Image optimization
 def optimize_file(file_name, raw_bytes):
     ext = file_name.lower().split('.')[-1]
     if ext in ['jpg', 'jpeg', 'png']:
@@ -216,7 +216,7 @@ def optimize_file(file_name, raw_bytes):
             return "image/jpeg", raw_bytes
     return "application/pdf", raw_bytes
 
-# Helper worker function to extract an invoice with auto-retry
+# Worker function with clean config
 def process_single_bill(file_name, file_bytes, mime, client, ledgers_str, client_name):
     prompt = f"""
     Extract invoice details accurately into structured format.
@@ -234,7 +234,6 @@ def process_single_bill(file_name, file_bytes, mime, client, ledgers_str, client
                 config=types.GenerateContentConfig(
                     response_mime_type="application/json",
                     response_schema=InvoiceExtraction,
-                    thinking_config=types.ThinkingConfig(thinking_budget=0)
                 ),
             )
 
@@ -416,7 +415,7 @@ else:
                 client = genai.Client(api_key=api_key)
                 progress_bar = st.progress(0)
                 status_placeholder = st.empty()
-                status_placeholder.text("Optimizing files and running fast extraction...")
+                status_placeholder.text("Extracting invoice data...")
 
                 prepared_files = []
                 for f in uploaded_files:
@@ -429,7 +428,6 @@ else:
                 total_files = len(prepared_files)
                 success_count = 0
 
-                # Process files concurrently with ThreadPoolExecutor
                 max_workers = min(4, total_files)
                 with ThreadPoolExecutor(max_workers=max_workers) as executor:
                     futures = [
