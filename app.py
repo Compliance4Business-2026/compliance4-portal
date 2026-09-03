@@ -7,6 +7,7 @@ from typing import List, Optional
 import io
 import json
 import os
+import time
 from PIL import Image
 
 # 1. Page Config & Custom Styling
@@ -374,12 +375,10 @@ else:
                     """
 
                     extracted = False
-                    candidate_models = ['gemini-3.6-flash', 'gemini-2.0-flash', 'gemini-1.5-flash']
-
-                    for model_name in candidate_models:
+                    for attempt in range(1, 4):
                         try:
                             resp = client.models.generate_content(
-                                model=model_name,
+                                model='gemini-3.6-flash',
                                 contents=[
                                     types.Part.from_bytes(data=file_bytes, mime_type=mime),
                                     prompt
@@ -406,13 +405,15 @@ else:
                         except Exception as err:
                             err_str = str(err)
                             if "503" in err_str or "UNAVAILABLE" in err_str:
+                                status_placeholder.warning(f"Google server busy, retrying in 2 seconds (attempt {attempt}/3)...")
+                                time.sleep(2)
                                 continue
                             else:
-                                st.error(f"❌ Error with {model_name} on {file.name}: {err_str}")
+                                st.error(f"❌ Error extracting {file.name}: {err_str}")
                                 break
 
                     if not extracted:
-                        st.error(f"❌ Could not process {file.name}. Google API capacity is busy. Please retry in a moment.")
+                        st.error(f"❌ Could not process {file.name} after retries. Google servers are temporarily under high load.")
 
                     progress_bar.progress((idx + 1) / len(uploaded_files))
 
