@@ -18,9 +18,12 @@ st.set_page_config(
 # Simple Team Password Gate
 def check_password():
     def password_entered():
-        if st.session_state["password_input"] == "Compliance4@2026":  # Set your firm's secret password here
+        correct_password = str(st.secrets.get("APP_PASSWORD", "Compliance4@2026")).strip()
+        entered = st.session_state.get("password_input", "").strip()
+        if entered == correct_password:
             st.session_state["password_correct"] = True
-            del st.session_state["password_input"]
+            if "password_input" in st.session_state:
+                del st.session_state["password_input"]
         else:
             st.session_state["password_correct"] = False
 
@@ -34,7 +37,6 @@ def check_password():
         st.error("Incorrect passcode. Please try again.")
         return False
     return True
-
 if not check_password():
     st.stop()
 LOGO_PATH = "logo.png"
