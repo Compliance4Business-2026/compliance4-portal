@@ -15,7 +15,28 @@ st.set_page_config(
     page_icon="💼",
     layout="wide"
 )
+# Simple Team Password Gate
+def check_password():
+    def password_entered():
+        if st.session_state["password_input"] == "Compliance4@2026":  # Set your firm's secret password here
+            st.session_state["password_correct"] = True
+            del st.session_state["password_input"]
+        else:
+            st.session_state["password_correct"] = False
 
+    if "password_correct" not in st.session_state:
+        st.markdown("### 🔒 Compliance4 Business - Team Login")
+        st.text_input("Enter Office Passcode", type="password", on_change=password_entered, key="password_input")
+        return False
+    elif not st.session_state["password_correct"]:
+        st.markdown("### 🔒 Compliance4 Business - Team Login")
+        st.text_input("Enter Office Passcode", type="password", on_change=password_entered, key="password_input")
+        st.error("Incorrect passcode. Please try again.")
+        return False
+    return True
+
+if not check_password():
+    st.stop()
 LOGO_PATH = "logo.png"
 
 # Master File for Clients & Ledgers
@@ -349,7 +370,7 @@ else:
 
                     try:
                         resp = client.models.generate_content(
-                            model='gemini-3.6-flash',
+                            model='gemini-2.5-flash',
                             contents=[
                                 types.Part.from_bytes(data=file_bytes, mime_type=mime),
                                 prompt
