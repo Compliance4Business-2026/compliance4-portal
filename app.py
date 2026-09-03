@@ -373,22 +373,6 @@ else:
                     {', '.join(active_ledgers)}
                     """
 
-                    try:
-                        resp = client.models.generate_content(
-                            model='gemini-3.6-flash',
-                            contents=[
-                               for idx, file in enumerate(uploaded_files):
-                    status_placeholder.text(f"Extracting ({idx + 1}/{len(uploaded_files)}): {file.name}...")
-                    mime = "application/pdf" if file.name.lower().endswith(".pdf") else "image/jpeg"
-                    file.seek(0)
-                    file_bytes = file.read()
-
-                    prompt = f"""
-                    Extract invoice details accurately into structured format.
-                    For each line item, assign the best matching accounting ledger strictly from this list of ledgers available for this client:
-                    {', '.join(active_ledgers)}
-                    """
-
                     extracted = False
                     candidate_models = ['gemini-3.6-flash', 'gemini-2.0-flash', 'gemini-1.5-flash']
 
@@ -420,17 +404,37 @@ else:
                                 extracted = True
                                 break
                         except Exception as err:
-                            # If capacity is 503 or model busy, failover to the next candidate model
-                            if "503" in str(err) or "UNAVAILABLE" in str(err):
+                            err_str = str(err)
+                            if "503" in err_str or "UNAVAILABLE" in err_str:
                                 continue
                             else:
-                                st.error(f"❌ Error with {model_name} on {file.name}: {err}")
+                                st.error(f"❌ Error with {model_name} on {file.name}: {err_str}")
                                 break
 
-                    if not extracted and not any("503" in str(e) for e in []):
-                        st.error(f"❌ Could not process {file.name}. All available model endpoints are busy. Please retry in 30 seconds.")
+                    if not extracted:
+                        st.error(f"❌ Could not process {file.name}. Google API capacity is busy. Please retry in a moment.")
 
                     progress_bar.progress((idx + 1) / len(uploaded_files))
+
+                if success_count > 0:
+                    st.session_state["active_review_index"] = 0
+                    st.rerun()
+
+    # TAB 2: NEEDS REVIEW
+    with tab_review:
+        st.subheader("Invoices Pending Review & Ledger Verification")
+        if not st.session_state["needs_review"]:
+            st.info("No bills pending review. Upload invoices in the 'Bill Uploads' tab.")
+        else:
+            for idx, item in enumerate(st.session_state["needs_review"]):
+                c1, c2, c3, c4 = st.columns([4, 2, 2, 2])
+                with c1:
+                    st.write(f"**{item['vendor_name']}**")
+                    st.caption(f"Client: {item.get('client_name', 'General')} | {item['file_name']} | Inv #{item['invoice_number']}")
+                with c2:
+                    st.write(f"Date: **{item['invoice_date']}**")
+                    st.caption(f"GSTIN: {item['vendor_gstin']}")
+                with c3:
                     st.write(f"Subtotal: ₹{item['subtotal']:,.2f}")
                     st.caption(f"Total: ₹{item['grand_total']:,.2f}")
                 with c4:
