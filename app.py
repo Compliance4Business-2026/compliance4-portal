@@ -347,13 +347,6 @@ else:
     # TAB 1: UPLOADS
     with tab_uploads:
         st.subheader(f"Upload Purchase Invoices for: {selected_client}")
-        uploaded_files = st.file_uploader(
-            "Upload Bills (PDF, JPG, PNG)",
-            type=["pdf", "jpg", "jpeg", "png"],
-            accept_multiple_files=True,
-            key="bill_uploader"
-        )
-
         # TAB 1: UPLOADS
     with tab_uploads:
         st.subheader(f"Upload Purchase Invoices for: {selected_client}")
@@ -369,10 +362,7 @@ else:
 
         if uploaded_files and api_key:
             if st.button("🚀 Process Invoices for " + selected_client, type="primary"):
-                client = genai.Client(api_key=api_key)
-                progress = st.progress(0)
-                status = st.empty()
-                success_count = 0
+                # Processing loop continues here...
 
                 for idx, file in enumerate(uploaded_files):
                     status.text(f"Extracting ({idx + 1}/{len(uploaded_files)}): {file.name}...")
