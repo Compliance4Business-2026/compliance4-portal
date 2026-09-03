@@ -377,41 +377,51 @@ else:
                     """
 
                     try:
-                        resp = client.models.generate_content(
-                            model='gemini-3.6-flash',
-                            contents=[
-                                types.Part.from_bytes(data=file_bytes, mime_type=mime),
-                                prompt
-                            ],
-                            config=types.GenerateContentConfig(
-                                response_mime_type="application/json",
-                                response_schema=InvoiceExtraction,
-                            ),
-                        )
+                        import time
 
-                        if resp.text:
-                            parsed = InvoiceExtraction.model_validate_json(resp.text)
-                            bill_entry = parsed.model_dump()
-                            bill_entry["file_name"] = file.name
-                            bill_entry["file_bytes"] = file_bytes
-                            bill_entry["mime_type"] = mime
-                            bill_entry["gst_treatment"] = "Regular"
-                            bill_entry["client_name"] = selected_client
+                    # Primary model with automatic fallback if Google has high demand
+                    candidate_models = ['gemini-3.6-flash', 'gemini-2.0-flash', 'gemini-1.5-flash']
+                    parsed = None
+                    last_error = None
 
-                            st.session_state["needs_review"].append(bill_entry)
-                            success_count += 1
-                        else:
-                            st.error(f"⚠️ Model returned an empty response for {file.name}")
-                    except Exception as e:
-                        st.error(f"❌ Failed to extract {file.name}: {e}")
+                    for model_name in candidate_models:
+                        for attempt in range(2):  # Retry up to 2 times if 503 occurs
+                            try:
+                                resp = client.models.generate_content(
+                                    model=model_name,
+                                    contents=[
+                                        types.Part.from_bytes(data=file_bytes, mime_type=mime),
+                                        prompt
+                                    ],
+                                    config=types.GenerateContentConfig(
+                                        response_mime_type="application/json",
+                                        response_schema=InvoiceExtraction,
+                                    ),
+                                )
+                                if resp.text:
+                                    parsed = InvoiceExtraction.model_validate_json(resp.text)
+                                    break
+                            except Exception as err:
+                                last_error = err
+                                if "503" in str(err):
+                                    time.sleep(1.5)  # Pause briefly before retry
+                                    continue
+                                break
+                        if parsed:
+                            break
 
-                    progress.progress((idx + 1) / len(uploaded_files))
+                    if parsed:
+                        bill_entry = parsed.model_dump()
+                        bill_entry["file_name"] = file.name
+                        bill_entry["file_bytes"] = file_bytes
+                        bill_entry["mime_type"] = mime
+                        bill_entry["gst_treatment"] = "Regular"
+                        bill_entry["client_name"] = selected_client
 
-                if success_count > 0:
-                    status.success(f"✅ Extracted {success_count} invoice(s)! Switch to the 'Needs Review' tab.")
-                    st.rerun()
-                else:
-                    status.error("Extraction failed. Review the error details above.")
+                        st.session_state["needs_review"].append(bill_entry)
+                        success_count += 1
+                    else:
+                        st.error(f"❌ Failed to extract {file.name}: {last_error}")
 
     # TAB 2: NEEDS REVIEW
     with tab_review:
