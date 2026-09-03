@@ -15,6 +15,7 @@ st.set_page_config(
     page_icon="💼",
     layout="wide"
 )
+
 # Simple Team Password Gate
 def check_password():
     def password_entered():
@@ -37,8 +38,10 @@ def check_password():
         st.error("Incorrect passcode. Please try again.")
         return False
     return True
+
 if not check_password():
     st.stop()
+
 LOGO_PATH = "logo.png"
 
 # Master File for Clients & Ledgers
@@ -156,7 +159,6 @@ def generate_tally_xml(approved_bills):
               <AMOUNT>{b["grand_total"]:.2f}</AMOUNT>
             </ALLLEDGERENTRIES.LIST>
 """
-        # Group items by ledger
         ledger_totals = {}
         for itm in b["items"]:
             led = itm.get("ledger", "Purchase Account")
@@ -171,7 +173,6 @@ def generate_tally_xml(approved_bills):
               <AMOUNT>-{total_amt:.2f}</AMOUNT>
             </ALLLEDGERENTRIES.LIST>\n"""
 
-        # Tax Debit Entries
         if b["cgst"] > 0:
             xml += f"""            <ALLLEDGERENTRIES.LIST>
               <LEDGERNAME>CGST Input</LEDGERNAME>
@@ -334,7 +335,6 @@ if st.session_state["active_review_index"] is not None:
 
 # --- MAIN DASHBOARD TABS ---
 else:
-    # Top Header Branding (Clean text title, logo in sidebar only)
     st.markdown('<h1 style="color: #1a2a4b; margin-bottom: 0;">Compliance4 Business</h1><p style="color: #4a5568; font-size: 1.1rem; margin-top: -5px;">Automated Purchases & Tally Integration Portal</p>', unsafe_allow_html=True)
 
     tab_uploads, tab_review, tab_all, tab_settings = st.tabs([
@@ -345,16 +345,6 @@ else:
     ])
 
     # TAB 1: UPLOADS
-    with tab_uploads:
-        st.subheader(f"Upload Purchase Invoices for: {selected_client}")
-        uploaded_files = st.file_uploader(
-            "Upload Bills (PDF, JPG, PNG)",
-            type=["pdf", "jpg", "jpeg", "png"],
-            accept_multiple_files=True
-        )
-
-        if uploaded_files and api_key:
-          # TAB 1: UPLOADS
     with tab_uploads:
         st.subheader(f"Upload Purchase Invoices for: {selected_client}")
         uploaded_files = st.file_uploader(
@@ -398,7 +388,7 @@ else:
                                 response_schema=InvoiceExtraction,
                             ),
                         )
-                        
+
                         if resp.text:
                             parsed = InvoiceExtraction.model_validate_json(resp.text)
                             bill_entry = parsed.model_dump()
@@ -407,7 +397,7 @@ else:
                             bill_entry["mime_type"] = mime
                             bill_entry["gst_treatment"] = "Regular"
                             bill_entry["client_name"] = selected_client
-                            
+
                             st.session_state["needs_review"].append(bill_entry)
                             success_count += 1
                         else:
@@ -418,10 +408,25 @@ else:
                     progress.progress((idx + 1) / len(uploaded_files))
 
                 if success_count > 0:
-                    st.success(f"✅ Successfully extracted {success_count} invoice(s)! Switch to the 'Needs Review' tab.")
+                    status.success(f"✅ Extracted {success_count} invoice(s)! Switch to the 'Needs Review' tab.")
                     st.rerun()
                 else:
                     status.error("Extraction failed. Review the error details above.")
+
+    # TAB 2: NEEDS REVIEW
+    with tab_review:
+        st.subheader("Invoices Pending Review & Ledger Verification")
+        if not st.session_state["needs_review"]:
+            st.info("No bills pending review. Upload invoices in the 'Bill Uploads' tab.")
+        else:
+            for idx, item in enumerate(st.session_state["needs_review"]):
+                c1, c2, c3, c4 = st.columns([4, 2, 2, 2])
+                with c1:
+                    st.write(f"**{item['vendor_name']}**")
+                    st.caption(f"Client: {item.get('client_name', 'General')} | {item['file_name']} | Inv #{item['invoice_number']}")
+                with c2:
+                    st.write(f"Date: **{item['invoice_date']}**")
+                    st.caption(f"GSTIN: {item['vendor_gstin']}")
                 with c3:
                     st.write(f"Subtotal: ₹{item['subtotal']:,.2f}")
                     st.caption(f"Total: ₹{item['grand_total']:,.2f}")
