@@ -354,14 +354,30 @@ else:
         )
 
         if uploaded_files and api_key:
-            if st.button("🚀 Process Invoices for " + selected_client):
+          # TAB 1: UPLOADS
+    with tab_uploads:
+        st.subheader(f"Upload Purchase Invoices for: {selected_client}")
+        uploaded_files = st.file_uploader(
+            "Upload Bills (PDF, JPG, PNG)",
+            type=["pdf", "jpg", "jpeg", "png"],
+            accept_multiple_files=True,
+            key="bill_uploader"
+        )
+
+        if not api_key:
+            st.warning("⚠️ Please provide a Gemini API Key in Streamlit Secrets or via the sidebar.")
+
+        if uploaded_files and api_key:
+            if st.button("🚀 Process Invoices for " + selected_client, type="primary"):
                 client = genai.Client(api_key=api_key)
                 progress = st.progress(0)
                 status = st.empty()
+                success_count = 0
 
                 for idx, file in enumerate(uploaded_files):
                     status.text(f"Extracting ({idx + 1}/{len(uploaded_files)}): {file.name}...")
                     mime = "application/pdf" if file.name.lower().endswith(".pdf") else "image/jpeg"
+                    file.seek(0)
                     file_bytes = file.read()
 
                     prompt = f"""
@@ -382,38 +398,30 @@ else:
                                 response_schema=InvoiceExtraction,
                             ),
                         )
-                        parsed = InvoiceExtraction.model_validate_json(resp.text)
                         
-                        bill_entry = parsed.model_dump()
-                        bill_entry["file_name"] = file.name
-                        bill_entry["file_bytes"] = file_bytes
-                        bill_entry["mime_type"] = mime
-                        bill_entry["gst_treatment"] = "Regular"
-                        bill_entry["client_name"] = selected_client
-                        
-                        st.session_state["needs_review"].append(bill_entry)
+                        if resp.text:
+                            parsed = InvoiceExtraction.model_validate_json(resp.text)
+                            bill_entry = parsed.model_dump()
+                            bill_entry["file_name"] = file.name
+                            bill_entry["file_bytes"] = file_bytes
+                            bill_entry["mime_type"] = mime
+                            bill_entry["gst_treatment"] = "Regular"
+                            bill_entry["client_name"] = selected_client
+                            
+                            st.session_state["needs_review"].append(bill_entry)
+                            success_count += 1
+                        else:
+                            st.error(f"⚠️ Model returned an empty response for {file.name}")
                     except Exception as e:
-                        st.error(f"Failed {file.name}: {e}")
+                        st.error(f"❌ Failed to extract {file.name}: {e}")
 
                     progress.progress((idx + 1) / len(uploaded_files))
 
-                status.success("Processing complete! Switch to the 'Needs Review' tab.")
-                st.rerun()
-
-    # TAB 2: NEEDS REVIEW
-    with tab_review:
-        st.subheader("Invoices Pending Review & Ledger Verification")
-        if not st.session_state["needs_review"]:
-            st.info("No bills pending review. Upload invoices in the 'Bill Uploads' tab.")
-        else:
-            for idx, item in enumerate(st.session_state["needs_review"]):
-                c1, c2, c3, c4 = st.columns([4, 2, 2, 2])
-                with c1:
-                    st.write(f"**{item['vendor_name']}**")
-                    st.caption(f"Client: {item.get('client_name', 'General')} | {item['file_name']} | Inv #{item['invoice_number']}")
-                with c2:
-                    st.write(f"Date: **{item['invoice_date']}**")
-                    st.caption(f"GSTIN: {item['vendor_gstin']}")
+                if success_count > 0:
+                    st.success(f"✅ Successfully extracted {success_count} invoice(s)! Switch to the 'Needs Review' tab.")
+                    st.rerun()
+                else:
+                    status.error("Extraction failed. Review the error details above.")
                 with c3:
                     st.write(f"Subtotal: ₹{item['subtotal']:,.2f}")
                     st.caption(f"Total: ₹{item['grand_total']:,.2f}")
