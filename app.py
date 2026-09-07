@@ -16,13 +16,13 @@ from PIL import Image
 
 # 1. Page Config
 st.set_page_config(
-    page_title="Compliance4 Business | Smart Accounting Portal",
+    page_title="Compliance4 Business | Accounting Portal",
     page_icon="💼",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# 2. Executive Corporate Styling Injection
+# 2. Refined Professional Light Theme Styling
 CUSTOM_CSS = """
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
@@ -31,123 +31,89 @@ CUSTOM_CSS = """
         font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
     }
     
-    /* Background adjustments */
+    /* Clean Light Background */
     .stApp {
         background-color: #F8FAFC;
     }
     
-    /* Sidebar aesthetic */
+    /* Professional Light Sidebar */
     [data-testid="stSidebar"] {
-        background: linear-gradient(180deg, #0F172A 0%, #1E293B 100%);
-        color: #F8FAFC;
+        background-color: #FFFFFF !important;
+        border-right: 1px solid #E2E8F0;
     }
     [data-testid="stSidebar"] * {
-        color: #E2E8F0 !important;
+        color: #0F172A !important;
     }
     [data-testid="stSidebar"] .stSelectbox label, 
     [data-testid="stSidebar"] .stTextInput label {
-        font-weight: 600;
-        color: #94A3B8 !important;
+        font-weight: 700 !important;
+        color: #475569 !important;
         text-transform: uppercase;
         font-size: 0.75rem;
         letter-spacing: 0.05em;
+    }
+    [data-testid="stSidebar"] div[data-baseweb="select"] > div {
+        background-color: #F8FAFC !important;
+        border: 1px solid #CBD5E1 !important;
+        color: #0F172A !important;
     }
 
     /* Executive Hero Banner */
     .hero-container {
         background: linear-gradient(135deg, #0F2B48 0%, #173E65 60%, #1A5276 100%);
-        padding: 24px 32px;
-        border-radius: 16px;
+        padding: 22px 30px;
+        border-radius: 14px;
         color: #FFFFFF;
-        box-shadow: 0 10px 25px -5px rgba(15, 43, 72, 0.15), 0 8px 10px -6px rgba(15, 43, 72, 0.1);
+        box-shadow: 0 8px 20px -4px rgba(15, 43, 72, 0.12);
         margin-bottom: 24px;
         display: flex;
         justify-content: space-between;
         align-items: center;
     }
     .hero-title {
-        font-size: 1.75rem;
+        font-size: 1.65rem;
         font-weight: 800;
         letter-spacing: -0.02em;
         margin: 0;
         color: #FFFFFF !important;
     }
     .hero-subtitle {
-        font-size: 0.95rem;
+        font-size: 0.92rem;
         color: #93C5FD !important;
-        margin-top: 4px;
+        margin-top: 3px;
         font-weight: 400;
     }
     .hero-badge {
-        background: rgba(255, 255, 255, 0.12);
+        background: rgba(255, 255, 255, 0.14);
         backdrop-filter: blur(8px);
         padding: 8px 16px;
         border-radius: 9999px;
-        border: 1px solid rgba(255, 255, 255, 0.2);
+        border: 1px solid rgba(255, 255, 255, 0.25);
         font-weight: 600;
         font-size: 0.85rem;
         color: #FFFFFF !important;
     }
 
-    /* KPI Cards */
-    .kpi-card {
-        background: #FFFFFF;
-        padding: 16px 20px;
-        border-radius: 12px;
-        border: 1px solid #E2E8F0;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-        display: flex;
-        align-items: center;
-        gap: 16px;
-    }
-    .kpi-icon {
-        width: 44px;
-        height: 44px;
-        border-radius: 10px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 1.25rem;
-    }
-    .kpi-blue { background: #EFF6FF; color: #2563EB; }
-    .kpi-green { background: #F0FDF4; color: #16A34A; }
-    .kpi-amber { background: #FFFBEB; color: #D97706; }
-    .kpi-value {
-        font-size: 1.4rem;
-        font-weight: 700;
-        color: #0F172A;
-        margin: 0;
-        line-height: 1.2;
-    }
-    .kpi-label {
-        font-size: 0.75rem;
-        font-weight: 600;
-        color: #64748B;
-        text-transform: uppercase;
-        letter-spacing: 0.05em;
-        margin: 0;
-    }
-
-    /* Styled Tabs */
+    /* Clean Elevated Tab Navigation */
     .stTabs [data-baseweb="tab-list"] {
-        gap: 8px;
+        gap: 10px;
         background-color: transparent;
         border-bottom: 2px solid #E2E8F0;
         padding-bottom: 4px;
     }
     .stTabs [data-baseweb="tab"] {
         background: #FFFFFF;
-        border: 1px solid #E2E8F0;
+        border: 1px solid #CBD5E1;
         border-radius: 8px 8px 0px 0px;
-        padding: 10px 20px;
-        font-weight: 600;
-        font-size: 0.88rem;
+        padding: 10px 22px;
+        font-weight: 700;
+        font-size: 0.92rem;
         color: #475569;
         transition: all 0.2s ease;
     }
     .stTabs [data-baseweb="tab"]:hover {
         color: #0F2B48;
-        background: #F8FAFC;
+        background: #F1F5F9;
     }
     .stTabs [aria-selected="true"] {
         background: #0F2B48 !important;
@@ -155,31 +121,27 @@ CUSTOM_CSS = """
         border-color: #0F2B48 !important;
     }
 
-    /* Upload Container */
-    [data-testid="stFileUploader"] {
+    /* Clean Card Containers */
+    .content-box {
         background: #FFFFFF;
-        border: 2px dashed #CBD5E1;
-        border-radius: 16px;
-        padding: 24px;
-        transition: border-color 0.2s;
+        border: 1px solid #E2E8F0;
+        border-radius: 12px;
+        padding: 22px 24px;
+        margin-bottom: 16px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.03);
     }
-    [data-testid="stFileUploader"]:hover {
-        border-color: #0284C7;
-    }
-
-    /* Bill Review Cards */
     .bill-card {
         background: #FFFFFF;
         border: 1px solid #E2E8F0;
         border-radius: 12px;
         padding: 16px 20px;
-        margin-bottom: 12px;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.03);
-        transition: box-shadow 0.2s ease, border-color 0.2s ease;
+        margin-bottom: 10px;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.02);
+        transition: all 0.15s ease;
     }
     .bill-card:hover {
-        box-shadow: 0 4px 12px -2px rgba(0,0,0,0.08);
-        border-color: #CBD5E1;
+        border-color: #0F2B48;
+        box-shadow: 0 4px 10px rgba(0,0,0,0.05);
     }
 
     /* Buttons */
@@ -188,33 +150,14 @@ CUSTOM_CSS = """
         font-weight: 600;
         font-size: 0.88rem;
         padding: 8px 18px;
-        transition: all 0.15s ease-in-out;
     }
     .stButton>button[kind="primary"] {
         background-color: #0F2B48;
         border-color: #0F2B48;
-        box-shadow: 0 2px 4px rgba(15, 43, 72, 0.2);
     }
     .stButton>button[kind="primary"]:hover {
         background-color: #173E65;
         border-color: #173E65;
-    }
-    .stButton>button[kind="secondary"] {
-        background-color: #FFFFFF;
-        border: 1px solid #E2E8F0;
-        color: #475569;
-    }
-    .stButton>button[kind="secondary"]:hover {
-        background-color: #F8FAFC;
-        border-color: #CBD5E1;
-        color: #0F172A;
-    }
-
-    /* Section divider */
-    hr {
-        margin: 20px 0;
-        border: none;
-        border-top: 1px solid #E2E8F0;
     }
 </style>
 """
@@ -234,28 +177,28 @@ def check_password():
 
     if "password_correct" not in st.session_state:
         st.markdown("""
-        <div style="max-width: 420px; margin: 80px auto; background: #FFFFFF; padding: 36px; border-radius: 16px; border: 1px solid #E2E8F0; box-shadow: 0 10px 25px rgba(0,0,0,0.06); text-align: center;">
+        <div style="max-width: 400px; margin: 80px auto; background: #FFFFFF; padding: 36px; border-radius: 16px; border: 1px solid #E2E8F0; box-shadow: 0 10px 25px rgba(0,0,0,0.06); text-align: center;">
             <div style="font-size: 2.2rem; margin-bottom: 8px;">🔐</div>
-            <h2 style="color: #0F2B48; font-weight: 800; margin-bottom: 4px;">Compliance4 Portal</h2>
-            <p style="color: #64748B; font-size: 0.9rem; margin-bottom: 24px;">Please enter your office passcode to continue</p>
+            <h3 style="color: #0F2B48; font-weight: 800; margin-bottom: 4px;">Compliance4 Portal</h3>
+            <p style="color: #64748B; font-size: 0.88rem; margin-bottom: 24px;">Enter office passcode to continue</p>
         </div>
         """, unsafe_allow_html=True)
         col_gate1, col_gate2, col_gate3 = st.columns([1.2, 1.6, 1.2])
         with col_gate2:
-            st.text_input("Office Passcode", type="password", on_change=password_entered, key="password_input", label_visibility="collapsed", placeholder="Enter Passcode...")
+            st.text_input("Office Passcode", type="password", on_change=password_entered, key="password_input", label_visibility="collapsed", placeholder="Passcode...")
         return False
     elif not st.session_state["password_correct"]:
         st.markdown("""
-        <div style="max-width: 420px; margin: 80px auto 0 auto; background: #FFFFFF; padding: 36px 36px 12px 36px; border-radius: 16px; border: 1px solid #E2E8F0; box-shadow: 0 10px 25px rgba(0,0,0,0.06); text-align: center;">
+        <div style="max-width: 400px; margin: 80px auto 0 auto; background: #FFFFFF; padding: 36px 36px 12px 36px; border-radius: 16px; border: 1px solid #E2E8F0; text-align: center;">
             <div style="font-size: 2.2rem; margin-bottom: 8px;">🔐</div>
-            <h2 style="color: #0F2B48; font-weight: 800; margin-bottom: 4px;">Compliance4 Portal</h2>
-            <p style="color: #64748B; font-size: 0.9rem; margin-bottom: 16px;">Please enter your office passcode to continue</p>
+            <h3 style="color: #0F2B48; font-weight: 800; margin-bottom: 4px;">Compliance4 Portal</h3>
+            <p style="color: #64748B; font-size: 0.88rem; margin-bottom: 16px;">Enter office passcode to continue</p>
         </div>
         """, unsafe_allow_html=True)
         col_gate1, col_gate2, col_gate3 = st.columns([1.2, 1.6, 1.2])
         with col_gate2:
-            st.text_input("Office Passcode", type="password", on_change=password_entered, key="password_input", label_visibility="collapsed", placeholder="Enter Passcode...")
-            st.error("Incorrect passcode. Please verify and retry.")
+            st.text_input("Office Passcode", type="password", on_change=password_entered, key="password_input", label_visibility="collapsed", placeholder="Passcode...")
+            st.error("Incorrect passcode.")
         return False
     return True
 
@@ -426,7 +369,7 @@ bank_rules = load_bank_rules()
 GST_TREATMENTS = ["Regular", "Composition", "Unregistered", "Overseas / Import"]
 STATES = ["Gujarat", "Maharashtra", "Delhi", "Rajasthan", "Karnataka", "Tamil Nadu", "Other"]
 
-# Pydantic Extraction Schema
+# Pydantic Schema
 class LineItem(BaseModel):
     description: str = Field(description="Description of goods/services")
     hsn_code: Optional[str] = Field(default="", description="HSN/SAC Code")
@@ -668,15 +611,15 @@ def process_single_bill(file_name, file_bytes, mime, client, ledgers_str, client
             return False, None, f"{file_name}: {err_str}"
     return False, None, f"{file_name}: Google servers busy after 3 retries."
 
-# Sidebar Config & Navigation
+# --- SIDEBAR (CLEAN WHITE/SLATE) ---
 with st.sidebar:
     if os.path.exists(LOGO_PATH):
         st.image(LOGO_PATH, width=190)
     else:
-        st.markdown("<h2 style='color:#FFFFFF; font-weight:800; margin-top:0;'>Compliance4</h2>", unsafe_allow_html=True)
+        st.markdown("<h2 style='color:#0F2B48; font-weight:800; margin-top:0;'>Compliance4</h2>", unsafe_allow_html=True)
     
-    st.markdown("<p style='color:#94A3B8; font-size:0.8rem; margin-top:-10px; margin-bottom: 20px;'>BUSINESS PROCESS OUTSOURCING</p>", unsafe_allow_html=True)
-    st.markdown("<hr style='border-color: rgba(255,255,255,0.1); margin: 12px 0 20px 0;'>", unsafe_allow_html=True)
+    st.caption("BUSINESS PROCESS OUTSOURCING")
+    st.markdown("<hr style='margin: 12px 0 18px 0;'>", unsafe_allow_html=True)
 
     client_options = list(client_masters.keys())
     if not client_options:
@@ -693,16 +636,16 @@ with st.sidebar:
 
     api_key = default_key if default_key else st.text_input("Gemini API Key", type="password")
 
-    st.markdown("<hr style='border-color: rgba(255,255,255,0.1); margin: 20px 0 16px 0;'>", unsafe_allow_html=True)
+    st.markdown("<hr style='margin: 18px 0 14px 0;'>", unsafe_allow_html=True)
     
     current_client_rules = item_rules.get(selected_client, {})
     current_bank_rules = bank_rules.get(selected_client, {})
     
     st.markdown(f"""
-    <div style="background: rgba(255,255,255,0.05); padding: 12px 14px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.08);">
-        <div style="font-size: 0.72rem; color: #94A3B8; font-weight: 600; text-transform: uppercase;">Intelligence Cache</div>
-        <div style="font-size: 0.82rem; margin-top: 4px; color: #E2E8F0;">• <b>{len(current_client_rules)}</b> Invoice Items Memorized</div>
-        <div style="font-size: 0.82rem; margin-top: 2px; color: #E2E8F0;">• <b>{len(current_bank_rules)}</b> Bank Counterparties Mapped</div>
+    <div style="background: #F1F5F9; padding: 12px 14px; border-radius: 8px; border: 1px solid #E2E8F0;">
+        <div style="font-size: 0.72rem; color: #475569; font-weight: 700; text-transform: uppercase;">AI Cache Status</div>
+        <div style="font-size: 0.82rem; margin-top: 4px; color: #0F172A;">• <b>{len(current_client_rules)}</b> Invoice Items Memorized</div>
+        <div style="font-size: 0.82rem; margin-top: 2px; color: #0F172A;">• <b>{len(current_bank_rules)}</b> Bank Parties Mapped</div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -711,56 +654,11 @@ st.markdown(f"""
 <div class="hero-container">
     <div>
         <h1 class="hero-title">Compliance4 Business</h1>
-        <div class="hero-subtitle">Automated Purchase Invoices & Bank Statement Integration Portal</div>
+        <div class="hero-subtitle">Automated Accounting & Tally Integration Architecture</div>
     </div>
     <div class="hero-badge">🏢 {selected_client}</div>
 </div>
 """, unsafe_allow_html=True)
-
-# Top KPI Summary Row
-k1, k2, k3, k4 = st.columns(4)
-with k1:
-    st.markdown(f"""
-    <div class="kpi-card">
-        <div class="kpi-icon kpi-blue">📤</div>
-        <div>
-            <div class="kpi-value">{len(pending_bills_list)}</div>
-            <div class="kpi-label">Needs Review</div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-with k2:
-    st.markdown(f"""
-    <div class="kpi-card">
-        <div class="kpi-icon kpi-green">✅</div>
-        <div>
-            <div class="kpi-value">{len(approved_bills_list)}</div>
-            <div class="kpi-label">Approved Bills</div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-with k3:
-    st.markdown(f"""
-    <div class="kpi-card">
-        <div class="kpi-icon kpi-amber">⚡</div>
-        <div>
-            <div class="kpi-value">{len(active_ledgers)}</div>
-            <div class="kpi-label">Chart Ledgers</div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-with k4:
-    st.markdown(f"""
-    <div class="kpi-card">
-        <div class="kpi-icon kpi-blue">🧠</div>
-        <div>
-            <div class="kpi-value">{len(current_client_rules) + len(current_bank_rules)}</div>
-            <div class="kpi-label">Learned Rules</div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-st.write("")
 
 # --- DETAIL REVIEW WORKSPACE ---
 if st.session_state["active_review_index"] is not None and st.session_state["active_review_index"] < len(pending_bills_list):
@@ -769,7 +667,7 @@ if st.session_state["active_review_index"] is not None and st.session_state["act
 
     c_nav1, c_nav2 = st.columns([7, 3])
     with c_nav1:
-        if st.button("← Back to All Pending Invoices", type="secondary"):
+        if st.button("← Back to Invoice Queue", type="secondary"):
             st.session_state["active_review_index"] = None
             st.rerun()
     with c_nav2:
@@ -788,20 +686,18 @@ if st.session_state["active_review_index"] is not None and st.session_state["act
                 save_pending_bills(pending_bills_list)
                 save_approved_bills(approved_bills_list)
                 st.session_state["active_review_index"] = None
-                st.toast("Invoice successfully approved and memorized!", icon="✨")
+                st.toast("Invoice approved and memorized!", icon="✨")
                 st.rerun()
 
     st.markdown("---")
-
     col_preview, col_form = st.columns([1, 1.1], gap="large")
 
     with col_preview:
         st.markdown(f"""
-        <div style="background: #FFFFFF; padding: 16px; border-radius: 12px; border: 1px solid #E2E8F0; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
-            <div style="font-weight: 700; color: #0F172A; font-size: 1rem; margin-bottom: 8px;">📄 Document Preview: {bill['file_name']}</div>
+        <div class="content-box">
+            <div style="font-weight: 700; color: #0F172A;">📄 Document Preview: {bill['file_name']}</div>
         </div>
         """, unsafe_allow_html=True)
-        st.write("")
         if bill.get("file_base64"):
             img_bytes = base64.b64decode(bill["file_base64"])
             if bill.get("mime_type", "").startswith("image"):
@@ -811,8 +707,8 @@ if st.session_state["active_review_index"] is not None and st.session_state["act
 
     with col_form:
         st.markdown("""
-        <div style="background: #FFFFFF; padding: 20px; border-radius: 12px; border: 1px solid #E2E8F0; box-shadow: 0 1px 3px rgba(0,0,0,0.05); margin-bottom: 20px;">
-            <div style="font-weight: 700; color: #0F172A; font-size: 1rem; margin-bottom: 12px;">Invoice Header & GST Controls</div>
+        <div class="content-box">
+            <div style="font-weight: 700; color: #0F172A;">Invoice Header & GST Controls</div>
         </div>
         """, unsafe_allow_html=True)
 
@@ -898,125 +794,120 @@ if st.session_state["active_review_index"] is not None and st.session_state["act
         </div>
         """, unsafe_allow_html=True)
 
-# --- MAIN DASHBOARD INTERFACE ---
+# --- MAIN DASHBOARD: MODULARIZED SECTIONS ---
 else:
     if st.session_state["active_review_index"] is not None:
         st.session_state["active_review_index"] = None
 
-    tab_uploads, tab_review, tab_all, tab_bank, tab_settings = st.tabs([
-        "📤 Invoice Uploads",
-        f"📝 Needs Review ({len(pending_bills_list)})",
-        f"✅ Approved Vouchers ({len(approved_bills_list)})",
+    # PRIMARY HIGH-LEVEL MODULES
+    mod_purchase, mod_bank, mod_settings = st.tabs([
+        "🧾 Purchase Invoices Module",
         "🏦 Bank Statement Module",
-        "⚙️ Client Master Settings"
+        "⚙️ Master Settings"
     ])
 
-    # TAB 1: UPLOADS
-    with tab_uploads:
-        st.markdown(f"""
-        <div style="background: #FFFFFF; border: 1px solid #E2E8F0; padding: 24px; border-radius: 12px; margin-bottom: 24px;">
-            <h3 style="color: #0F172A; font-weight: 700; margin-top: 0;">Upload Purchase Documents</h3>
-            <p style="color: #64748B; font-size: 0.9rem; margin-bottom: 20px;">
-                Upload multiple scanned purchase invoices, tax bills, or receipts (PDF, JPG, PNG). The system will automatically perform high-speed OCR, apply memorized ledgers, and stage them for review.
-            </p>
-        </div>
-        """, unsafe_allow_html=True)
+    # ==========================================
+    # MODULE 1: PURCHASE INVOICES
+    # ==========================================
+    with mod_purchase:
+        p_sub_upload, p_sub_review, p_sub_approved = st.tabs([
+            "📤 Upload Invoices",
+            f"📝 Needs Review ({len(pending_bills_list)})",
+            f"✅ Approved Vouchers ({len(approved_bills_list)})"
+        ])
 
-        uploaded_files = st.file_uploader(
-            "Select Invoice Files",
-            type=["pdf", "jpg", "jpeg", "png"],
-            accept_multiple_files=True,
-            key="bill_uploader_field"
-        )
-
-        if not api_key:
-            st.warning("⚠️ API Key not detected. Please verify your Streamlit secrets or enter your key in the left sidebar.")
-
-        if uploaded_files and api_key:
-            col_b1, col_b2 = st.columns([1, 3])
-            with col_b1:
-                process_trigger = st.button("🚀 Process Batch with AI", type="primary", use_container_width=True)
-            
-            if process_trigger:
-                client = genai.Client(api_key=api_key)
-                progress_bar = st.progress(0)
-                status_placeholder = st.empty()
-                status_placeholder.info("⚡ Optimizing files and extracting line items...")
-
-                prepared_files = []
-                for f in uploaded_files:
-                    f.seek(0)
-                    mime, optimized_bytes = optimize_file(f.name, f.read())
-                    prepared_files.append((f.name, optimized_bytes, mime))
-
-                ledgers_str = ", ".join(active_ledgers)
-                completed_count = 0
-                total_files = len(prepared_files)
-                newly_extracted = []
-
-                fresh_rules = load_item_rules()
-
-                max_workers = min(4, total_files)
-                with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                    futures = [
-                        executor.submit(
-                            process_single_bill,
-                            fname,
-                            fbytes,
-                            fmime,
-                            client,
-                            ledgers_str,
-                            selected_client,
-                            active_ledgers,
-                            fresh_rules
-                        )
-                        for fname, fbytes, fmime in prepared_files
-                    ]
-
-                    for future in as_completed(futures):
-                        success, bill_data, err_msg = future.result()
-                        if success:
-                            newly_extracted.append(bill_data)
-                        else:
-                            st.error(f"❌ {err_msg}")
-
-                        completed_count += 1
-                        progress_bar.progress(completed_count / total_files)
-
-                if newly_extracted:
-                    pending_bills_list.extend(newly_extracted)
-                    save_pending_bills(pending_bills_list)
-                    status_placeholder.success(f"✅ Successfully staged {len(newly_extracted)} invoice(s) into 'Needs Review'!")
-                    time.sleep(1)
-                    st.rerun()
-
-    # TAB 2: NEEDS REVIEW
-    with tab_review:
-        st.markdown("""
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 16px;">
-            <div>
-                <h3 style="color: #0F172A; font-weight: 700; margin: 0;">Invoices Pending Verification</h3>
-                <p style="color: #64748B; font-size: 0.88rem; margin-top: 4px;">Review extracted vendors, items, and tax rates before syncing to Tally.</p>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-
-        if not pending_bills_list:
-            st.markdown("""
-            <div style="background: #FFFFFF; border: 1px dashed #CBD5E1; border-radius: 12px; padding: 48px; text-align: center;">
-                <div style="font-size: 2.2rem; margin-bottom: 8px;">🎉</div>
-                <h4 style="color: #0F172A; font-weight: 700; margin-bottom: 4px;">Queue Completely Cleared</h4>
-                <p style="color: #64748B; font-size: 0.9rem; margin: 0;">All invoices have been reviewed and approved. Upload new invoices in the first tab.</p>
+        # SUB-TAB 1: UPLOAD
+        with p_sub_upload:
+            st.markdown(f"""
+            <div class="content-box">
+                <h4 style="color: #0F172A; font-weight: 700; margin-top: 0;">Upload Purchase Documents: {selected_client}</h4>
+                <p style="color: #64748B; font-size: 0.88rem; margin-bottom: 0;">
+                    Upload purchase bills (PDF, JPG, PNG). The system extracts items and auto-assigns memorized ledgers.
+                </p>
             </div>
             """, unsafe_allow_html=True)
-        else:
-            for idx, item in enumerate(pending_bills_list):
-                with st.container():
+
+            uploaded_files = st.file_uploader(
+                "Select Invoices",
+                type=["pdf", "jpg", "jpeg", "png"],
+                accept_multiple_files=True,
+                key="bill_uploader_field"
+            )
+
+            if not api_key:
+                st.warning("⚠️ Please provide a Gemini API Key in the left sidebar or Streamlit secrets.")
+
+            if uploaded_files and api_key:
+                if st.button("🚀 Process Batch Invoices", type="primary"):
+                    client = genai.Client(api_key=api_key)
+                    progress_bar = st.progress(0)
+                    status_placeholder = st.empty()
+                    status_placeholder.info("⚡ Extracting line items and matching learned ledgers...")
+
+                    prepared_files = []
+                    for f in uploaded_files:
+                        f.seek(0)
+                        mime, optimized_bytes = optimize_file(f.name, f.read())
+                        prepared_files.append((f.name, optimized_bytes, mime))
+
+                    ledgers_str = ", ".join(active_ledgers)
+                    completed_count = 0
+                    total_files = len(prepared_files)
+                    newly_extracted = []
+
+                    fresh_rules = load_item_rules()
+                    max_workers = min(4, total_files)
+
+                    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                        futures = [
+                            executor.submit(
+                                process_single_bill,
+                                fname,
+                                fbytes,
+                                fmime,
+                                client,
+                                ledgers_str,
+                                selected_client,
+                                active_ledgers,
+                                fresh_rules
+                            )
+                            for fname, fbytes, fmime in prepared_files
+                        ]
+
+                        for future in as_completed(futures):
+                            success, bill_data, err_msg = future.result()
+                            if success:
+                                newly_extracted.append(bill_data)
+                            else:
+                                st.error(f"❌ {err_msg}")
+
+                            completed_count += 1
+                            progress_bar.progress(completed_count / total_files)
+
+                    if newly_extracted:
+                        pending_bills_list.extend(newly_extracted)
+                        save_pending_bills(pending_bills_list)
+                        status_placeholder.success(f"✅ Successfully staged {len(newly_extracted)} invoice(s) for review!")
+                        time.sleep(1)
+                        st.rerun()
+
+        # SUB-TAB 2: NEEDS REVIEW
+        with p_sub_review:
+            if not pending_bills_list:
+                st.markdown("""
+                <div style="background: #FFFFFF; border: 1px dashed #CBD5E1; border-radius: 12px; padding: 40px; text-align: center;">
+                    <div style="font-size: 2rem; margin-bottom: 6px;">🎉</div>
+                    <h4 style="color: #0F172A; font-weight: 700; margin-bottom: 4px;">Queue Completely Cleared</h4>
+                    <p style="color: #64748B; font-size: 0.88rem; margin: 0;">No purchase bills currently awaiting review.</p>
+                </div>
+                """, unsafe_allow_html=True)
+            else:
+                for idx, item in enumerate(pending_bills_list):
                     st.markdown(f"""
                     <div class="bill-card">
                         <div style="display:flex; justify-content:space-between; align-items:flex-start;">
                             <div>
-                                <div style="font-size: 1.1rem; font-weight: 700; color: #0F172A;">{item['vendor_name']}</div>
+                                <div style="font-size: 1.05rem; font-weight: 700; color: #0F172A;">{item['vendor_name']}</div>
                                 <div style="font-size: 0.82rem; color: #64748B; margin-top: 3px;">
                                     <b>Invoice:</b> #{item['invoice_number']} &nbsp;|&nbsp; <b>Date:</b> {item['invoice_date']} &nbsp;|&nbsp; <b>GSTIN:</b> {item.get('vendor_gstin', 'N/A')}
                                 </div>
@@ -1036,91 +927,84 @@ else:
                             st.rerun()
                     st.write("")
 
-    # TAB 3: APPROVED BILLS & TALLY EXPORT
-    with tab_all:
-        st.markdown("""
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 16px;">
-            <div>
-                <h3 style="color: #0F172A; font-weight: 700; margin: 0;">Approved Vouchers Archive</h3>
-                <p style="color: #64748B; font-size: 0.88rem; margin-top: 4px;">Download audited registers in Excel format or generate multi-ledger Tally ERP XML files.</p>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
+        # SUB-TAB 3: APPROVED ARCHIVE
+        with p_sub_approved:
+            if not approved_bills_list:
+                st.info("No approved purchase vouchers present yet.")
+            else:
+                summary_rows = []
+                itemized_rows = []
 
-        if not approved_bills_list:
-            st.info("No approved vouchers present. Approve invoices from the 'Needs Review' tab to populate this register.")
-        else:
-            summary_rows = []
-            itemized_rows = []
-
-            for b in approved_bills_list:
-                summary_rows.append({
-                    "Client": b.get("client_name", ""),
-                    "Vendor Name": b["vendor_name"],
-                    "GSTIN": b.get("vendor_gstin", ""),
-                    "Invoice No": b["invoice_number"],
-                    "Date": b["invoice_date"],
-                    "Taxable Subtotal (₹)": b["subtotal"],
-                    "CGST (₹)": b["cgst"],
-                    "SGST (₹)": b["sgst"],
-                    "IGST (₹)": b["igst"],
-                    "Grand Total (₹)": b["grand_total"],
-                })
-                for itm in b["items"]:
-                    itemized_rows.append({
+                for b in approved_bills_list:
+                    summary_rows.append({
                         "Client": b.get("client_name", ""),
-                        "Invoice No": b["invoice_number"],
                         "Vendor Name": b["vendor_name"],
-                        "Item": itm.get("description", ""),
-                        "HSN": itm.get("hsn_code", ""),
-                        "Qty": itm.get("qty", 1),
-                        "Rate": itm.get("rate", 0),
-                        "Amount": itm.get("amount", 0),
-                        "Assigned Ledger": itm.get("ledger", "Purchase")
+                        "GSTIN": b.get("vendor_gstin", ""),
+                        "Invoice No": b["invoice_number"],
+                        "Date": b["invoice_date"],
+                        "Taxable Subtotal (₹)": b["subtotal"],
+                        "CGST (₹)": b["cgst"],
+                        "SGST (₹)": b["sgst"],
+                        "IGST (₹)": b["igst"],
+                        "Grand Total (₹)": b["grand_total"],
                     })
+                    for itm in b["items"]:
+                        itemized_rows.append({
+                            "Client": b.get("client_name", ""),
+                            "Invoice No": b["invoice_number"],
+                            "Vendor Name": b["vendor_name"],
+                            "Item": itm.get("description", ""),
+                            "HSN": itm.get("hsn_code", ""),
+                            "Qty": itm.get("qty", 1),
+                            "Rate": itm.get("rate", 0),
+                            "Amount": itm.get("amount", 0),
+                            "Assigned Ledger": itm.get("ledger", "Purchase")
+                        })
 
-            df_summary = pd.DataFrame(summary_rows)
-            df_items_approved = pd.DataFrame(itemized_rows)
+                df_summary = pd.DataFrame(summary_rows)
+                df_items_approved = pd.DataFrame(itemized_rows)
 
-            st.dataframe(df_summary, use_container_width=True, height=280)
+                st.dataframe(df_summary, use_container_width=True, height=280)
 
-            excel_buf = io.BytesIO()
-            with pd.ExcelWriter(excel_buf, engine='openpyxl') as writer:
-                df_summary.to_excel(writer, sheet_name="Invoice Summary", index=False)
-                df_items_approved.to_excel(writer, sheet_name="Item-Wise Ledgers", index=False)
+                excel_buf = io.BytesIO()
+                with pd.ExcelWriter(excel_buf, engine='openpyxl') as writer:
+                    df_summary.to_excel(writer, sheet_name="Invoice Summary", index=False)
+                    df_items_approved.to_excel(writer, sheet_name="Item-Wise Ledgers", index=False)
 
-            st.write("")
-            exp_c1, exp_c2, exp_c3 = st.columns([1, 1, 1])
-            with exp_c1:
-                st.download_button(
-                    label="📥 Download Excel Register",
-                    data=excel_buf.getvalue(),
-                    file_name="Approved_Purchase_Register.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    use_container_width=True
-                )
-            with exp_c2:
-                xml_data = generate_tally_xml(approved_bills_list)
-                st.download_button(
-                    label="📥 Download Tally XML Import",
-                    data=xml_data,
-                    file_name="Approved_Tally_Import.xml",
-                    mime="application/xml",
-                    use_container_width=True
-                )
-            with exp_c3:
-                if st.button("🧹 Clear Exported Vouchers", type="secondary", use_container_width=True):
-                    approved_bills_list = []
-                    save_approved_bills(approved_bills_list)
-                    st.rerun()
+                st.write("")
+                exp_c1, exp_c2, exp_c3 = st.columns([1, 1, 1])
+                with exp_c1:
+                    st.download_button(
+                        label="📥 Download Excel Register",
+                        data=excel_buf.getvalue(),
+                        file_name="Approved_Purchase_Register.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True
+                    )
+                with exp_c2:
+                    xml_data = generate_tally_xml(approved_bills_list)
+                    st.download_button(
+                        label="📥 Download Tally XML Import",
+                        data=xml_data,
+                        file_name="Approved_Tally_Import.xml",
+                        mime="application/xml",
+                        use_container_width=True
+                    )
+                with exp_c3:
+                    if st.button("🧹 Clear Register", type="secondary", use_container_width=True):
+                        approved_bills_list = []
+                        save_approved_bills(approved_bills_list)
+                        st.rerun()
 
-    # TAB 4: BANK CODING MODULE
-    with tab_bank:
+    # ==========================================
+    # MODULE 2: BANK STATEMENTS
+    # ==========================================
+    with mod_bank:
         st.markdown(f"""
-        <div style="background: #FFFFFF; border: 1px solid #E2E8F0; padding: 24px; border-radius: 12px; margin-bottom: 24px;">
-            <h3 style="color: #0F172A; font-weight: 700; margin-top: 0;">Smart Bank Statement Reconciliation: {selected_client}</h3>
-            <p style="color: #64748B; font-size: 0.9rem; margin-bottom: 0;">
-                Upload native bank statements (CSV/Excel). The engine cleans transaction noise, applies counterparty memorization, and exports Tally Payment and Receipt vouchers.
+        <div class="content-box">
+            <h4 style="color: #0F172A; font-weight: 700; margin-top: 0;">Bank Statement Reconciliation: {selected_client}</h4>
+            <p style="color: #64748B; font-size: 0.88rem; margin-bottom: 0;">
+                Upload bank statements in Excel or CSV. The system cleans narration noise, matches known vendors/customers, and generates Tally Payment & Receipt XML.
             </p>
         </div>
         """, unsafe_allow_html=True)
@@ -1128,7 +1012,7 @@ else:
         bank_col1, bank_col2 = st.columns([2, 1])
         with bank_col1:
             uploaded_bank = st.file_uploader(
-                "Select Bank Statement File",
+                "Select Bank Statement (Excel / CSV)",
                 type=["xlsx", "xls", "csv"],
                 key="bank_file_uploader"
             )
@@ -1176,11 +1060,11 @@ else:
 
                         st.session_state["bank_df_working"] = pd.DataFrame(parsed_rows)
                 except Exception as e:
-                    st.error(f"Error parsing bank file: {e}")
+                    st.error(f"Error parsing bank statement: {e}")
 
         if st.session_state["bank_df_working"] is not None:
             st.markdown(f"#### Verified Transactions ({len(st.session_state['bank_df_working'])} Entries)")
-            st.caption("Adjust ledgers in the dropdown column below. Saving will store the counterparty rule for all future uploads.")
+            st.caption("Change any ledger in the table below. Saving will store the rule for future uploads.")
 
             edited_bank_df = st.data_editor(
                 st.session_state["bank_df_working"],
@@ -1191,7 +1075,7 @@ else:
                     "Credit / Deposit": st.column_config.NumberColumn("Credit (₹)", format="₹%.2f"),
                     "Assigned Ledger": st.column_config.SelectboxColumn(
                         "Assigned Tally Ledger",
-                        help="Select the contra/expense/revenue ledger",
+                        help="Select the expense, revenue, or party ledger",
                         width="medium",
                         options=active_ledgers,
                         required=True,
@@ -1213,7 +1097,7 @@ else:
                             rules[selected_client][cleaned_narr] = row["Assigned Ledger"]
                     save_bank_rules(rules)
                     st.session_state["bank_df_working"] = edited_bank_df
-                    st.toast("Bank counterparty rules updated!", icon="💾")
+                    st.toast("Bank counterparty rules saved!", icon="💾")
                     st.rerun()
 
             with b_btn2:
@@ -1231,13 +1115,15 @@ else:
                     st.session_state["bank_df_working"] = None
                     st.rerun()
 
-    # TAB 5: SETTINGS & CLIENT COA
-    with tab_settings:
+    # ==========================================
+    # MODULE 3: MASTER SETTINGS
+    # ==========================================
+    with mod_settings:
         st.markdown("""
-        <div style="background: #FFFFFF; border: 1px solid #E2E8F0; padding: 24px; border-radius: 12px; margin-bottom: 24px;">
-            <h3 style="color: #0F172A; font-weight: 700; margin-top: 0;">Chart of Accounts & Intelligence Master</h3>
-            <p style="color: #64748B; font-size: 0.9rem; margin-bottom: 0;">
-                Configure client-specific ledgers and audit the self-learning memory rules generated from previous invoice approvals.
+        <div class="content-box">
+            <h4 style="color: #0F172A; font-weight: 700; margin-top: 0;">Chart of Accounts & AI Memory</h4>
+            <p style="color: #64748B; font-size: 0.88rem; margin-bottom: 0;">
+                Configure client ledgers and inspect memorized items or bank counterparty rules.
             </p>
         </div>
         """, unsafe_allow_html=True)
@@ -1245,29 +1131,29 @@ else:
         cfg_col1, cfg_col2 = st.columns([1, 1], gap="large")
 
         with cfg_col1:
-            st.markdown("<div style='font-weight:700; color:#0F172A; font-size:1.05rem; margin-bottom:12px;'>➕ Register New Client</div>", unsafe_allow_html=True)
-            new_client_name = st.text_input("Client Organization Name")
+            st.markdown("<div style='font-weight:700; color:#0F172A; margin-bottom:8px;'>➕ Add New Client Organization</div>", unsafe_allow_html=True)
+            new_client_name = st.text_input("Organization Name")
             new_client_ledgers_raw = st.text_area(
-                "Expense / Purchase Ledgers (One ledger per line)",
+                "Expense / Purchase Ledgers (One per line)",
                 value="Purchase Account\nPackaging Supplies\nFreight Charges\nOffice Stationery\nBank Charges",
-                height=160
+                height=150
             )
-            if st.button("Save Organization Master", type="primary"):
+            if st.button("Save Organization", type="primary"):
                 if new_client_name.strip():
                     ledgers_list = [l.strip() for l in new_client_ledgers_raw.split("\n") if l.strip()]
                     client_masters[new_client_name.strip()] = ledgers_list
                     save_client_masters(client_masters)
-                    st.success(f"Master created for '{new_client_name}'!")
+                    st.success(f"Saved '{new_client_name}'!")
                     st.rerun()
 
         with cfg_col2:
-            st.markdown(f"<div style='font-weight:700; color:#0F172A; font-size:1.05rem; margin-bottom:12px;'>✏️ Edit Ledgers: <b>{selected_client}</b></div>", unsafe_allow_html=True)
+            st.markdown(f"<div style='font-weight:700; color:#0F172A; margin-bottom:8px;'>✏️ Edit Ledgers for: <b>{selected_client}</b></div>", unsafe_allow_html=True)
             current_ledgers_text = "\n".join(client_masters.get(selected_client, []))
-            updated_text = st.text_area("Edit Chart of Accounts", value=current_ledgers_text, height=160)
+            updated_text = st.text_area("Chart of Accounts", value=current_ledgers_text, height=150)
             
             s_c1, s_c2 = st.columns(2)
             with s_c1:
-                if st.button("💾 Commit Ledger Changes", use_container_width=True):
+                if st.button("💾 Save Ledgers", use_container_width=True):
                     new_list = [l.strip() for l in updated_text.split("\n") if l.strip()]
                     client_masters[selected_client] = new_list
                     save_client_masters(client_masters)
@@ -1283,10 +1169,10 @@ else:
         st.markdown("---")
         m_c1, m_c2 = st.columns(2, gap="large")
         with m_c1:
-            st.markdown(f"#### 🧠 Memorized Line Items ({selected_client})")
+            st.markdown(f"#### 🧠 Memorized Purchase Items ({selected_client})")
             client_rules_view = item_rules.get(selected_client, {})
             if not client_rules_view:
-                st.info("No invoice item rules recorded yet.")
+                st.info("No item rules recorded yet.")
             else:
                 rules_display = [{"Item Description": k, "Assigned Ledger": v} for k, v in client_rules_view.items()]
                 st.dataframe(pd.DataFrame(rules_display), height=220, use_container_width=True)
