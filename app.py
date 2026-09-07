@@ -22,142 +22,226 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# 2. Refined Professional Light Theme Styling
+# 2. Bespoke CSS Injection matching the Exact Mockup
 CUSTOM_CSS = """
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Playfair+Display:ital,wght@0,600;0,700;1,600&display=swap');
     
     html, body, [class*="css"] {
-        font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+        font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
     }
-    
-    /* Clean Light Background */
+
+    /* Soft Sage & Mint Mesh Background */
     .stApp {
-        background-color: #F8FAFC;
+        background: radial-gradient(circle at 10% 20%, #E6F3EB 0%, #EFF6F1 45%, #F4F7F5 100%) !important;
+        min-height: 100vh;
     }
-    
-    /* Professional Light Sidebar */
+
+    /* Crisp Clean White Sidebar */
     [data-testid="stSidebar"] {
         background-color: #FFFFFF !important;
-        border-right: 1px solid #E2E8F0;
+        border-right: 1px solid #E2E8F0 !important;
+        padding-top: 1.5rem;
     }
     [data-testid="stSidebar"] * {
-        color: #0F172A !important;
+        color: #1E293B !important;
     }
-    [data-testid="stSidebar"] .stSelectbox label, 
-    [data-testid="stSidebar"] .stTextInput label {
-        font-weight: 700 !important;
+    [data-testid="stSidebar"] .stSelectbox label {
+        font-weight: 800 !important;
         color: #475569 !important;
-        text-transform: uppercase;
-        font-size: 0.75rem;
-        letter-spacing: 0.05em;
+        text-transform: uppercase !important;
+        font-size: 0.72rem !important;
+        letter-spacing: 0.06em !important;
+        margin-bottom: 6px !important;
     }
+
+    /* Gradient Client Selector Dropdown */
     [data-testid="stSidebar"] div[data-baseweb="select"] > div {
-        background-color: #F8FAFC !important;
-        border: 1px solid #CBD5E1 !important;
+        background: linear-gradient(135deg, #E2E8F0 0%, #CBD5E1 100%) !important;
+        border: 1px solid #94A3B8 !important;
+        border-radius: 12px !important;
+        padding: 4px 6px !important;
+        font-weight: 600 !important;
         color: #0F172A !important;
     }
 
-    /* Executive Hero Banner */
-    .hero-container {
-        background: linear-gradient(135deg, #0F2B48 0%, #173E65 60%, #1A5276 100%);
-        padding: 22px 30px;
-        border-radius: 14px;
+    /* AI Cache Status Card */
+    .ai-cache-box {
+        border: 1px solid #E2E8F0;
+        background: #FFFFFF;
+        border-radius: 12px;
+        padding: 14px 16px;
+        margin-top: 24px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.02);
+    }
+    .ai-cache-title {
+        font-size: 0.72rem;
+        font-weight: 800;
+        color: #475569;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        margin-bottom: 12px;
+    }
+    .ai-cache-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 8px 10px;
+        background: #F8FAFC;
+        border: 1px solid #EDF2F7;
+        border-radius: 8px;
+        margin-bottom: 8px;
+    }
+    .ai-cache-label {
+        font-size: 0.8rem;
+        color: #334155;
+        font-weight: 600;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+    .ai-cache-val {
+        font-size: 0.85rem;
+        font-weight: 700;
+        color: #0F172A;
+    }
+
+    /* Executive Hero Banner with Constellation Backdrop */
+    .hero-banner {
+        position: relative;
+        background: radial-gradient(ellipse at 85% 50%, rgba(30, 64, 110, 0.95) 0%, rgba(13, 34, 64, 1) 70%),
+                    url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="400" height="200" viewBox="0 0 400 200"><path d="M250,40 L340,90 L290,160 L380,120 L320,30 L220,110 Z" fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="1"/><circle cx="250" cy="40" r="2.5" fill="rgba(255,255,255,0.3)"/><circle cx="340" cy="90" r="2.5" fill="rgba(255,255,255,0.3)"/><circle cx="290" cy="160" r="2.5" fill="rgba(255,255,255,0.3)"/><circle cx="380" cy="120" r="2.5" fill="rgba(255,255,255,0.3)"/><circle cx="320" cy="30" r="2.5" fill="rgba(255,255,255,0.3)"/><circle cx="220" cy="110" r="2.5" fill="rgba(255,255,255,0.3)"/></svg>');
+        background-repeat: no-repeat;
+        background-position: right center;
+        background-size: contain;
+        background-color: #0D2240;
+        padding: 32px 40px;
+        border-radius: 16px;
         color: #FFFFFF;
-        box-shadow: 0 8px 20px -4px rgba(15, 43, 72, 0.12);
+        box-shadow: 0 12px 30px -8px rgba(13, 34, 64, 0.25);
         margin-bottom: 24px;
         display: flex;
         justify-content: space-between;
         align-items: center;
     }
     .hero-title {
-        font-size: 1.65rem;
-        font-weight: 800;
-        letter-spacing: -0.02em;
+        font-family: 'Playfair Display', serif;
+        font-size: 2rem;
+        font-weight: 700;
+        letter-spacing: -0.01em;
         margin: 0;
         color: #FFFFFF !important;
     }
     .hero-subtitle {
-        font-size: 0.92rem;
-        color: #93C5FD !important;
-        margin-top: 3px;
+        font-size: 0.88rem;
+        color: #94A3B8 !important;
+        margin-top: 8px;
         font-weight: 400;
+        letter-spacing: 0.01em;
     }
-    .hero-badge {
-        background: rgba(255, 255, 255, 0.14);
-        backdrop-filter: blur(8px);
-        padding: 8px 16px;
+    .hero-pill {
+        background: rgba(255, 255, 255, 0.12);
+        backdrop-filter: blur(10px);
+        padding: 7px 18px;
         border-radius: 9999px;
-        border: 1px solid rgba(255, 255, 255, 0.25);
+        border: 1px solid rgba(255, 255, 255, 0.2);
         font-weight: 600;
-        font-size: 0.85rem;
+        font-size: 0.82rem;
         color: #FFFFFF !important;
+        display: flex;
+        align-items: center;
+        gap: 6px;
     }
 
-    /* Clean Elevated Tab Navigation */
+    /* Top-Tier Modules: Deep Navy Pills */
+    .module-pill-container {
+        display: flex;
+        gap: 12px;
+        margin-bottom: 18px;
+    }
+    .module-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        background: #0D2240;
+        color: #FFFFFF !important;
+        padding: 9px 20px;
+        border-radius: 9999px;
+        font-size: 0.85rem;
+        font-weight: 700;
+        border: none;
+        box-shadow: 0 4px 10px rgba(13, 34, 64, 0.15);
+    }
+
+    /* Sub-Tier Rounded Pill Tabs */
     .stTabs [data-baseweb="tab-list"] {
-        gap: 10px;
-        background-color: transparent;
-        border-bottom: 2px solid #E2E8F0;
-        padding-bottom: 4px;
+        gap: 8px;
+        background-color: transparent !important;
+        border-bottom: none !important;
+        margin-bottom: 16px;
     }
     .stTabs [data-baseweb="tab"] {
-        background: #FFFFFF;
-        border: 1px solid #CBD5E1;
-        border-radius: 8px 8px 0px 0px;
-        padding: 10px 22px;
-        font-weight: 700;
-        font-size: 0.92rem;
-        color: #475569;
+        background: rgba(255, 255, 255, 0.6) !important;
+        border: 1px solid rgba(203, 213, 225, 0.6) !important;
+        border-radius: 9999px !important;
+        padding: 6px 18px !important;
+        font-weight: 600 !important;
+        font-size: 0.84rem !important;
+        color: #475569 !important;
+        backdrop-filter: blur(6px);
         transition: all 0.2s ease;
     }
     .stTabs [data-baseweb="tab"]:hover {
-        color: #0F2B48;
-        background: #F1F5F9;
+        background: #FFFFFF !important;
+        color: #0D2240 !important;
     }
     .stTabs [aria-selected="true"] {
-        background: #0F2B48 !important;
+        background: #0D2240 !important;
         color: #FFFFFF !important;
-        border-color: #0F2B48 !important;
+        border-color: #0D2240 !important;
+        box-shadow: 0 4px 12px rgba(13, 34, 64, 0.18) !important;
     }
 
-    /* Clean Card Containers */
-    .content-box {
-        background: #FFFFFF;
-        border: 1px solid #E2E8F0;
-        border-radius: 12px;
-        padding: 22px 24px;
+    /* Rounded Card Panel for Content */
+    .app-panel {
+        background: rgba(255, 255, 255, 0.75);
+        border: 1px solid rgba(226, 232, 240, 0.9);
+        border-radius: 14px;
+        padding: 24px 28px;
+        backdrop-filter: blur(12px);
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.02);
         margin-bottom: 16px;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.03);
     }
-    .bill-card {
-        background: #FFFFFF;
+    .empty-state-notice {
+        background: rgba(255, 255, 255, 0.65);
         border: 1px solid #E2E8F0;
-        border-radius: 12px;
+        border-radius: 10px;
         padding: 16px 20px;
-        margin-bottom: 10px;
-        box-shadow: 0 1px 2px rgba(0,0,0,0.02);
-        transition: all 0.15s ease;
-    }
-    .bill-card:hover {
-        border-color: #0F2B48;
-        box-shadow: 0 4px 10px rgba(0,0,0,0.05);
+        color: #64748B;
+        font-size: 0.9rem;
     }
 
-    /* Buttons */
-    .stButton>button {
-        border-radius: 8px;
-        font-weight: 600;
-        font-size: 0.88rem;
-        padding: 8px 18px;
-    }
+    /* Action Buttons */
     .stButton>button[kind="primary"] {
-        background-color: #0F2B48;
-        border-color: #0F2B48;
+        background-color: #0D2240 !important;
+        border-color: #0D2240 !important;
+        border-radius: 9999px !important;
+        padding: 8px 24px !important;
+        font-weight: 700 !important;
+        font-size: 0.88rem !important;
+        box-shadow: 0 4px 12px rgba(13, 34, 64, 0.18) !important;
     }
-    .stButton>button[kind="primary"]:hover {
-        background-color: #173E65;
-        border-color: #173E65;
+    .stButton>button[kind="secondary"] {
+        background-color: #FFFFFF !important;
+        border: 1px solid #CBD5E1 !important;
+        border-radius: 9999px !important;
+        color: #334155 !important;
+        padding: 8px 20px !important;
+        font-weight: 600 !important;
+    }
+    hr {
+        border-top: 1px solid rgba(203, 213, 225, 0.5) !important;
+        margin: 20px 0 !important;
     }
 </style>
 """
@@ -177,26 +261,26 @@ def check_password():
 
     if "password_correct" not in st.session_state:
         st.markdown("""
-        <div style="max-width: 400px; margin: 80px auto; background: #FFFFFF; padding: 36px; border-radius: 16px; border: 1px solid #E2E8F0; box-shadow: 0 10px 25px rgba(0,0,0,0.06); text-align: center;">
-            <div style="font-size: 2.2rem; margin-bottom: 8px;">🔐</div>
-            <h3 style="color: #0F2B48; font-weight: 800; margin-bottom: 4px;">Compliance4 Portal</h3>
-            <p style="color: #64748B; font-size: 0.88rem; margin-bottom: 24px;">Enter office passcode to continue</p>
+        <div style="max-width: 390px; margin: 90px auto; background: #FFFFFF; padding: 36px; border-radius: 20px; border: 1px solid #E2E8F0; box-shadow: 0 12px 30px rgba(0,0,0,0.06); text-align: center;">
+            <div style="font-size: 2.2rem; margin-bottom: 6px;">🔐</div>
+            <h3 style="color: #0D2240; font-family: 'Playfair Display', serif; font-weight: 700; margin-bottom: 2px;">Compliance4 Portal</h3>
+            <p style="color: #64748B; font-size: 0.88rem; margin-bottom: 20px;">Enter office passcode to continue</p>
         </div>
         """, unsafe_allow_html=True)
-        col_gate1, col_gate2, col_gate3 = st.columns([1.2, 1.6, 1.2])
-        with col_gate2:
+        col1, col2, col3 = st.columns([1.2, 1.6, 1.2])
+        with col2:
             st.text_input("Office Passcode", type="password", on_change=password_entered, key="password_input", label_visibility="collapsed", placeholder="Passcode...")
         return False
     elif not st.session_state["password_correct"]:
         st.markdown("""
-        <div style="max-width: 400px; margin: 80px auto 0 auto; background: #FFFFFF; padding: 36px 36px 12px 36px; border-radius: 16px; border: 1px solid #E2E8F0; text-align: center;">
-            <div style="font-size: 2.2rem; margin-bottom: 8px;">🔐</div>
-            <h3 style="color: #0F2B48; font-weight: 800; margin-bottom: 4px;">Compliance4 Portal</h3>
-            <p style="color: #64748B; font-size: 0.88rem; margin-bottom: 16px;">Enter office passcode to continue</p>
+        <div style="max-width: 390px; margin: 90px auto 0 auto; background: #FFFFFF; padding: 36px 36px 12px 36px; border-radius: 20px; border: 1px solid #E2E8F0; text-align: center;">
+            <div style="font-size: 2.2rem; margin-bottom: 6px;">🔐</div>
+            <h3 style="color: #0D2240; font-family: 'Playfair Display', serif; font-weight: 700; margin-bottom: 2px;">Compliance4 Portal</h3>
+            <p style="color: #64748B; font-size: 0.88rem; margin-bottom: 12px;">Enter office passcode to continue</p>
         </div>
         """, unsafe_allow_html=True)
-        col_gate1, col_gate2, col_gate3 = st.columns([1.2, 1.6, 1.2])
-        with col_gate2:
+        col1, col2, col3 = st.columns([1.2, 1.6, 1.2])
+        with col2:
             st.text_input("Office Passcode", type="password", on_change=password_entered, key="password_input", label_visibility="collapsed", placeholder="Passcode...")
             st.error("Incorrect passcode.")
         return False
@@ -397,6 +481,8 @@ if "active_review_index" not in st.session_state:
     st.session_state["active_review_index"] = None
 if "bank_df_working" not in st.session_state:
     st.session_state["bank_df_working"] = None
+if "active_main_module" not in st.session_state:
+    st.session_state["active_main_module"] = "Purchase"
 
 pending_bills_list = load_pending_bills()
 approved_bills_list = load_approved_bills()
@@ -611,22 +697,21 @@ def process_single_bill(file_name, file_bytes, mime, client, ledgers_str, client
             return False, None, f"{file_name}: {err_str}"
     return False, None, f"{file_name}: Google servers busy after 3 retries."
 
-# --- SIDEBAR (CLEAN WHITE/SLATE) ---
+# --- SIDEBAR (MATCHING PHOTO) ---
 with st.sidebar:
     if os.path.exists(LOGO_PATH):
-        st.image(LOGO_PATH, width=190)
+        st.image(LOGO_PATH, width=195)
     else:
-        st.markdown("<h2 style='color:#0F2B48; font-weight:800; margin-top:0;'>Compliance4</h2>", unsafe_allow_html=True)
+        st.markdown("<h2 style='color:#0D2240; font-family:Playfair Display,serif; font-weight:800; margin-top:0;'>Compliance4</h2>", unsafe_allow_html=True)
     
-    st.caption("BUSINESS PROCESS OUTSOURCING")
-    st.markdown("<hr style='margin: 12px 0 18px 0;'>", unsafe_allow_html=True)
+    st.markdown("<p style='color:#64748B; font-size:0.75rem; font-weight:600; letter-spacing:0.04em; margin-top:-6px; margin-bottom: 24px;'>BUSINESS PROCESS OUTSOURCING</p>", unsafe_allow_html=True)
 
     client_options = list(client_masters.keys())
     if not client_options:
         client_masters = DEFAULT_CLIENTS
         client_options = list(client_masters.keys())
 
-    selected_client = st.selectbox("Active Client Account", options=client_options)
+    selected_client = st.selectbox("ACTIVE CLIENT ACCOUNT", options=client_options)
     active_ledgers = client_masters.get(selected_client, ["Purchase Account"])
 
     try:
@@ -636,27 +721,32 @@ with st.sidebar:
 
     api_key = default_key if default_key else st.text_input("Gemini API Key", type="password")
 
-    st.markdown("<hr style='margin: 18px 0 14px 0;'>", unsafe_allow_html=True)
-    
     current_client_rules = item_rules.get(selected_client, {})
     current_bank_rules = bank_rules.get(selected_client, {})
     
+    # Styled AI Cache Box (Matching Screenshot)
     st.markdown(f"""
-    <div style="background: #F1F5F9; padding: 12px 14px; border-radius: 8px; border: 1px solid #E2E8F0;">
-        <div style="font-size: 0.72rem; color: #475569; font-weight: 700; text-transform: uppercase;">AI Cache Status</div>
-        <div style="font-size: 0.82rem; margin-top: 4px; color: #0F172A;">• <b>{len(current_client_rules)}</b> Invoice Items Memorized</div>
-        <div style="font-size: 0.82rem; margin-top: 2px; color: #0F172A;">• <b>{len(current_bank_rules)}</b> Bank Parties Mapped</div>
+    <div class="ai-cache-box">
+        <div class="ai-cache-title">AI CACHE STATUS</div>
+        <div class="ai-cache-row">
+            <span class="ai-cache-label">📑 Invoice Items Memorized</span>
+            <span class="ai-cache-val">{len(current_client_rules)}</span>
+        </div>
+        <div class="ai-cache-row">
+            <span class="ai-cache-label">🏛️ Bank Parties Mapped</span>
+            <span class="ai-cache-val">{len(current_bank_rules)}</span>
+        </div>
     </div>
     """, unsafe_allow_html=True)
 
-# Executive Top Banner
+# Executive Hero Banner (Matching Exact Photo Styling)
 st.markdown(f"""
-<div class="hero-container">
+<div class="hero-banner">
     <div>
         <h1 class="hero-title">Compliance4 Business</h1>
         <div class="hero-subtitle">Automated Accounting & Tally Integration Architecture</div>
     </div>
-    <div class="hero-badge">🏢 {selected_client}</div>
+    <div class="hero-pill">🏷️ {selected_client}</div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -694,8 +784,8 @@ if st.session_state["active_review_index"] is not None and st.session_state["act
 
     with col_preview:
         st.markdown(f"""
-        <div class="content-box">
-            <div style="font-weight: 700; color: #0F172A;">📄 Document Preview: {bill['file_name']}</div>
+        <div class="app-panel">
+            <div style="font-weight: 700; color: #0D2240;">📄 Document Preview: {bill['file_name']}</div>
         </div>
         """, unsafe_allow_html=True)
         if bill.get("file_base64"):
@@ -707,8 +797,8 @@ if st.session_state["active_review_index"] is not None and st.session_state["act
 
     with col_form:
         st.markdown("""
-        <div class="content-box">
-            <div style="font-weight: 700; color: #0F172A;">Invoice Header & GST Controls</div>
+        <div class="app-panel">
+            <div style="font-weight: 700; color: #0D2240;">Invoice Header & GST Controls</div>
         </div>
         """, unsafe_allow_html=True)
 
@@ -731,7 +821,7 @@ if st.session_state["active_review_index"] is not None and st.session_state["act
             dest_idx = STATES.index(bill["destination_state"]) if bill.get("destination_state") in STATES else 0
             bill["destination_state"] = st.selectbox("Place of Supply (POS)", STATES, index=dest_idx)
 
-        st.markdown("<div style='font-weight: 700; color: #0F172A; margin: 16px 0 8px 0;'>Line Items & Ledger Assignment</div>", unsafe_allow_html=True)
+        st.markdown("<div style='font-weight: 700; color: #0D2240; margin: 16px 0 8px 0;'>Line Items & Ledger Assignment</div>", unsafe_allow_html=True)
 
         df_items = pd.DataFrame(bill["items"])
         if "ledger" not in df_items.columns:
@@ -762,7 +852,7 @@ if st.session_state["active_review_index"] is not None and st.session_state["act
         )
         bill["items"] = edited_df.to_dict(orient="records")
 
-        st.markdown("<div style='font-weight: 700; color: #0F172A; margin: 16px 0 8px 0;'>Tax Breakdown</div>", unsafe_allow_html=True)
+        st.markdown("<div style='font-weight: 700; color: #0D2240; margin: 16px 0 8px 0;'>Tax Breakdown</div>", unsafe_allow_html=True)
         t_c1, t_c2, t_c3 = st.columns(3)
         with t_c1:
             bill["cgst"] = st.number_input("CGST (₹)", value=float(bill["cgst"]), step=1.0)
@@ -785,31 +875,44 @@ if st.session_state["active_review_index"] is not None and st.session_state["act
         save_pending_bills(pending_bills_list)
 
         st.markdown(f"""
-        <div style="background: #F1F5F9; border: 1px solid #CBD5E1; padding: 18px 24px; border-radius: 12px; margin-top: 16px;">
+        <div style="background: #FFFFFF; border: 1px solid #CBD5E1; padding: 18px 24px; border-radius: 14px; margin-top: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.03);">
             <div style="display: flex; justify-content: space-between; font-weight: 600; color: #475569; font-size: 0.95rem;">
                 <span>Taxable Subtotal: ₹{subtotal:,.2f}</span>
                 <span>GST Total: ₹{(bill['cgst']+bill['sgst']+bill['igst']):,.2f}</span>
             </div>
-            <div style="font-size: 1.6rem; font-weight: 800; color: #0F172A; margin-top: 8px;">Grand Total: ₹{grand_total:,.2f}</div>
+            <div style="font-size: 1.6rem; font-weight: 800; color: #0D2240; margin-top: 8px;">Grand Total: ₹{grand_total:,.2f}</div>
         </div>
         """, unsafe_allow_html=True)
 
-# --- MAIN DASHBOARD: MODULARIZED SECTIONS ---
+# --- MAIN DASHBOARD: TWO-TIER PILL INTERFACE ---
 else:
     if st.session_state["active_review_index"] is not None:
         st.session_state["active_review_index"] = None
 
-    # PRIMARY HIGH-LEVEL MODULES
-    mod_purchase, mod_bank, mod_settings = st.tabs([
-        "🧾 Purchase Invoices Module",
-        "🏦 Bank Statement Module",
-        "⚙️ Master Settings"
-    ])
+    # TIER 1: HIGH-LEVEL OPERATIONAL MODULE PILLS
+    col_mod1, col_mod2, col_mod3, col_mod_space = st.columns([1.6, 1.6, 1.4, 3.4])
+    with col_mod1:
+        btn_type1 = "primary" if st.session_state["active_main_module"] == "Purchase" else "secondary"
+        if st.button("📄 Purchase Invoices Module", type=btn_type1, use_container_width=True):
+            st.session_state["active_main_module"] = "Purchase"
+            st.rerun()
+    with col_mod2:
+        btn_type2 = "primary" if st.session_state["active_main_module"] == "Bank" else "secondary"
+        if st.button("🏛️ Bank Statement Module", type=btn_type2, use_container_width=True):
+            st.session_state["active_main_module"] = "Bank"
+            st.rerun()
+    with col_mod3:
+        btn_type3 = "primary" if st.session_state["active_main_module"] == "Settings" else "secondary"
+        if st.button("⚙️ Master Settings", type=btn_type3, use_container_width=True):
+            st.session_state["active_main_module"] = "Settings"
+            st.rerun()
 
-    # ==========================================
-    # MODULE 1: PURCHASE INVOICES
-    # ==========================================
-    with mod_purchase:
+    st.write("")
+
+    # ========================================================
+    # MODULE 1: PURCHASE INVOICES (SUB-TIER PILLS MATCHING PHOTO)
+    # ========================================================
+    if st.session_state["active_main_module"] == "Purchase":
         p_sub_upload, p_sub_review, p_sub_approved = st.tabs([
             "📤 Upload Invoices",
             f"📝 Needs Review ({len(pending_bills_list)})",
@@ -819,8 +922,8 @@ else:
         # SUB-TAB 1: UPLOAD
         with p_sub_upload:
             st.markdown(f"""
-            <div class="content-box">
-                <h4 style="color: #0F172A; font-weight: 700; margin-top: 0;">Upload Purchase Documents: {selected_client}</h4>
+            <div class="app-panel">
+                <h4 style="color: #0D2240; font-family:'Playfair Display',serif; font-weight: 700; margin-top: 0;">Upload Purchase Documents: {selected_client}</h4>
                 <p style="color: #64748B; font-size: 0.88rem; margin-bottom: 0;">
                     Upload purchase bills (PDF, JPG, PNG). The system extracts items and auto-assigns memorized ledgers.
                 </p>
@@ -895,25 +998,23 @@ else:
         with p_sub_review:
             if not pending_bills_list:
                 st.markdown("""
-                <div style="background: #FFFFFF; border: 1px dashed #CBD5E1; border-radius: 12px; padding: 40px; text-align: center;">
-                    <div style="font-size: 2rem; margin-bottom: 6px;">🎉</div>
-                    <h4 style="color: #0F172A; font-weight: 700; margin-bottom: 4px;">Queue Completely Cleared</h4>
-                    <p style="color: #64748B; font-size: 0.88rem; margin: 0;">No purchase bills currently awaiting review.</p>
+                <div class="empty-state-notice">
+                    No purchase bills currently awaiting review.
                 </div>
                 """, unsafe_allow_html=True)
             else:
                 for idx, item in enumerate(pending_bills_list):
                     st.markdown(f"""
-                    <div class="bill-card">
+                    <div class="app-panel" style="padding: 16px 22px; margin-bottom: 12px;">
                         <div style="display:flex; justify-content:space-between; align-items:flex-start;">
                             <div>
-                                <div style="font-size: 1.05rem; font-weight: 700; color: #0F172A;">{item['vendor_name']}</div>
+                                <div style="font-size: 1.05rem; font-weight: 700; color: #0D2240;">{item['vendor_name']}</div>
                                 <div style="font-size: 0.82rem; color: #64748B; margin-top: 3px;">
                                     <b>Invoice:</b> #{item['invoice_number']} &nbsp;|&nbsp; <b>Date:</b> {item['invoice_date']} &nbsp;|&nbsp; <b>GSTIN:</b> {item.get('vendor_gstin', 'N/A')}
                                 </div>
                             </div>
                             <div style="text-align: right;">
-                                <div style="font-size: 1.25rem; font-weight: 800; color: #0F2B48;">₹{item['grand_total']:,.2f}</div>
+                                <div style="font-size: 1.25rem; font-weight: 800; color: #0D2240;">₹{item['grand_total']:,.2f}</div>
                                 <div style="font-size: 0.78rem; color: #64748B;">Taxable: ₹{item['subtotal']:,.2f}</div>
                             </div>
                         </div>
@@ -927,10 +1028,14 @@ else:
                             st.rerun()
                     st.write("")
 
-        # SUB-TAB 3: APPROVED ARCHIVE
+        # SUB-TAB 3: APPROVED VOUCHERS (MATCHING PHOTO TEXT)
         with p_sub_approved:
             if not approved_bills_list:
-                st.info("No approved purchase vouchers present yet.")
+                st.markdown("""
+                <div class="empty-state-notice">
+                    No approved purchase vouchers present yet.
+                </div>
+                """, unsafe_allow_html=True)
             else:
                 summary_rows = []
                 itemized_rows = []
@@ -996,13 +1101,13 @@ else:
                         save_approved_bills(approved_bills_list)
                         st.rerun()
 
-    # ==========================================
+    # ========================================================
     # MODULE 2: BANK STATEMENTS
-    # ==========================================
-    with mod_bank:
+    # ========================================================
+    elif st.session_state["active_main_module"] == "Bank":
         st.markdown(f"""
-        <div class="content-box">
-            <h4 style="color: #0F172A; font-weight: 700; margin-top: 0;">Bank Statement Reconciliation: {selected_client}</h4>
+        <div class="app-panel">
+            <h4 style="color: #0D2240; font-family:'Playfair Display',serif; font-weight: 700; margin-top: 0;">Bank Statement Reconciliation: {selected_client}</h4>
             <p style="color: #64748B; font-size: 0.88rem; margin-bottom: 0;">
                 Upload bank statements in Excel or CSV. The system cleans narration noise, matches known vendors/customers, and generates Tally Payment & Receipt XML.
             </p>
@@ -1115,13 +1220,13 @@ else:
                     st.session_state["bank_df_working"] = None
                     st.rerun()
 
-    # ==========================================
+    # ========================================================
     # MODULE 3: MASTER SETTINGS
-    # ==========================================
-    with mod_settings:
+    # ========================================================
+    elif st.session_state["active_main_module"] == "Settings":
         st.markdown("""
-        <div class="content-box">
-            <h4 style="color: #0F172A; font-weight: 700; margin-top: 0;">Chart of Accounts & AI Memory</h4>
+        <div class="app-panel">
+            <h4 style="color: #0D2240; font-family:'Playfair Display',serif; font-weight: 700; margin-top: 0;">Chart of Accounts & AI Memory</h4>
             <p style="color: #64748B; font-size: 0.88rem; margin-bottom: 0;">
                 Configure client ledgers and inspect memorized items or bank counterparty rules.
             </p>
@@ -1131,7 +1236,7 @@ else:
         cfg_col1, cfg_col2 = st.columns([1, 1], gap="large")
 
         with cfg_col1:
-            st.markdown("<div style='font-weight:700; color:#0F172A; margin-bottom:8px;'>➕ Add New Client Organization</div>", unsafe_allow_html=True)
+            st.markdown("<div style='font-weight:700; color:#0D2240; margin-bottom:8px;'>➕ Add New Client Organization</div>", unsafe_allow_html=True)
             new_client_name = st.text_input("Organization Name")
             new_client_ledgers_raw = st.text_area(
                 "Expense / Purchase Ledgers (One per line)",
@@ -1147,7 +1252,7 @@ else:
                     st.rerun()
 
         with cfg_col2:
-            st.markdown(f"<div style='font-weight:700; color:#0F172A; margin-bottom:8px;'>✏️ Edit Ledgers for: <b>{selected_client}</b></div>", unsafe_allow_html=True)
+            st.markdown(f"<div style='font-weight:700; color:#0D2240; margin-bottom:8px;'>✏️ Edit Ledgers for: <b>{selected_client}</b></div>", unsafe_allow_html=True)
             current_ledgers_text = "\n".join(client_masters.get(selected_client, []))
             updated_text = st.text_area("Chart of Accounts", value=current_ledgers_text, height=150)
             
@@ -1182,7 +1287,7 @@ else:
                     st.rerun()
 
         with m_c2:
-            st.markdown(f"#### 🏦 Memorized Bank Parties ({selected_client})")
+            st.markdown(f"#### 🏛️ Memorized Bank Parties ({selected_client})")
             bank_rules_view = bank_rules.get(selected_client, {})
             if not bank_rules_view:
                 st.info("No bank counterparty rules recorded yet.")
