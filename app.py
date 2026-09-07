@@ -9,12 +9,14 @@ import json
 import os
 import time
 import base64
+import re
+from difflib import SequenceMatcher
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from PIL import Image
 
 # 1. Page Config & Custom Styling
 st.set_page_config(
-    page_title="Compliance4 Business - Smart Purchase Portal",
+    page_title="Compliance4 Business - Smart Accounting Portal",
     page_icon="💼",
     layout="wide"
 )
@@ -51,6 +53,8 @@ LOGO_PATH = "logo.png"
 CLIENTS_FILE = "client_ledgers.json"
 PENDING_BILLS_FILE = "pending_bills.json"
 APPROVED_BILLS_FILE = "approved_bills.json"
+ITEM_RULES_FILE = "item_ledger_rules.json"
+BANK_RULES_FILE = "bank_ledger_rules.json"
 
 DEFAULT_CLIENTS = {
     "The Marx Ventures": [
@@ -59,20 +63,27 @@ DEFAULT_CLIENTS = {
         "Purchase: Food & Groceries",
         "Packaging Supplies",
         "Kitchen Consumables",
-        "Freight & Delivery Inward"
+        "Freight & Delivery Inward",
+        "Bank Charges",
+        "Electricity Expense",
+        "Rent Expense",
+        "Staff Welfare Expense"
     ],
     "Indbuy Global Pvt Ltd": [
         "Trading Goods Purchase",
         "Freight & Forwarding Charges",
         "Warehouse Storage Expense",
         "Office Supplies Expense",
-        "Printing & Stationery"
+        "Printing & Stationery",
+        "Bank Charges",
+        "Professional Fees"
     ],
     "Default Client": [
         "Purchase Account",
         "Office Supplies Expense",
         "Repairs & Maintenance",
-        "Miscellaneous Expenses"
+        "Miscellaneous Expenses",
+        "Bank Charges"
     ]
 }
 
@@ -117,7 +128,85 @@ def save_approved_bills(bills):
     with open(APPROVED_BILLS_FILE, "w") as f:
         json.dump(bills, f, indent=4)
 
+def load_item_rules():
+    if os.path.exists(ITEM_RULES_FILE):
+        try:
+            with open(ITEM_RULES_FILE, "r") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+    return {}
+
+def save_item_rules(rules):
+    with open(ITEM_RULES_FILE, "w") as f:
+        json.dump(rules, f, indent=4)
+
+def load_bank_rules():
+    if os.path.exists(BANK_RULES_FILE):
+        try:
+            with open(BANK_RULES_FILE, "r") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+    return {}
+
+def save_bank_rules(rules):
+    with open(BANK_RULES_FILE, "w") as f:
+        json.dump(rules, f, indent=4)
+
+def clean_text(text: str) -> str:
+    text = str(text).lower()
+    text = re.sub(r'[^a-z0-9\s]', ' ', text)
+    return re.sub(r'\s+', ' ', text).strip()
+
+def match_learned_ledger(client_name: str, item_desc: str, rules_dict: dict, valid_ledgers: list) -> Optional[str]:
+    client_rules = rules_dict.get(client_name, {})
+    if not client_rules:
+        return None
+
+    cleaned_query = clean_text(item_desc)
+    if not cleaned_query:
+        return None
+
+    if cleaned_query in client_rules:
+        matched = client_rules[cleaned_query]
+        if matched in valid_ledgers:
+            return matched
+
+    best_ledger = None
+    best_score = 0.0
+
+    for learned_name, ledger_name in client_rules.items():
+        if ledger_name not in valid_ledgers:
+            continue
+        if learned_name in cleaned_query or cleaned_query in learned_name:
+            return ledger_name
+
+        sim = SequenceMatcher(None, cleaned_query, learned_name).ratio()
+        if sim > best_score and sim >= 0.80:
+            best_score = sim
+            best_ledger = ledger_name
+
+    return best_ledger
+
+def record_approval_learning(bill_dict: dict):
+    client_name = bill_dict.get("client_name", "Default Client")
+    rules = load_item_rules()
+    if client_name not in rules:
+        rules[client_name] = {}
+
+    for item in bill_dict.get("items", []):
+        desc = item.get("description", "")
+        ledger = item.get("ledger", "")
+        clean_desc = clean_text(desc)
+        if clean_desc and ledger:
+            rules[client_name][clean_desc] = ledger
+
+    save_item_rules(rules)
+
 client_masters = load_client_masters()
+item_rules = load_item_rules()
+bank_rules = load_bank_rules()
 
 GST_TREATMENTS = ["Regular", "Composition", "Unregistered", "Overseas / Import"]
 STATES = ["Gujarat", "Maharashtra", "Delhi", "Rajasthan", "Karnataka", "Tamil Nadu", "Other"]
@@ -146,15 +235,16 @@ class InvoiceExtraction(BaseModel):
     igst: float = Field(default=0.0, description="IGST amount")
     grand_total: float = Field(description="Grand invoice total")
 
-# 3. Active Review Index
+# 3. Active States
 if "active_review_index" not in st.session_state:
     st.session_state["active_review_index"] = None
+if "bank_df_working" not in st.session_state:
+    st.session_state["bank_df_working"] = None
 
-# Always read latest persisted data from disk
 pending_bills_list = load_pending_bills()
 approved_bills_list = load_approved_bills()
 
-# 4. Multi-Ledger Tally XML Generator
+# 4. Multi-Ledger Purchase Tally XML Generator
 def generate_tally_xml(approved_bills):
     xml = """<ENVELOPE>
   <HEADER>
@@ -182,7 +272,6 @@ def generate_tally_xml(approved_bills):
             <PARTYLEDGERNAME>{b["vendor_name"]}</PARTYLEDGERNAME>
             <NARRATION>{b.get("narration", "")}</NARRATION>
 
-            <!-- Vendor Total Credit -->
             <ALLLEDGERENTRIES.LIST>
               <LEDGERNAME>{b["vendor_name"]}</LEDGERNAME>
               <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
@@ -196,8 +285,7 @@ def generate_tally_xml(approved_bills):
             ledger_totals[led] = ledger_totals.get(led, 0.0) + amt
 
         for led_name, total_amt in ledger_totals.items():
-            xml += f"""            <!-- Debit Entry for {led_name} -->
-            <ALLLEDGERENTRIES.LIST>
+            xml += f"""            <ALLLEDGERENTRIES.LIST>
               <LEDGERNAME>{led_name}</LEDGERNAME>
               <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
               <AMOUNT>-{total_amt:.2f}</AMOUNT>
@@ -231,7 +319,82 @@ def generate_tally_xml(approved_bills):
 </ENVELOPE>"""
     return xml
 
-# Helper function to optimize and base64-encode image files
+# 5. Bank Statements Tally XML Generator (Payments & Receipts)
+def generate_bank_tally_xml(df_bank, bank_ledger_name):
+    xml = """<ENVELOPE>
+  <HEADER>
+    <TALLYREQUEST>Import Data</TALLYREQUEST>
+  </HEADER>
+  <BODY>
+    <IMPORTDATA>
+      <REQUESTDESC>
+        <REPORTNAME>Vouchers</REPORTNAME>
+      </REQUESTDESC>
+      <REQUESTDATA>
+"""
+    for _, row in df_bank.iterrows():
+        raw_date = str(row.get("Date", "")).strip()
+        clean_date = "".join(filter(str.isdigit, raw_date))
+        if len(clean_date) == 8 and "-" in raw_date:
+            p = raw_date.split("-")
+            if len(p[0]) == 2:
+                clean_date = f"{p[2]}{p[1]}{p[0]}"
+        elif len(clean_date) != 8:
+            clean_date = time.strftime("%Y%m%d")
+
+        narration = str(row.get("Narration", "")).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        assigned_ledger = str(row.get("Assigned Ledger", "Suspense Account"))
+        debit_amt = float(row.get("Debit / Withdrawal", 0.0) or 0.0)
+        credit_amt = float(row.get("Credit / Deposit", 0.0) or 0.0)
+
+        # Withdrawal / Payment Voucher
+        if debit_amt > 0:
+            xml += f"""        <TALLYMESSAGE xmlns:UDF="TallyUDF">
+          <VOUCHER VCHTYPE="Payment" ACTION="Create">
+            <DATE>{clean_date}</DATE>
+            <VOUCHERTYPENAME>Payment</VOUCHERTYPENAME>
+            <PARTYLEDGERNAME>{bank_ledger_name}</PARTYLEDGERNAME>
+            <NARRATION>{narration}</NARRATION>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>{assigned_ledger}</LEDGERNAME>
+              <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
+              <AMOUNT>-{debit_amt:.2f}</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>{bank_ledger_name}</LEDGERNAME>
+              <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
+              <AMOUNT>{debit_amt:.2f}</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        </TALLYMESSAGE>\n"""
+
+        # Deposit / Receipt Voucher
+        elif credit_amt > 0:
+            xml += f"""        <TALLYMESSAGE xmlns:UDF="TallyUDF">
+          <VOUCHER VCHTYPE="Receipt" ACTION="Create">
+            <DATE>{clean_date}</DATE>
+            <VOUCHERTYPENAME>Receipt</VOUCHERTYPENAME>
+            <PARTYLEDGERNAME>{bank_ledger_name}</PARTYLEDGERNAME>
+            <NARRATION>{narration}</NARRATION>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>{bank_ledger_name}</LEDGERNAME>
+              <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
+              <AMOUNT>-{credit_amt:.2f}</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>{assigned_ledger}</LEDGERNAME>
+              <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
+              <AMOUNT>{credit_amt:.2f}</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        </TALLYMESSAGE>\n"""
+
+    xml += """      </REQUESTDATA>
+    </IMPORTDATA>
+  </BODY>
+</ENVELOPE>"""
+    return xml
+
 def optimize_file(file_name, raw_bytes):
     ext = file_name.lower().split('.')[-1]
     if ext in ['jpg', 'jpeg', 'png']:
@@ -247,8 +410,7 @@ def optimize_file(file_name, raw_bytes):
             return "image/jpeg", raw_bytes
     return "application/pdf", raw_bytes
 
-# Worker function for single invoice extraction
-def process_single_bill(file_name, file_bytes, mime, client, ledgers_str, client_name):
+def process_single_bill(file_name, file_bytes, mime, client, ledgers_str, client_name, valid_ledgers, rules_dict):
     prompt = f"""
     Extract invoice details accurately into structured format.
     For each line item, assign the best matching accounting ledger strictly from this list of ledgers available for this client:
@@ -272,11 +434,21 @@ def process_single_bill(file_name, file_bytes, mime, client, ledgers_str, client
                 parsed = InvoiceExtraction.model_validate_json(resp.text)
                 bill_entry = parsed.model_dump()
                 bill_entry["file_name"] = file_name
-                # Persist bytes as base64 string for JSON compatibility
                 bill_entry["file_base64"] = base64.b64encode(file_bytes).decode("utf-8")
                 bill_entry["mime_type"] = mime
                 bill_entry["gst_treatment"] = "Regular"
                 bill_entry["client_name"] = client_name
+
+                for itm in bill_entry.get("items", []):
+                    learned_ledger = match_learned_ledger(
+                        client_name,
+                        itm.get("description", ""),
+                        rules_dict,
+                        valid_ledgers
+                    )
+                    if learned_ledger:
+                        itm["ledger"] = learned_ledger
+
                 return True, bill_entry, None
         except Exception as err:
             err_str = str(err)
@@ -286,7 +458,7 @@ def process_single_bill(file_name, file_bytes, mime, client, ledgers_str, client
             return False, None, f"{file_name}: {err_str}"
     return False, None, f"{file_name}: Google servers busy after 3 retries."
 
-# 5. Sidebar Branding & Client Selection
+# 6. Sidebar Branding & Client Selection
 if os.path.exists(LOGO_PATH):
     st.sidebar.image(LOGO_PATH, width=180)
 else:
@@ -309,7 +481,12 @@ if not client_options:
 selected_client = st.sidebar.selectbox("🏢 Active Client / Company", options=client_options)
 active_ledgers = client_masters.get(selected_client, ["Purchase Account"])
 
-# --- DETAIL REVIEW SCREEN ---
+current_client_rules = item_rules.get(selected_client, {})
+st.sidebar.caption(f"🧠 Learned Item Rules: **{len(current_client_rules)} items**")
+current_bank_rules = bank_rules.get(selected_client, {})
+st.sidebar.caption(f"🧠 Learned Bank Rules: **{len(current_bank_rules)} counterparties**")
+
+# --- DETAIL REVIEW SCREEN (PURCHASES) ---
 if st.session_state["active_review_index"] is not None and st.session_state["active_review_index"] < len(pending_bills_list):
     idx = st.session_state["active_review_index"]
     bill = pending_bills_list[idx]
@@ -330,11 +507,12 @@ if st.session_state["active_review_index"] is not None and st.session_state["act
         with col_app:
             if st.button("✅ Approve", type="primary"):
                 approved_entry = pending_bills_list.pop(idx)
+                record_approval_learning(approved_entry)
                 approved_bills_list.append(approved_entry)
                 save_pending_bills(pending_bills_list)
                 save_approved_bills(approved_bills_list)
                 st.session_state["active_review_index"] = None
-                st.success("Invoice Approved & Saved!")
+                st.success("Invoice Approved & Memory Updated!")
                 st.rerun()
 
     st.divider()
@@ -391,7 +569,7 @@ if st.session_state["active_review_index"] is not None and st.session_state["act
                 "amount": st.column_config.NumberColumn("Amount", format="₹%.2f"),
                 "ledger": st.column_config.SelectboxColumn(
                     f"{selected_client} Ledger",
-                    help="Assign a client-specific debit ledger",
+                    help="Assign a client-specific debit ledger (Approve to memorize)",
                     width="medium",
                     options=active_ledgers,
                     required=True,
@@ -421,7 +599,6 @@ if st.session_state["active_review_index"] is not None and st.session_state["act
         bill["subtotal"] = subtotal
         bill["grand_total"] = grand_total
 
-        # Save active edits directly to disk
         pending_bills_list[idx] = bill
         save_pending_bills(pending_bills_list)
 
@@ -434,16 +611,16 @@ if st.session_state["active_review_index"] is not None and st.session_state["act
 
 # --- MAIN DASHBOARD TABS ---
 else:
-    # Reset review pointer if list changed
     if st.session_state["active_review_index"] is not None:
         st.session_state["active_review_index"] = None
 
-    st.markdown('<h1 style="color: #1a2a4b; margin-bottom: 0;">Compliance4 Business</h1><p style="color: #4a5568; font-size: 1.1rem; margin-top: -5px;">Automated Purchases & Tally Integration Portal</p>', unsafe_allow_html=True)
+    st.markdown('<h1 style="color: #1a2a4b; margin-bottom: 0;">Compliance4 Business</h1><p style="color: #4a5568; font-size: 1.1rem; margin-top: -5px;">Automated Purchases & Bank Integration Portal</p>', unsafe_allow_html=True)
 
-    tab_uploads, tab_review, tab_all, tab_settings = st.tabs([
+    tab_uploads, tab_review, tab_all, tab_bank, tab_settings = st.tabs([
         "📤 Bill Uploads",
         f"📝 Needs Review ({len(pending_bills_list)})",
         f"✅ All Bills ({len(approved_bills_list)})",
+        "🏦 Bank Statement Coding",
         "⚙️ Client Master Settings"
     ])
 
@@ -465,7 +642,7 @@ else:
                 client = genai.Client(api_key=api_key)
                 progress_bar = st.progress(0)
                 status_placeholder = st.empty()
-                status_placeholder.text("Extracting invoice data...")
+                status_placeholder.text("Extracting invoice data & applying learned rules...")
 
                 prepared_files = []
                 for f in uploaded_files:
@@ -478,6 +655,8 @@ else:
                 total_files = len(prepared_files)
                 newly_extracted = []
 
+                fresh_rules = load_item_rules()
+
                 max_workers = min(4, total_files)
                 with ThreadPoolExecutor(max_workers=max_workers) as executor:
                     futures = [
@@ -488,7 +667,9 @@ else:
                             fmime,
                             client,
                             ledgers_str,
-                            selected_client
+                            selected_client,
+                            active_ledgers,
+                            fresh_rules
                         )
                         for fname, fbytes, fmime in prepared_files
                     ]
@@ -601,7 +782,118 @@ else:
                     st.success("Approved register cleared for next batch!")
                     st.rerun()
 
-    # TAB 4: CLIENT MASTER SETTINGS
+    # TAB 4: BANK STATEMENT CODING MODULE
+    with tab_bank:
+        st.subheader(f"🏦 Smart Bank Statement Coding: {selected_client}")
+        
+        bank_col1, bank_col2 = st.columns([2, 1])
+        with bank_col1:
+            uploaded_bank = st.file_uploader(
+                "Upload Bank Statement (Excel or CSV format)",
+                type=["xlsx", "xls", "csv"],
+                key="bank_file_uploader"
+            )
+        with bank_col2:
+            tally_bank_name = st.text_input("Tally Bank Ledger Name", value="HDFC Bank Current A/c")
+
+        if uploaded_bank is not None:
+            if st.session_state["bank_df_working"] is None:
+                try:
+                    if uploaded_bank.name.endswith(".csv"):
+                        df_raw = pd.read_csv(uploaded_bank)
+                    else:
+                        df_raw = pd.read_excel(uploaded_bank)
+
+                    # Normalize column headers
+                    clean_cols = {c: str(c).strip().lower() for c in df_raw.columns}
+                    date_col = next((c for c, n in clean_cols.items() if "date" in n or "txn date" in n), None)
+                    narration_col = next((c for c, n in clean_cols.items() if any(k in n for k in ["narration", "description", "particulars", "remarks"])), None)
+                    debit_col = next((c for c, n in clean_cols.items() if any(k in n for k in ["debit", "withdrawal", "dr"])), None)
+                    credit_col = next((c for c, n in clean_cols.items() if any(k in n for k in ["credit", "deposit", "cr"])), None)
+
+                    if not (date_col and narration_col):
+                        st.error("Could not automatically locate 'Date' and 'Narration' columns. Please check your Excel format.")
+                    else:
+                        parsed_rows = []
+                        rules = load_bank_rules()
+                        for _, row in df_raw.iterrows():
+                            d_val = str(row.get(date_col, "")).split(" ")[0]
+                            n_val = str(row.get(narration_col, "")).strip()
+                            if not n_val or n_val.lower() == "nan":
+                                continue
+
+                            dr = float(row.get(debit_col, 0.0) or 0.0) if debit_col else 0.0
+                            cr = float(row.get(credit_col, 0.0) or 0.0) if credit_col else 0.0
+
+                            # Auto-match from bank memory
+                            matched_ledger = match_learned_ledger(selected_client, n_val, rules, active_ledgers)
+                            default_ledger = matched_ledger if matched_ledger else active_ledgers[0]
+
+                            parsed_rows.append({
+                                "Date": d_val,
+                                "Narration": n_val,
+                                "Debit / Withdrawal": dr,
+                                "Credit / Deposit": cr,
+                                "Assigned Ledger": default_ledger
+                            })
+
+                        st.session_state["bank_df_working"] = pd.DataFrame(parsed_rows)
+                except Exception as e:
+                    st.error(f"Error reading bank file: {e}")
+
+        if st.session_state["bank_df_working"] is not None:
+            st.markdown(f"#### Review & Select Ledgers ({len(st.session_state['bank_df_working'])} Transactions)")
+            st.caption("Change any ledger in the dropdown below. Once saved, the engine memorizes the counterparty automatically.")
+
+            edited_bank_df = st.data_editor(
+                st.session_state["bank_df_working"],
+                column_config={
+                    "Date": st.column_config.TextColumn("Date", width="small"),
+                    "Narration": st.column_config.TextColumn("Bank Narration", width="large"),
+                    "Debit / Withdrawal": st.column_config.NumberColumn("Debit (₹)", format="₹%.2f"),
+                    "Credit / Deposit": st.column_config.NumberColumn("Credit (₹)", format="₹%.2f"),
+                    "Assigned Ledger": st.column_config.SelectboxColumn(
+                        f"{selected_client} Ledger",
+                        help="Select Tally expense, party, or revenue ledger",
+                        width="medium",
+                        options=active_ledgers,
+                        required=True,
+                    )
+                },
+                num_rows="dynamic",
+                use_container_width=True
+            )
+
+            btn_col1, btn_col2, btn_col3 = st.columns([2, 2, 2])
+            with btn_col1:
+                if st.button("🧠 Save Mappings to Memory"):
+                    rules = load_bank_rules()
+                    if selected_client not in rules:
+                        rules[selected_client] = {}
+                    for _, row in edited_bank_df.iterrows():
+                        cleaned_narr = clean_text(row["Narration"])
+                        if cleaned_narr:
+                            rules[selected_client][cleaned_narr] = row["Assigned Ledger"]
+                    save_bank_rules(rules)
+                    st.session_state["bank_df_working"] = edited_bank_df
+                    st.success("Bank rules memorized successfully!")
+                    st.rerun()
+
+            with btn_col2:
+                bank_xml = generate_bank_tally_xml(edited_bank_df, tally_bank_name)
+                st.download_button(
+                    label="📥 Download Bank Tally XML",
+                    data=bank_xml,
+                    file_name=f"{selected_client}_Bank_Vouchers.xml",
+                    mime="application/xml"
+                )
+
+            with btn_col3:
+                if st.button("🗑️ Reset Bank Statement"):
+                    st.session_state["bank_df_working"] = None
+                    st.rerun()
+
+    # TAB 5: CLIENT MASTER SETTINGS & MEMORY
     with tab_settings:
         st.subheader("⚙️ Manage Clients & Chart of Accounts")
         
@@ -612,7 +904,7 @@ else:
             new_client_name = st.text_input("New Client / Company Name")
             new_client_ledgers_raw = st.text_area(
                 "Expense / Purchase Ledgers (One ledger per line)",
-                value="Purchase Account\nPackaging Supplies\nFreight Charges\nOffice Stationery"
+                value="Purchase Account\nPackaging Supplies\nFreight Charges\nOffice Stationery\nBank Charges"
             )
             if st.button("➕ Add / Update Client"):
                 if new_client_name.strip():
@@ -642,3 +934,31 @@ else:
                         save_client_masters(client_masters)
                         st.warning(f"Deleted '{selected_client}'.")
                         st.rerun()
+
+        st.divider()
+        m_c1, m_c2 = st.columns(2)
+        with m_c1:
+            st.markdown(f"#### 🧠 Item Memory: **{selected_client}**")
+            client_rules_view = item_rules.get(selected_client, {})
+            if not client_rules_view:
+                st.info("No invoice items memorized yet.")
+            else:
+                rules_display = [{"Item": k, "Ledger": v} for k, v in client_rules_view.items()]
+                st.dataframe(pd.DataFrame(rules_display), height=200, use_container_width=True)
+                if st.button("🧹 Reset Invoice Memory"):
+                    item_rules[selected_client] = {}
+                    save_item_rules(item_rules)
+                    st.rerun()
+
+        with m_c2:
+            st.markdown(f"#### 🏦 Bank Memory: **{selected_client}**")
+            bank_rules_view = bank_rules.get(selected_client, {})
+            if not bank_rules_view:
+                st.info("No bank narrations memorized yet.")
+            else:
+                bank_display = [{"Counterparty / Narration": k, "Ledger": v} for k, v in bank_rules_view.items()]
+                st.dataframe(pd.DataFrame(bank_display), height=200, use_container_width=True)
+                if st.button("🧹 Reset Bank Memory"):
+                    bank_rules[selected_client] = {}
+                    save_bank_rules(bank_rules)
+                    st.rerun()
