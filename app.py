@@ -22,7 +22,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# 2. Bespoke CSS Injection matching the Exact Mockup
+# 2. Bespoke Styling Injection
 CUSTOM_CSS = """
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Playfair+Display:ital,wght@0,600;0,700;1,600&display=swap');
@@ -31,13 +31,11 @@ CUSTOM_CSS = """
         font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
     }
 
-    /* Soft Sage & Mint Mesh Background */
     .stApp {
         background: radial-gradient(circle at 10% 20%, #E6F3EB 0%, #EFF6F1 45%, #F4F7F5 100%) !important;
         min-height: 100vh;
     }
 
-    /* Crisp Clean White Sidebar */
     [data-testid="stSidebar"] {
         background-color: #FFFFFF !important;
         border-right: 1px solid #E2E8F0 !important;
@@ -55,7 +53,6 @@ CUSTOM_CSS = """
         margin-bottom: 6px !important;
     }
 
-    /* Gradient Client Selector Dropdown */
     [data-testid="stSidebar"] div[data-baseweb="select"] > div {
         background: linear-gradient(135deg, #E2E8F0 0%, #CBD5E1 100%) !important;
         border: 1px solid #94A3B8 !important;
@@ -65,7 +62,6 @@ CUSTOM_CSS = """
         color: #0F172A !important;
     }
 
-    /* AI Cache Status Card */
     .ai-cache-box {
         border: 1px solid #E2E8F0;
         background: #FFFFFF;
@@ -106,7 +102,6 @@ CUSTOM_CSS = """
         color: #0F172A;
     }
 
-    /* Executive Hero Banner with Constellation Backdrop */
     .hero-banner {
         position: relative;
         background: radial-gradient(ellipse at 85% 50%, rgba(30, 64, 110, 0.95) 0%, rgba(13, 34, 64, 1) 70%),
@@ -153,27 +148,6 @@ CUSTOM_CSS = """
         gap: 6px;
     }
 
-    /* Top-Tier Modules: Deep Navy Pills */
-    .module-pill-container {
-        display: flex;
-        gap: 12px;
-        margin-bottom: 18px;
-    }
-    .module-pill {
-        display: inline-flex;
-        align-items: center;
-        gap: 8px;
-        background: #0D2240;
-        color: #FFFFFF !important;
-        padding: 9px 20px;
-        border-radius: 9999px;
-        font-size: 0.85rem;
-        font-weight: 700;
-        border: none;
-        box-shadow: 0 4px 10px rgba(13, 34, 64, 0.15);
-    }
-
-    /* Sub-Tier Rounded Pill Tabs */
     .stTabs [data-baseweb="tab-list"] {
         gap: 8px;
         background-color: transparent !important;
@@ -202,7 +176,6 @@ CUSTOM_CSS = """
         box-shadow: 0 4px 12px rgba(13, 34, 64, 0.18) !important;
     }
 
-    /* Rounded Card Panel for Content */
     .app-panel {
         background: rgba(255, 255, 255, 0.75);
         border: 1px solid rgba(226, 232, 240, 0.9);
@@ -221,7 +194,29 @@ CUSTOM_CSS = """
         font-size: 0.9rem;
     }
 
-    /* Action Buttons */
+    /* Duplicate Warning Alert Banner */
+    .duplicate-alert {
+        background: #FEF2F2;
+        border: 1.5px solid #F87171;
+        border-radius: 12px;
+        padding: 14px 18px;
+        color: #991B1B;
+        margin-bottom: 16px;
+        box-shadow: 0 2px 6px rgba(239, 68, 68, 0.1);
+    }
+    .duplicate-alert-title {
+        font-weight: 800;
+        font-size: 0.95rem;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+    .duplicate-alert-desc {
+        font-size: 0.85rem;
+        margin-top: 4px;
+        color: #7F1D1D;
+    }
+
     .stButton>button[kind="primary"] {
         background-color: #0D2240 !important;
         border-color: #0D2240 !important;
@@ -445,6 +440,41 @@ def record_approval_learning(bill_dict: dict):
             rules[client_name][clean_desc] = ledger
 
     save_item_rules(rules)
+
+# DUPLICATE INVOICE CHECK FUNCTION
+def check_invoice_duplicate(vendor_name: str, invoice_no: str, current_idx: int, pending_list: list, approved_list: list):
+    clean_v = clean_text(vendor_name)
+    clean_inv = clean_text(invoice_no)
+    
+    if not clean_inv or not clean_v:
+        return None
+
+    # Check across Approved Bills Archive
+    for b in approved_list:
+        if clean_text(b.get("vendor_name", "")) == clean_v and clean_text(b.get("invoice_number", "")) == clean_inv:
+            return {
+                "source": "Approved Vouchers",
+                "vendor": b.get("vendor_name"),
+                "inv_no": b.get("invoice_number"),
+                "date": b.get("invoice_date"),
+                "total": b.get("grand_total", 0.0),
+                "file": b.get("file_name", "Previous Upload")
+            }
+
+    # Check across other pending bills in queue
+    for i, b in enumerate(pending_list):
+        if i == current_idx:
+            continue
+        if clean_text(b.get("vendor_name", "")) == clean_v and clean_text(b.get("invoice_number", "")) == clean_inv:
+            return {
+                "source": "Pending Review Queue",
+                "vendor": b.get("vendor_name"),
+                "inv_no": b.get("invoice_number"),
+                "date": b.get("invoice_date"),
+                "total": b.get("grand_total", 0.0),
+                "file": b.get("file_name", "Staged Bill")
+            }
+    return None
 
 client_masters = load_client_masters()
 item_rules = load_item_rules()
@@ -697,7 +727,7 @@ def process_single_bill(file_name, file_bytes, mime, client, ledgers_str, client
             return False, None, f"{file_name}: {err_str}"
     return False, None, f"{file_name}: Google servers busy after 3 retries."
 
-# --- SIDEBAR (MATCHING PHOTO) ---
+# --- SIDEBAR ---
 with st.sidebar:
     if os.path.exists(LOGO_PATH):
         st.image(LOGO_PATH, width=195)
@@ -724,7 +754,6 @@ with st.sidebar:
     current_client_rules = item_rules.get(selected_client, {})
     current_bank_rules = bank_rules.get(selected_client, {})
     
-    # Styled AI Cache Box (Matching Screenshot)
     st.markdown(f"""
     <div class="ai-cache-box">
         <div class="ai-cache-title">AI CACHE STATUS</div>
@@ -739,7 +768,7 @@ with st.sidebar:
     </div>
     """, unsafe_allow_html=True)
 
-# Executive Hero Banner (Matching Exact Photo Styling)
+# Executive Hero Banner
 st.markdown(f"""
 <div class="hero-banner">
     <div>
@@ -754,6 +783,15 @@ st.markdown(f"""
 if st.session_state["active_review_index"] is not None and st.session_state["active_review_index"] < len(pending_bills_list):
     idx = st.session_state["active_review_index"]
     bill = pending_bills_list[idx]
+
+    # CHECK FOR DUPLICATES
+    dup_match = check_invoice_duplicate(
+        bill.get("vendor_name", ""),
+        bill.get("invoice_number", ""),
+        idx,
+        pending_bills_list,
+        approved_bills_list
+    )
 
     c_nav1, c_nav2 = st.columns([7, 3])
     with c_nav1:
@@ -778,6 +816,20 @@ if st.session_state["active_review_index"] is not None and st.session_state["act
                 st.session_state["active_review_index"] = None
                 st.toast("Invoice approved and memorized!", icon="✨")
                 st.rerun()
+
+    # RENDER DUPLICATE CALLOUT IF TRIGGERED
+    if dup_match:
+        st.markdown(f"""
+        <div class="duplicate-alert">
+            <div class="duplicate-alert-title">⚠️ Potential Duplicate Invoice Detected!</div>
+            <div class="duplicate-alert-desc">
+                An invoice with number <b>#{dup_match['inv_no']}</b> from <b>{dup_match['vendor']}</b> 
+                (Total: <b>₹{dup_match['total']:,.2f}</b>, Date: <b>{dup_match['date']}</b>) 
+                already exists in <b>{dup_match['source']}</b> (Original file: <i>{dup_match['file']}</i>).
+                <br>Please verify this document carefully before approving to prevent double accounting.
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
 
     st.markdown("---")
     col_preview, col_form = st.columns([1, 1.1], gap="large")
@@ -820,6 +872,9 @@ if st.session_state["active_review_index"] is not None and st.session_state["act
         with r2_c2:
             dest_idx = STATES.index(bill["destination_state"]) if bill.get("destination_state") in STATES else 0
             bill["destination_state"] = st.selectbox("Place of Supply (POS)", STATES, index=dest_idx)
+
+        bill["invoice_number"] = st.text_input("Invoice Number", value=bill.get("invoice_number", ""))
+        bill["invoice_date"] = st.text_input("Invoice Date (DD-MM-YYYY)", value=bill.get("invoice_date", ""))
 
         st.markdown("<div style='font-weight: 700; color: #0D2240; margin: 16px 0 8px 0;'>Line Items & Ledger Assignment</div>", unsafe_allow_html=True)
 
@@ -884,12 +939,11 @@ if st.session_state["active_review_index"] is not None and st.session_state["act
         </div>
         """, unsafe_allow_html=True)
 
-# --- MAIN DASHBOARD: TWO-TIER PILL INTERFACE ---
+# --- MAIN DASHBOARD INTERFACE ---
 else:
     if st.session_state["active_review_index"] is not None:
         st.session_state["active_review_index"] = None
 
-    # TIER 1: HIGH-LEVEL OPERATIONAL MODULE PILLS
     col_mod1, col_mod2, col_mod3, col_mod_space = st.columns([1.6, 1.6, 1.4, 3.4])
     with col_mod1:
         btn_type1 = "primary" if st.session_state["active_main_module"] == "Purchase" else "secondary"
@@ -910,7 +964,7 @@ else:
     st.write("")
 
     # ========================================================
-    # MODULE 1: PURCHASE INVOICES (SUB-TIER PILLS MATCHING PHOTO)
+    # MODULE 1: PURCHASE INVOICES
     # ========================================================
     if st.session_state["active_main_module"] == "Purchase":
         p_sub_upload, p_sub_review, p_sub_approved = st.tabs([
@@ -919,7 +973,6 @@ else:
             f"✅ Approved Vouchers ({len(approved_bills_list)})"
         ])
 
-        # SUB-TAB 1: UPLOAD
         with p_sub_upload:
             st.markdown(f"""
             <div class="app-panel">
@@ -994,7 +1047,6 @@ else:
                         time.sleep(1)
                         st.rerun()
 
-        # SUB-TAB 2: NEEDS REVIEW
         with p_sub_review:
             if not pending_bills_list:
                 st.markdown("""
@@ -1004,11 +1056,21 @@ else:
                 """, unsafe_allow_html=True)
             else:
                 for idx, item in enumerate(pending_bills_list):
+                    # Quick list-level duplicate tag
+                    is_dup = check_invoice_duplicate(
+                        item.get("vendor_name", ""),
+                        item.get("invoice_number", ""),
+                        idx,
+                        pending_bills_list,
+                        approved_bills_list
+                    )
+                    dup_tag = " <span style='background:#FEE2E2; color:#B91C1C; font-size:0.75rem; font-weight:700; padding:2px 8px; border-radius:9999px; margin-left:8px;'>⚠️ DUPLICATE</span>" if is_dup else ""
+
                     st.markdown(f"""
-                    <div class="app-panel" style="padding: 16px 22px; margin-bottom: 12px;">
+                    <div class="app-panel" style="padding: 16px 22px; margin-bottom: 12px; {'border-left: 4px solid #EF4444;' if is_dup else ''}">
                         <div style="display:flex; justify-content:space-between; align-items:flex-start;">
                             <div>
-                                <div style="font-size: 1.05rem; font-weight: 700; color: #0D2240;">{item['vendor_name']}</div>
+                                <div style="font-size: 1.05rem; font-weight: 700; color: #0D2240;">{item['vendor_name']}{dup_tag}</div>
                                 <div style="font-size: 0.82rem; color: #64748B; margin-top: 3px;">
                                     <b>Invoice:</b> #{item['invoice_number']} &nbsp;|&nbsp; <b>Date:</b> {item['invoice_date']} &nbsp;|&nbsp; <b>GSTIN:</b> {item.get('vendor_gstin', 'N/A')}
                                 </div>
@@ -1028,7 +1090,6 @@ else:
                             st.rerun()
                     st.write("")
 
-        # SUB-TAB 3: APPROVED VOUCHERS (MATCHING PHOTO TEXT)
         with p_sub_approved:
             if not approved_bills_list:
                 st.markdown("""
@@ -1252,7 +1313,7 @@ else:
                     st.rerun()
 
         with cfg_col2:
-            st.markdown(f"<div style='font-weight:700; color:#0D2240; margin-bottom:8px;'>✏️ Edit Ledgers for: <b>{selected_client}</b></div>", unsafe_allow_html=True)
+            st.markdown(f"<div style='font-weight:700; color:#0F172A; margin-bottom:8px;'>✏️ Edit Ledgers for: <b>{selected_client}</b></div>", unsafe_allow_html=True)
             current_ledgers_text = "\n".join(client_masters.get(selected_client, []))
             updated_text = st.text_area("Chart of Accounts", value=current_ledgers_text, height=150)
             
