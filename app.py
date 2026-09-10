@@ -217,6 +217,17 @@ CUSTOM_CSS = """
         color: #7F1D1D;
     }
 
+    /* Scrollable Zoom Container */
+    .zoom-container {
+        overflow: auto;
+        max-height: 700px;
+        border: 1px solid #CBD5E1;
+        border-radius: 12px;
+        background: #525659;
+        text-align: center;
+        padding: 10px;
+    }
+
     .stButton>button[kind="primary"] {
         background-color: #0D2240 !important;
         border-color: #0D2240 !important;
@@ -396,7 +407,7 @@ def save_bank_rules(rules):
     with open(BANK_RULES_FILE, "w") as f:
         json.dump(rules, f, indent=4)
 
-# 5. Robust Normalization & Token Set Overlap Matcher
+# 5. Robust Normalization & Token Overlap Matcher
 STOP_WORDS = {
     "1ltr", "1 ltr", "ltr", "500g", "1kg", "kg", "gm", "ml", 
     "pkt", "pcs", "box", "can", "tin", "nos", "no", "unit", 
@@ -404,7 +415,6 @@ STOP_WORDS = {
 }
 
 def clean_text(text: str) -> str:
-    """Normalizes text by removing punctuation, extra spaces, and common packaging noise."""
     text = str(text).lower()
     text = re.sub(r'[^a-z0-9\s]', ' ', text)
     tokens = [t for t in text.split() if t not in STOP_WORDS]
@@ -414,7 +424,6 @@ def compute_file_hash(raw_bytes: bytes) -> str:
     return hashlib.md5(raw_bytes).hexdigest()
 
 def match_learned_ledger(client_name: str, item_desc: str, rules_dict: dict, valid_ledgers: list) -> Optional[str]:
-    """Matches memorized ledgers using exact match, token keyword overlap, or fuzzy string similarity."""
     client_rules = rules_dict.get(client_name, {})
     if not client_rules:
         return None
@@ -426,13 +435,11 @@ def match_learned_ledger(client_name: str, item_desc: str, rules_dict: dict, val
     query_tokens = set(cleaned_query.split())
     clean_valid_map = {l.strip().lower(): l for l in valid_ledgers}
 
-    # 1. Exact string match
     if cleaned_query in client_rules:
         target_led = client_rules[cleaned_query].strip()
         if target_led.lower() in clean_valid_map:
             return clean_valid_map[target_led.lower()]
 
-    # 2. Token overlap & substring match (handles typos, hyphens, and missing letters)
     best_ledger = None
     best_score = 0.0
 
@@ -443,14 +450,9 @@ def match_learned_ledger(client_name: str, item_desc: str, rules_dict: dict, val
         if not target_tokens:
             continue
 
-        # Word overlap score (e.g. "rich", "cooking", "base")
         intersection = query_tokens.intersection(target_tokens)
         token_score = len(intersection) / max(len(target_tokens), 1)
-
-        # Sequence matcher fallback
         char_score = SequenceMatcher(None, cleaned_query, clean_target).ratio()
-        
-        # Substring inclusion check
         sub_boost = 0.2 if (clean_target in cleaned_query or cleaned_query in clean_target) else 0.0
         total_score = max(token_score + sub_boost, char_score)
 
@@ -538,6 +540,7 @@ class InvoiceExtraction(BaseModel):
     cgst: float = Field(default=0.0, description="CGST amount")
     sgst: float = Field(default=0.0, description="SGST amount")
     igst: float = Field(default=0.0, description="IGST amount")
+    round_off: float = Field(default=0.0, description="Round off fraction if any")
     grand_total: float = Field(description="Grand invoice total")
 
 if "active_review_index" not in st.session_state:
@@ -546,11 +549,13 @@ if "bank_df_working" not in st.session_state:
     st.session_state["bank_df_working"] = None
 if "active_main_module" not in st.session_state:
     st.session_state["active_main_module"] = "Purchase"
+if "zoom_level" not in st.session_state:
+    st.session_state["zoom_level"] = 100
 
 pending_bills_list = load_pending_bills()
 approved_bills_list = load_approved_bills()
 
-# 7. XML Generators
+# 7. XML Generators (With Automatic Round-Off Debit/Credit Entries)
 def generate_tally_xml(approved_bills):
     xml = """<ENVELOPE>
   <HEADER>
@@ -578,6 +583,7 @@ def generate_tally_xml(approved_bills):
             <PARTYLEDGERNAME>{b["vendor_name"]}</PARTYLEDGERNAME>
             <NARRATION>{b.get("narration", "")}</NARRATION>
 
+            <!-- Party Credit -->
             <ALLLEDGERENTRIES.LIST>
               <LEDGERNAME>{b["vendor_name"]}</LEDGERNAME>
               <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
@@ -591,29 +597,48 @@ def generate_tally_xml(approved_bills):
             ledger_totals[led] = ledger_totals.get(led, 0.0) + amt
 
         for led_name, total_amt in ledger_totals.items():
-            xml += f"""            <ALLLEDGERENTRIES.LIST>
+            xml += f"""            <!-- Line Item Debit: {led_name} -->
+            <ALLLEDGERENTRIES.LIST>
               <LEDGERNAME>{led_name}</LEDGERNAME>
               <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
               <AMOUNT>-{total_amt:.2f}</AMOUNT>
             </ALLLEDGERENTRIES.LIST>\n"""
 
-        if b["cgst"] > 0:
+        if b.get("cgst", 0.0) > 0:
             xml += f"""            <ALLLEDGERENTRIES.LIST>
               <LEDGERNAME>CGST Input</LEDGERNAME>
               <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
-              <AMOUNT>-{b["cgst"]:.2f}</AMOUNT>
+              <AMOUNT>-{b['cgst']:.2f}</AMOUNT>
             </ALLLEDGERENTRIES.LIST>\n"""
-        if b["sgst"] > 0:
+        if b.get("sgst", 0.0) > 0:
             xml += f"""            <ALLLEDGERENTRIES.LIST>
               <LEDGERNAME>SGST Input</LEDGERNAME>
               <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
-              <AMOUNT>-{b["sgst"]:.2f}</AMOUNT>
+              <AMOUNT>-{b['sgst']:.2f}</AMOUNT>
             </ALLLEDGERENTRIES.LIST>\n"""
-        if b["igst"] > 0:
+        if b.get("igst", 0.0) > 0:
             xml += f"""            <ALLLEDGERENTRIES.LIST>
               <LEDGERNAME>IGST Input</LEDGERNAME>
               <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
-              <AMOUNT>-{b["igst"]:.2f}</AMOUNT>
+              <AMOUNT>-{b['igst']:.2f}</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>\n"""
+
+        # Auto Round-Off Ledger Handling
+        round_off_val = round(float(b.get("round_off", 0.0)), 2)
+        if round_off_val != 0.0:
+            # If positive round-off (invoice total increased), Debit Round-off
+            if round_off_val > 0:
+                xml += f"""            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Round Off</LEDGERNAME>
+              <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
+              <AMOUNT>-{round_off_val:.2f}</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>\n"""
+            # If negative round-off (invoice total decreased), Credit Round-off
+            else:
+                xml += f"""            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Round Off</LEDGERNAME>
+              <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
+              <AMOUNT>{abs(round_off_val):.2f}</AMOUNT>
             </ALLLEDGERENTRIES.LIST>\n"""
 
         xml += """          </VOUCHER>
@@ -717,6 +742,7 @@ def process_single_bill(file_name, file_bytes, mime, file_hash, client, ledgers_
     prompt = f"""
     Extract invoice details accurately into structured format.
     IMPORTANT: Capture the full multi-line item description completely (e.g. 'Rich Versatile Gold Cooking Base' instead of just '(1Ltr)').
+    Check if there is a 'Rounding Off' or 'Round Off' fraction stated on the bill, and record it in round_off.
     For each line item, assign the best matching accounting ledger strictly from this client's chart of accounts:
     {ledgers_str}
     """
@@ -744,7 +770,11 @@ def process_single_bill(file_name, file_bytes, mime, file_hash, client, ledgers_
                 bill_entry["gst_treatment"] = "Regular"
                 bill_entry["client_name"] = client_name
 
-                # Match learned ledgers
+                # Auto calculate round_off if omitted
+                calc_expected = bill_entry["subtotal"] + bill_entry["cgst"] + bill_entry["sgst"] + bill_entry["igst"]
+                if bill_entry.get("round_off", 0.0) == 0.0 and abs(bill_entry["grand_total"] - calc_expected) > 0.001:
+                    bill_entry["round_off"] = round(bill_entry["grand_total"] - calc_expected, 2)
+
                 for itm in bill_entry.get("items", []):
                     learned_ledger = match_learned_ledger(
                         client_name,
@@ -816,7 +846,7 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# 10. Detail Review Workspace (No-Refresh Form + Auto-Advancement)
+# 10. Detail Review Workspace (With Image Zoom & Round-Off Reconciliation)
 if st.session_state["active_review_index"] is not None and len(pending_bills_list) > 0:
     if st.session_state["active_review_index"] >= len(pending_bills_list):
         st.session_state["active_review_index"] = max(0, len(pending_bills_list) - 1)
@@ -867,15 +897,32 @@ if st.session_state["active_review_index"] is not None and len(pending_bills_lis
     col_preview, col_form = st.columns([1, 1.2], gap="large")
 
     with col_preview:
-        st.markdown(f"""
-        <div class="app-panel">
-            <div style="font-weight: 700; color: #0D2240;">📄 Document Preview: {bill['file_name']}</div>
-        </div>
-        """, unsafe_allow_html=True)
+        # ZOOM CONTROLS HEADER
+        z_c1, z_c2, z_c3, z_c4 = st.columns([2.5, 1, 1, 1])
+        with z_c1:
+            st.markdown(f"**📄 Document Preview** ({st.session_state['zoom_level']}%)")
+        with z_c2:
+            if st.button("🔍 Zoom +", key="zoom_in", use_container_width=True):
+                st.session_state["zoom_level"] = min(250, st.session_state["zoom_level"] + 25)
+                st.rerun()
+        with z_c3:
+            if st.button("🔍 Zoom -", key="zoom_out", use_container_width=True):
+                st.session_state["zoom_level"] = max(50, st.session_state["zoom_level"] - 25)
+                st.rerun()
+        with z_c4:
+            if st.button("↺ Reset", key="zoom_reset", use_container_width=True):
+                st.session_state["zoom_level"] = 100
+                st.rerun()
+
+        # ZOOM CONTAINER (SCROLLABLE & ZOOMABLE)
         if bill.get("file_base64"):
-            img_bytes = base64.b64decode(bill["file_base64"])
             if bill.get("mime_type", "").startswith("image"):
-                st.image(img_bytes, use_container_width=True)
+                img_data_uri = f"data:{bill.get('mime_type')};base64,{bill['file_base64']}"
+                st.markdown(f"""
+                <div class="zoom-container">
+                    <img src="{img_data_uri}" style="width: {st.session_state['zoom_level']}%; max-width: none; border-radius: 6px; box-shadow: 0 4px 10px rgba(0,0,0,0.3);" />
+                </div>
+                """, unsafe_allow_html=True)
             else:
                 st.info("PDF document preview active")
 
@@ -917,13 +964,11 @@ if st.session_state["active_review_index"] is not None and len(pending_bills_lis
             clean_active_ledgers = [l.strip() for l in active_ledgers]
             clean_map = {l.lower(): l for l in clean_active_ledgers}
 
-            # Map items ensuring whitespace robustness
             for itm in bill.get("items", []):
                 curr_l = str(itm.get("ledger", "")).strip()
                 if curr_l.lower() in clean_map:
                     itm["ledger"] = clean_map[curr_l.lower()]
                 else:
-                    # Attempt token match again on current line description
                     re_matched = match_learned_ledger(selected_client, itm.get("description", ""), item_rules, active_ledgers)
                     itm["ledger"] = re_matched if re_matched else clean_active_ledgers[0]
 
@@ -950,14 +995,16 @@ if st.session_state["active_review_index"] is not None and len(pending_bills_lis
                 use_container_width=True
             )
 
-            st.markdown("<div style='font-weight: 700; color: #0D2240; margin: 16px 0 8px 0;'>Tax Breakdown</div>", unsafe_allow_html=True)
-            t_c1, t_c2, t_c3 = st.columns(3)
+            st.markdown("<div style='font-weight: 700; color: #0D2240; margin: 16px 0 8px 0;'>Taxes & Round-Off Reconciliation</div>", unsafe_allow_html=True)
+            t_c1, t_c2, t_c3, t_c4 = st.columns(4)
             with t_c1:
-                v_cgst = st.number_input("CGST (₹)", value=float(bill.get("cgst", 0.0)), step=1.0)
+                v_cgst = st.number_input("CGST (₹)", value=float(bill.get("cgst", 0.0)), step=0.01, format="%.2f")
             with t_c2:
-                v_sgst = st.number_input("SGST (₹)", value=float(bill.get("sgst", 0.0)), step=1.0)
+                v_sgst = st.number_input("SGST (₹)", value=float(bill.get("sgst", 0.0)), step=0.01, format="%.2f")
             with t_c3:
-                v_igst = st.number_input("IGST (₹)", value=float(bill.get("igst", 0.0)), step=1.0)
+                v_igst = st.number_input("IGST (₹)", value=float(bill.get("igst", 0.0)), step=0.01, format="%.2f")
+            with t_c4:
+                v_round_off = st.number_input("Round-Off (₹)", value=float(bill.get("round_off", 0.0)), step=0.01, format="%.2f", help="Adjusts paisa difference to match printed bill")
 
             v_narration = st.text_area(
                 "Voucher Narration",
@@ -966,13 +1013,14 @@ if st.session_state["active_review_index"] is not None and len(pending_bills_lis
 
             updated_items = edited_df.to_dict(orient="records")
             calc_subtotal = sum([float(r.get("amount", 0.0)) for r in updated_items])
-            calc_grand_total = calc_subtotal + v_cgst + v_sgst + v_igst
+            calc_grand_total = round(calc_subtotal + v_cgst + v_sgst + v_igst + v_round_off, 2)
 
             st.markdown(f"""
             <div style="background: #FFFFFF; border: 1px solid #CBD5E1; padding: 14px 20px; border-radius: 12px; margin: 14px 0;">
                 <div style="display: flex; justify-content: space-between; font-weight: 600; color: #475569; font-size: 0.9rem;">
                     <span>Taxable: ₹{calc_subtotal:,.2f}</span>
                     <span>GST: ₹{(v_cgst+v_sgst+v_igst):,.2f}</span>
+                    <span>Round-Off: {'+' if v_round_off >= 0 else ''}₹{v_round_off:.2f}</span>
                 </div>
                 <div style="font-size: 1.45rem; font-weight: 800; color: #0D2240; margin-top: 4px;">Grand Total: ₹{calc_grand_total:,.2f}</div>
             </div>
@@ -999,6 +1047,7 @@ if st.session_state["active_review_index"] is not None and len(pending_bills_lis
             bill["cgst"] = v_cgst
             bill["sgst"] = v_sgst
             bill["igst"] = v_igst
+            bill["round_off"] = v_round_off
             bill["subtotal"] = calc_subtotal
             bill["grand_total"] = calc_grand_total
             bill["narration"] = v_narration
@@ -1229,7 +1278,7 @@ else:
                                 <span style="font-weight:800; color:#0D2240;">₹{b['grand_total']:,.2f}</span>
                             </div>
                             <div style="font-size:0.8rem; color:#64748B; margin-top:3px;">
-                                Date: {b['invoice_date']} | GSTIN: {b.get('vendor_gstin', 'N/A')} | Items: {len(b.get('items', []))}
+                                Date: {b['invoice_date']} | GSTIN: {b.get('vendor_gstin', 'N/A')} | Items: {len(b.get('items', []))} | Round-Off: ₹{b.get('round_off', 0.0):.2f}
                             </div>
                         </div>
                         """, unsafe_allow_html=True)
@@ -1258,6 +1307,7 @@ else:
                         "CGST (₹)": b["cgst"],
                         "SGST (₹)": b["sgst"],
                         "IGST (₹)": b["igst"],
+                        "Round-Off (₹)": b.get("round_off", 0.0),
                         "Grand Total (₹)": b["grand_total"],
                     })
                     for itm in b["items"]:
@@ -1275,6 +1325,8 @@ else:
 
                 df_summary = pd.DataFrame(summary_rows)
                 df_items_approved = pd.DataFrame(itemized_rows)
+
+                st.dataframe(df_summary, use_container_width=True, height=280)
 
                 excel_buf = io.BytesIO()
                 with pd.ExcelWriter(excel_buf, engine='openpyxl') as writer:
