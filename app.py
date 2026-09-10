@@ -242,7 +242,7 @@ CUSTOM_CSS = """
 """
 st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 
-# Team Passcode Gate
+# 3. Team Passcode Gate
 def check_password():
     def password_entered():
         correct_password = str(st.secrets.get("APP_PASSWORD", "Bhargavi@2003")).strip()
@@ -286,7 +286,7 @@ if not check_password():
 
 LOGO_PATH = "logo.png"
 
-# Persistent File Stores
+# 4. Persistent Stores & Default Chart of Accounts
 CLIENTS_FILE = "client_ledgers.json"
 PENDING_BILLS_FILE = "pending_bills.json"
 APPROVED_BILLS_FILE = "approved_bills.json"
@@ -396,15 +396,25 @@ def save_bank_rules(rules):
     with open(BANK_RULES_FILE, "w") as f:
         json.dump(rules, f, indent=4)
 
+# 5. Robust Normalization & Token Set Overlap Matcher
+STOP_WORDS = {
+    "1ltr", "1 ltr", "ltr", "500g", "1kg", "kg", "gm", "ml", 
+    "pkt", "pcs", "box", "can", "tin", "nos", "no", "unit", 
+    "pack", "bottle", "bottles", "jar", "jars"
+}
+
 def clean_text(text: str) -> str:
+    """Normalizes text by removing punctuation, extra spaces, and common packaging noise."""
     text = str(text).lower()
     text = re.sub(r'[^a-z0-9\s]', ' ', text)
-    return re.sub(r'\s+', ' ', text).strip()
+    tokens = [t for t in text.split() if t not in STOP_WORDS]
+    return " ".join(tokens).strip()
 
 def compute_file_hash(raw_bytes: bytes) -> str:
     return hashlib.md5(raw_bytes).hexdigest()
 
 def match_learned_ledger(client_name: str, item_desc: str, rules_dict: dict, valid_ledgers: list) -> Optional[str]:
+    """Matches memorized ledgers using exact match, token keyword overlap, or fuzzy string similarity."""
     client_rules = rules_dict.get(client_name, {})
     if not client_rules:
         return None
@@ -413,24 +423,42 @@ def match_learned_ledger(client_name: str, item_desc: str, rules_dict: dict, val
     if not cleaned_query:
         return None
 
-    if cleaned_query in client_rules:
-        matched = client_rules[cleaned_query]
-        if matched in valid_ledgers:
-            return matched
+    query_tokens = set(cleaned_query.split())
+    clean_valid_map = {l.strip().lower(): l for l in valid_ledgers}
 
+    # 1. Exact string match
+    if cleaned_query in client_rules:
+        target_led = client_rules[cleaned_query].strip()
+        if target_led.lower() in clean_valid_map:
+            return clean_valid_map[target_led.lower()]
+
+    # 2. Token overlap & substring match (handles typos, hyphens, and missing letters)
     best_ledger = None
     best_score = 0.0
 
     for learned_name, ledger_name in client_rules.items():
-        if ledger_name not in valid_ledgers:
+        clean_target = clean_text(learned_name)
+        target_tokens = set(clean_target.split())
+        
+        if not target_tokens:
             continue
-        if learned_name in cleaned_query or cleaned_query in learned_name:
-            return ledger_name
 
-        sim = SequenceMatcher(None, cleaned_query, learned_name).ratio()
-        if sim > best_score and sim >= 0.80:
-            best_score = sim
-            best_ledger = ledger_name
+        # Word overlap score (e.g. "rich", "cooking", "base")
+        intersection = query_tokens.intersection(target_tokens)
+        token_score = len(intersection) / max(len(target_tokens), 1)
+
+        # Sequence matcher fallback
+        char_score = SequenceMatcher(None, cleaned_query, clean_target).ratio()
+        
+        # Substring inclusion check
+        sub_boost = 0.2 if (clean_target in cleaned_query or cleaned_query in clean_target) else 0.0
+        total_score = max(token_score + sub_boost, char_score)
+
+        if total_score > best_score and total_score >= 0.55:
+            matched_clean = ledger_name.strip()
+            if matched_clean.lower() in clean_valid_map:
+                best_score = total_score
+                best_ledger = clean_valid_map[matched_clean.lower()]
 
     return best_ledger
 
@@ -442,7 +470,7 @@ def record_approval_learning(bill_dict: dict):
 
     for item in bill_dict.get("items", []):
         desc = item.get("description", "")
-        ledger = item.get("ledger", "")
+        ledger = item.get("ledger", "").strip()
         clean_desc = clean_text(desc)
         if clean_desc and ledger:
             rules[client_name][clean_desc] = ledger
@@ -488,9 +516,9 @@ bank_rules = load_bank_rules()
 GST_TREATMENTS = ["Regular", "Composition", "Unregistered", "Overseas / Import"]
 STATES = ["Gujarat", "Maharashtra", "Delhi", "Rajasthan", "Karnataka", "Tamil Nadu", "Other"]
 
-# Pydantic Schema
+# 6. Pydantic Schema
 class LineItem(BaseModel):
-    description: str = Field(description="Description of goods/services")
+    description: str = Field(description="Complete description of goods or services")
     hsn_code: Optional[str] = Field(default="", description="HSN/SAC Code")
     qty: float = Field(default=1.0, description="Quantity")
     rate: float = Field(default=0.0, description="Unit rate")
@@ -522,6 +550,7 @@ if "active_main_module" not in st.session_state:
 pending_bills_list = load_pending_bills()
 approved_bills_list = load_approved_bills()
 
+# 7. XML Generators
 def generate_tally_xml(approved_bills):
     xml = """<ENVELOPE>
   <HEADER>
@@ -687,7 +716,8 @@ def optimize_file(file_name, raw_bytes):
 def process_single_bill(file_name, file_bytes, mime, file_hash, client, ledgers_str, client_name, valid_ledgers, rules_dict):
     prompt = f"""
     Extract invoice details accurately into structured format.
-    For each line item, assign the best matching accounting ledger strictly from this list of ledgers available for this client:
+    IMPORTANT: Capture the full multi-line item description completely (e.g. 'Rich Versatile Gold Cooking Base' instead of just '(1Ltr)').
+    For each line item, assign the best matching accounting ledger strictly from this client's chart of accounts:
     {ledgers_str}
     """
     for attempt in range(1, 4):
@@ -714,6 +744,7 @@ def process_single_bill(file_name, file_bytes, mime, file_hash, client, ledgers_
                 bill_entry["gst_treatment"] = "Regular"
                 bill_entry["client_name"] = client_name
 
+                # Match learned ledgers
                 for itm in bill_entry.get("items", []):
                     learned_ledger = match_learned_ledger(
                         client_name,
@@ -733,7 +764,7 @@ def process_single_bill(file_name, file_bytes, mime, file_hash, client, ledgers_
             return False, None, f"{file_name}: {err_str}"
     return False, None, f"{file_name}: Google servers busy after 3 retries."
 
-# --- SIDEBAR ---
+# 8. Sidebar
 with st.sidebar:
     if os.path.exists(LOGO_PATH):
         st.image(LOGO_PATH, width=195)
@@ -774,7 +805,7 @@ with st.sidebar:
     </div>
     """, unsafe_allow_html=True)
 
-# Executive Hero Banner
+# 9. Executive Hero Banner
 st.markdown(f"""
 <div class="hero-banner">
     <div>
@@ -785,9 +816,8 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# --- DETAIL REVIEW WORKSPACE (FIXED AUTO-ADVANCE & NO-REFRESH TABLE) ---
+# 10. Detail Review Workspace (No-Refresh Form + Auto-Advancement)
 if st.session_state["active_review_index"] is not None and len(pending_bills_list) > 0:
-    # Boundary guard
     if st.session_state["active_review_index"] >= len(pending_bills_list):
         st.session_state["active_review_index"] = max(0, len(pending_bills_list) - 1)
 
@@ -802,7 +832,6 @@ if st.session_state["active_review_index"] is not None and len(pending_bills_lis
         approved_bills_list
     )
 
-    # Top Navigation Row (Previous / Queue / Next / Counter)
     nav_c1, nav_c2, nav_c3, nav_c4 = st.columns([2.5, 3.5, 2, 2])
     with nav_c1:
         if st.button("← Back to Invoice Queue", type="secondary", use_container_width=True):
@@ -851,7 +880,6 @@ if st.session_state["active_review_index"] is not None and len(pending_bills_lis
                 st.info("PDF document preview active")
 
     with col_form:
-        # WRAP IN FORM TO PREVENT MID-SELECTION PAGE DESELECTION / REFRESH
         with st.form(key=f"review_form_{idx}"):
             st.markdown("""
             <div class="app-panel" style="padding: 16px 20px; margin-bottom: 12px;">
@@ -884,15 +912,22 @@ if st.session_state["active_review_index"] is not None and len(pending_bills_lis
             with r3_c2:
                 v_inv_date = st.text_input("Invoice Date (DD-MM-YYYY)", value=bill.get("invoice_date", ""))
 
-            st.markdown("<div style='font-weight: 700; color: #0D2240; margin: 16px 0 8px 0;'>Line Items & Ledger Assignment (No-Refresh Editor)</div>", unsafe_allow_html=True)
+            st.markdown("<div style='font-weight: 700; color: #0D2240; margin: 16px 0 8px 0;'>Line Items & Ledger Assignment</div>", unsafe_allow_html=True)
+
+            clean_active_ledgers = [l.strip() for l in active_ledgers]
+            clean_map = {l.lower(): l for l in clean_active_ledgers}
+
+            # Map items ensuring whitespace robustness
+            for itm in bill.get("items", []):
+                curr_l = str(itm.get("ledger", "")).strip()
+                if curr_l.lower() in clean_map:
+                    itm["ledger"] = clean_map[curr_l.lower()]
+                else:
+                    # Attempt token match again on current line description
+                    re_matched = match_learned_ledger(selected_client, itm.get("description", ""), item_rules, active_ledgers)
+                    itm["ledger"] = re_matched if re_matched else clean_active_ledgers[0]
 
             df_items = pd.DataFrame(bill["items"])
-            if "ledger" not in df_items.columns:
-                df_items["ledger"] = active_ledgers[0]
-            else:
-                df_items["ledger"] = df_items["ledger"].apply(
-                    lambda x: x if x in active_ledgers else active_ledgers[0]
-                )
 
             edited_df = st.data_editor(
                 df_items,
@@ -907,7 +942,7 @@ if st.session_state["active_review_index"] is not None and len(pending_bills_lis
                         "Tally Purchase Ledger",
                         help="Select purchase or expense ledger for each line item",
                         width="medium",
-                        options=active_ledgers,
+                        options=clean_active_ledgers,
                         required=True,
                     )
                 },
@@ -929,7 +964,6 @@ if st.session_state["active_review_index"] is not None and len(pending_bills_lis
                 value=bill.get("narration", f"Purchase from {v_name} via Inv #{v_inv_no}")
             )
 
-            # Recalculate Totals
             updated_items = edited_df.to_dict(orient="records")
             calc_subtotal = sum([float(r.get("amount", 0.0)) for r in updated_items])
             calc_grand_total = calc_subtotal + v_cgst + v_sgst + v_igst
@@ -944,7 +978,6 @@ if st.session_state["active_review_index"] is not None and len(pending_bills_lis
             </div>
             """, unsafe_allow_html=True)
 
-            # ACTION BAR INSIDE FORM (Approve, Reject, Save Changes)
             act_col1, act_col2, act_col3 = st.columns([1.5, 1, 1])
             with act_col1:
                 submit_approve = st.form_submit_button("✅ Approve & Next Invoice", type="primary", use_container_width=True)
@@ -953,9 +986,7 @@ if st.session_state["active_review_index"] is not None and len(pending_bills_lis
             with act_col3:
                 submit_reject = st.form_submit_button("🗑️ Reject Bill", type="secondary", use_container_width=True)
 
-        # PROCESS FORM SUBMISSIONS
         if submit_approve or submit_save_only or submit_reject:
-            # Update current bill dictionary with latest fields
             bill["vendor_name"] = v_name
             bill["billing_address"] = v_address
             bill["gst_treatment"] = v_gst_treat
@@ -973,16 +1004,15 @@ if st.session_state["active_review_index"] is not None and len(pending_bills_lis
             bill["narration"] = v_narration
 
             if submit_approve:
-                approved_entry = pending_bills_list.pop(idx)
+                pending_bills_list.pop(idx)
                 record_approval_learning(bill)
                 approved_bills_list.append(bill)
                 save_pending_bills(pending_bills_list)
                 save_approved_bills(approved_bills_list)
 
-                # Keep user in review mode if more bills remain
                 if len(pending_bills_list) > 0:
                     st.session_state["active_review_index"] = min(idx, len(pending_bills_list) - 1)
-                    st.toast("Approved! Loaded next invoice.", icon="✨")
+                    st.toast("Approved! Staged next invoice.", icon="✨")
                 else:
                     st.session_state["active_review_index"] = None
                     st.toast("All pending invoices reviewed!", icon="🎉")
@@ -1004,7 +1034,7 @@ if st.session_state["active_review_index"] is not None and len(pending_bills_lis
                 st.toast("Draft saved successfully!", icon="💾")
                 st.rerun()
 
-# --- MAIN DASHBOARD INTERFACE ---
+# 11. Main Dashboard Interface (Modular View)
 else:
     if st.session_state["active_review_index"] is not None and len(pending_bills_list) == 0:
         st.session_state["active_review_index"] = None
@@ -1043,7 +1073,7 @@ else:
             <div class="app-panel">
                 <h4 style="color: #0D2240; font-family:'Playfair Display',serif; font-weight: 700; margin-top: 0;">Upload Purchase Documents: {selected_client}</h4>
                 <p style="color: #64748B; font-size: 0.88rem; margin-bottom: 0;">
-                    Upload purchase bills (PDF, JPG, PNG). Exact duplicate files are skipped before AI extraction to protect your balance.
+                    Upload purchase bills (PDF, JPG, PNG). Exact duplicate files are checked in local memory and skipped before sending to Google AI, protecting your balance.
                 </p>
             </div>
             """, unsafe_allow_html=True)
@@ -1179,7 +1209,6 @@ else:
                             st.rerun()
                     st.write("")
 
-        # SUB-TAB 3: APPROVED VOUCHERS (WITH POST-APPROVAL RECTIFICATION)
         with p_sub_approved:
             if not approved_bills_list:
                 st.markdown("""
@@ -1190,7 +1219,6 @@ else:
             else:
                 st.markdown("<div style='font-weight:700; color:#0D2240; margin-bottom:8px;'>Approved Purchase Invoices Register</div>", unsafe_allow_html=True)
                 
-                # Render itemized list with Edit / Rectify button
                 for a_idx, b in enumerate(approved_bills_list):
                     c_app_info, c_app_act = st.columns([8, 2])
                     with c_app_info:
@@ -1207,7 +1235,6 @@ else:
                         """, unsafe_allow_html=True)
                     with c_app_act:
                         if st.button("✏️ Rectify / Edit", key=f"rectify_{a_idx}", use_container_width=True):
-                            # Move approved voucher back to pending review queue for editing
                             voucher_to_edit = approved_bills_list.pop(a_idx)
                             pending_bills_list.append(voucher_to_edit)
                             save_approved_bills(approved_bills_list)
