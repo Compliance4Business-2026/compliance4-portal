@@ -23,6 +23,10 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# Create local image storage folder to keep RAM clean
+IMAGE_STORAGE_DIR = "invoice_images"
+os.makedirs(IMAGE_STORAGE_DIR, exist_ok=True)
+
 # 2. Bespoke Styling Injection
 CUSTOM_CSS = """
 <style>
@@ -414,30 +418,19 @@ STOP_WORDS = {
 }
 
 def clean_text(text: str) -> str:
-    """Normalizes invoice item text by removing punctuation, spaces, and packaging units."""
     text = str(text).lower()
     text = re.sub(r'[^a-z0-9\s]', ' ', text)
     tokens = [t for t in text.split() if t not in STOP_WORDS]
     return " ".join(tokens).strip()
 
 def clean_bank_narration(narration: str) -> str:
-    """Strips transaction noise (UPI, NEFT, IMPS, POS, Chq, Ref IDs, handles) from bank narrations."""
     text = str(narration).lower()
-    
-    # 1. Strip banking transaction channels and prefixes
     text = re.sub(r'\b(upi|neft|rtgs|imps|pos|ach|nach|inb|mb|chq|e-pay|rev-upi|dr|cr|trf)\b', ' ', text)
-    
-    # 2. Strip slash references, transaction IDs, long numeric/alphanumeric tokens
     text = re.sub(r'/[0-9a-z_-]+', ' ', text)
     text = re.sub(r'\b[0-9]{5,}\b', ' ', text)
     text = re.sub(r'\b[a-z]{4}[0-9]{6,}\b', ' ', text)
-    
-    # 3. Strip UPI handles (@okaxis, @okhdfcbank, @paytm, @ybl, etc.)
     text = re.sub(r'@[a-z]+', ' ', text)
-    
-    # 4. Remove punctuation
     text = re.sub(r'[^a-z0-9\s]', ' ', text)
-    
     tokens = [t for t in text.split() if t not in STOP_WORDS and len(t) > 1]
     return " ".join(tokens).strip()
 
@@ -445,7 +438,6 @@ def compute_file_hash(raw_bytes: bytes) -> str:
     return hashlib.md5(raw_bytes).hexdigest()
 
 def match_learned_ledger(client_name: str, query_string: str, rules_dict: dict, valid_ledgers: list, is_bank: bool = False) -> Optional[str]:
-    """Matches memorized ledgers using exact match, token keyword overlap, or substring matching."""
     client_rules = rules_dict.get(client_name, {})
     if not client_rules:
         return None
@@ -457,13 +449,11 @@ def match_learned_ledger(client_name: str, query_string: str, rules_dict: dict, 
     query_tokens = set(cleaned_query.split())
     clean_valid_map = {l.strip().lower(): l for l in valid_ledgers}
 
-    # 1. Exact match
     if cleaned_query in client_rules:
         target_led = client_rules[cleaned_query].strip()
         if target_led.lower() in clean_valid_map:
             return clean_valid_map[target_led.lower()]
 
-    # 2. Token overlap & substring match (handles typos, hyphens, and noisy strings)
     best_ledger = None
     best_score = 0.0
 
@@ -474,7 +464,6 @@ def match_learned_ledger(client_name: str, query_string: str, rules_dict: dict, 
         if not target_tokens:
             continue
 
-        # Intersection ratio
         intersection = query_tokens.intersection(target_tokens)
         token_score = len(intersection) / max(len(target_tokens), 1)
 
@@ -582,7 +571,7 @@ if "zoom_level" not in st.session_state:
 pending_bills_list = load_pending_bills()
 approved_bills_list = load_approved_bills()
 
-# 7. XML Generators (With Automatic Round-Off Handling)
+# 7. XML Generators
 def generate_tally_xml(approved_bills):
     xml = """<ENVELOPE>
   <HEADER>
@@ -610,7 +599,6 @@ def generate_tally_xml(approved_bills):
             <PARTYLEDGERNAME>{b["vendor_name"]}</PARTYLEDGERNAME>
             <NARRATION>{b.get("narration", "")}</NARRATION>
 
-            <!-- Party Credit -->
             <ALLLEDGERENTRIES.LIST>
               <LEDGERNAME>{b["vendor_name"]}</LEDGERNAME>
               <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
@@ -624,8 +612,7 @@ def generate_tally_xml(approved_bills):
             ledger_totals[led] = ledger_totals.get(led, 0.0) + amt
 
         for led_name, total_amt in ledger_totals.items():
-            xml += f"""            <!-- Line Item Debit: {led_name} -->
-            <ALLLEDGERENTRIES.LIST>
+            xml += f"""            <ALLLEDGERENTRIES.LIST>
               <LEDGERNAME>{led_name}</LEDGERNAME>
               <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
               <AMOUNT>-{total_amt:.2f}</AMOUNT>
@@ -650,7 +637,6 @@ def generate_tally_xml(approved_bills):
               <AMOUNT>-{b['igst']:.2f}</AMOUNT>
             </ALLLEDGERENTRIES.LIST>\n"""
 
-        # Auto Round-Off
         round_off_val = round(float(b.get("round_off", 0.0)), 2)
         if round_off_val != 0.0:
             if round_off_val > 0:
@@ -749,16 +735,17 @@ def generate_bank_tally_xml(df_bank, bank_ledger_name):
     return xml
 
 def optimize_file(file_name, raw_bytes):
+    """Memory-conscious image compressor: shrinks image to light 1200px preview and frees RAM."""
     ext = file_name.lower().split('.')[-1]
     if ext in ['jpg', 'jpeg', 'png']:
         try:
-            img = Image.open(io.BytesIO(raw_bytes))
-            if img.mode in ("RGBA", "P"):
-                img = img.convert("RGB")
-            img.thumbnail((1600, 1600), Image.Resampling.LANCZOS)
-            buf = io.BytesIO()
-            img.save(buf, format="JPEG", quality=85, optimize=True)
-            return "image/jpeg", buf.getvalue()
+            with Image.open(io.BytesIO(raw_bytes)) as img:
+                if img.mode in ("RGBA", "P"):
+                    img = img.convert("RGB")
+                img.thumbnail((1200, 1200), Image.Resampling.BILINEAR)
+                buf = io.BytesIO()
+                img.save(buf, format="JPEG", quality=75, optimize=True)
+                return "image/jpeg", buf.getvalue()
         except Exception:
             return "image/jpeg", raw_bytes
     return "application/pdf", raw_bytes
@@ -790,10 +777,15 @@ def process_single_bill(file_name, file_bytes, mime, file_hash, client, ledgers_
                 bill_entry = parsed.model_dump()
                 bill_entry["file_name"] = file_name
                 bill_entry["file_hash"] = file_hash
-                bill_entry["file_base64"] = base64.b64encode(file_bytes).decode("utf-8")
                 bill_entry["mime_type"] = mime
                 bill_entry["gst_treatment"] = "Regular"
                 bill_entry["client_name"] = client_name
+
+                # Store image on disk instead of holding heavy Base64 in RAM
+                saved_rel_path = os.path.join(IMAGE_STORAGE_DIR, f"{file_hash[:12]}_{file_name}")
+                with open(saved_rel_path, "wb") as f_out:
+                    f_out.write(file_bytes)
+                bill_entry["saved_image_path"] = saved_rel_path
 
                 calc_expected = bill_entry["subtotal"] + bill_entry["cgst"] + bill_entry["sgst"] + bill_entry["igst"]
                 if bill_entry.get("round_off", 0.0) == 0.0 and abs(bill_entry["grand_total"] - calc_expected) > 0.001:
@@ -871,7 +863,7 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# 10. Detail Review Workspace (With Image Zoom, Auto-Advance & Round-Off)
+# 10. Detail Review Workspace
 if st.session_state["active_review_index"] is not None and len(pending_bills_list) > 0:
     if st.session_state["active_review_index"] >= len(pending_bills_list):
         st.session_state["active_review_index"] = max(0, len(pending_bills_list) - 1)
@@ -938,16 +930,26 @@ if st.session_state["active_review_index"] is not None and len(pending_bills_lis
                 st.session_state["zoom_level"] = 100
                 st.rerun()
 
-        if bill.get("file_base64"):
-            if bill.get("mime_type", "").startswith("image"):
-                img_data_uri = f"data:{bill.get('mime_type')};base64,{bill['file_base64']}"
-                st.markdown(f"""
-                <div class="zoom-container">
-                    <img src="{img_data_uri}" style="width: {st.session_state['zoom_level']}%; max-width: none; border-radius: 6px; box-shadow: 0 4px 10px rgba(0,0,0,0.3);" />
-                </div>
-                """, unsafe_allow_html=True)
-            else:
-                st.info("PDF document preview active")
+        # Load image from disk to save RAM
+        img_path = bill.get("saved_image_path", "")
+        if img_path and os.path.exists(img_path):
+            with open(img_path, "rb") as f_img:
+                b64_data = base64.b64encode(f_img.read()).decode("utf-8")
+            img_data_uri = f"data:{bill.get('mime_type', 'image/jpeg')};base64,{b64_data}"
+            st.markdown(f"""
+            <div class="zoom-container">
+                <img src="{img_data_uri}" style="width: {st.session_state['zoom_level']}%; max-width: none; border-radius: 6px; box-shadow: 0 4px 10px rgba(0,0,0,0.3);" />
+            </div>
+            """, unsafe_allow_html=True)
+        elif bill.get("file_base64"):
+            img_data_uri = f"data:{bill.get('mime_type', 'image/jpeg')};base64,{bill['file_base64']}"
+            st.markdown(f"""
+            <div class="zoom-container">
+                <img src="{img_data_uri}" style="width: {st.session_state['zoom_level']}%; max-width: none; border-radius: 6px; box-shadow: 0 4px 10px rgba(0,0,0,0.3);" />
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            st.info("Document preview active (PDF or disk file).")
 
     with col_form:
         with st.form(key=f"review_form_{idx}"):
@@ -1091,6 +1093,14 @@ if st.session_state["active_review_index"] is not None and len(pending_bills_lis
                 st.rerun()
 
             elif submit_reject:
+                # Remove cached file on disk to free storage
+                img_to_del = bill.get("saved_image_path", "")
+                if img_to_del and os.path.exists(img_to_del):
+                    try:
+                        os.remove(img_to_del)
+                    except Exception:
+                        pass
+
                 pending_bills_list.pop(idx)
                 save_pending_bills(pending_bills_list)
                 if len(pending_bills_list) > 0:
@@ -1145,7 +1155,7 @@ else:
             <div class="app-panel">
                 <h4 style="color: #0D2240; font-family:'Playfair Display',serif; font-weight: 700; margin-top: 0;">Upload Purchase Documents: {selected_client}</h4>
                 <p style="color: #64748B; font-size: 0.88rem; margin-bottom: 0;">
-                    Upload purchase bills (PDF, JPG, PNG). Exact duplicate files are checked in local memory and skipped before sending to Google AI, protecting your balance.
+                    Upload purchase bills (PDF, JPG, PNG). Files are compressed to optimize RAM usage, and duplicate files are skipped before AI extraction.
                 </p>
             </div>
             """, unsafe_allow_html=True)
@@ -1203,7 +1213,8 @@ else:
                         newly_extracted = []
 
                         fresh_rules = load_item_rules()
-                        max_workers = min(4, total_files)
+                        # Limit to 2 workers to keep memory overhead low
+                        max_workers = min(2, total_files)
 
                         with ThreadPoolExecutor(max_workers=max_workers) as executor:
                             futures = [
@@ -1381,7 +1392,7 @@ else:
                         st.rerun()
 
     # ========================================================
-    # MODULE 2: BANK STATEMENTS (WITH DEDICATED BANK CLEANER)
+    # MODULE 2: BANK STATEMENTS
     # ========================================================
     elif st.session_state["active_main_module"] == "Bank":
         st.markdown(f"""
@@ -1433,7 +1444,6 @@ else:
                             dr = float(row.get(debit_col, 0.0) or 0.0) if debit_col else 0.0
                             cr = float(row.get(credit_col, 0.0) or 0.0) if credit_col else 0.0
 
-                            # Run through dedicated bank cleaner & matcher
                             matched_ledger = match_learned_ledger(selected_client, n_val, rules, clean_active_ledgers, is_bank=True)
                             default_ledger = matched_ledger if matched_ledger else clean_active_ledgers[0]
 
