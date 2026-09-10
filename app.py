@@ -217,7 +217,6 @@ CUSTOM_CSS = """
         color: #7F1D1D;
     }
 
-    /* Scrollable Zoom Container */
     .zoom-container {
         overflow: auto;
         max-height: 700px;
@@ -407,7 +406,7 @@ def save_bank_rules(rules):
     with open(BANK_RULES_FILE, "w") as f:
         json.dump(rules, f, indent=4)
 
-# 5. Robust Normalization & Token Overlap Matcher
+# 5. Dedicated Normalizers for Bills & Bank Statements
 STOP_WORDS = {
     "1ltr", "1 ltr", "ltr", "500g", "1kg", "kg", "gm", "ml", 
     "pkt", "pcs", "box", "can", "tin", "nos", "no", "unit", 
@@ -415,48 +414,76 @@ STOP_WORDS = {
 }
 
 def clean_text(text: str) -> str:
+    """Normalizes invoice item text by removing punctuation, spaces, and packaging units."""
     text = str(text).lower()
     text = re.sub(r'[^a-z0-9\s]', ' ', text)
     tokens = [t for t in text.split() if t not in STOP_WORDS]
     return " ".join(tokens).strip()
 
+def clean_bank_narration(narration: str) -> str:
+    """Strips transaction noise (UPI, NEFT, IMPS, POS, Chq, Ref IDs, handles) from bank narrations."""
+    text = str(narration).lower()
+    
+    # 1. Strip banking transaction channels and prefixes
+    text = re.sub(r'\b(upi|neft|rtgs|imps|pos|ach|nach|inb|mb|chq|e-pay|rev-upi|dr|cr|trf)\b', ' ', text)
+    
+    # 2. Strip slash references, transaction IDs, long numeric/alphanumeric tokens
+    text = re.sub(r'/[0-9a-z_-]+', ' ', text)
+    text = re.sub(r'\b[0-9]{5,}\b', ' ', text)
+    text = re.sub(r'\b[a-z]{4}[0-9]{6,}\b', ' ', text)
+    
+    # 3. Strip UPI handles (@okaxis, @okhdfcbank, @paytm, @ybl, etc.)
+    text = re.sub(r'@[a-z]+', ' ', text)
+    
+    # 4. Remove punctuation
+    text = re.sub(r'[^a-z0-9\s]', ' ', text)
+    
+    tokens = [t for t in text.split() if t not in STOP_WORDS and len(t) > 1]
+    return " ".join(tokens).strip()
+
 def compute_file_hash(raw_bytes: bytes) -> str:
     return hashlib.md5(raw_bytes).hexdigest()
 
-def match_learned_ledger(client_name: str, item_desc: str, rules_dict: dict, valid_ledgers: list) -> Optional[str]:
+def match_learned_ledger(client_name: str, query_string: str, rules_dict: dict, valid_ledgers: list, is_bank: bool = False) -> Optional[str]:
+    """Matches memorized ledgers using exact match, token keyword overlap, or substring matching."""
     client_rules = rules_dict.get(client_name, {})
     if not client_rules:
         return None
 
-    cleaned_query = clean_text(item_desc)
+    cleaned_query = clean_bank_narration(query_string) if is_bank else clean_text(query_string)
     if not cleaned_query:
         return None
 
     query_tokens = set(cleaned_query.split())
     clean_valid_map = {l.strip().lower(): l for l in valid_ledgers}
 
+    # 1. Exact match
     if cleaned_query in client_rules:
         target_led = client_rules[cleaned_query].strip()
         if target_led.lower() in clean_valid_map:
             return clean_valid_map[target_led.lower()]
 
+    # 2. Token overlap & substring match (handles typos, hyphens, and noisy strings)
     best_ledger = None
     best_score = 0.0
 
     for learned_name, ledger_name in client_rules.items():
-        clean_target = clean_text(learned_name)
+        clean_target = clean_bank_narration(learned_name) if is_bank else clean_text(learned_name)
         target_tokens = set(clean_target.split())
         
         if not target_tokens:
             continue
 
+        # Intersection ratio
         intersection = query_tokens.intersection(target_tokens)
         token_score = len(intersection) / max(len(target_tokens), 1)
+
         char_score = SequenceMatcher(None, cleaned_query, clean_target).ratio()
-        sub_boost = 0.2 if (clean_target in cleaned_query or cleaned_query in clean_target) else 0.0
+        sub_boost = 0.25 if (clean_target in cleaned_query or cleaned_query in clean_target) else 0.0
         total_score = max(token_score + sub_boost, char_score)
 
-        if total_score > best_score and total_score >= 0.55:
+        threshold = 0.45 if is_bank else 0.55
+        if total_score > best_score and total_score >= threshold:
             matched_clean = ledger_name.strip()
             if matched_clean.lower() in clean_valid_map:
                 best_score = total_score
@@ -555,7 +582,7 @@ if "zoom_level" not in st.session_state:
 pending_bills_list = load_pending_bills()
 approved_bills_list = load_approved_bills()
 
-# 7. XML Generators (With Automatic Round-Off Debit/Credit Entries)
+# 7. XML Generators (With Automatic Round-Off Handling)
 def generate_tally_xml(approved_bills):
     xml = """<ENVELOPE>
   <HEADER>
@@ -623,17 +650,15 @@ def generate_tally_xml(approved_bills):
               <AMOUNT>-{b['igst']:.2f}</AMOUNT>
             </ALLLEDGERENTRIES.LIST>\n"""
 
-        # Auto Round-Off Ledger Handling
+        # Auto Round-Off
         round_off_val = round(float(b.get("round_off", 0.0)), 2)
         if round_off_val != 0.0:
-            # If positive round-off (invoice total increased), Debit Round-off
             if round_off_val > 0:
                 xml += f"""            <ALLLEDGERENTRIES.LIST>
               <LEDGERNAME>Round Off</LEDGERNAME>
               <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
               <AMOUNT>-{round_off_val:.2f}</AMOUNT>
             </ALLLEDGERENTRIES.LIST>\n"""
-            # If negative round-off (invoice total decreased), Credit Round-off
             else:
                 xml += f"""            <ALLLEDGERENTRIES.LIST>
               <LEDGERNAME>Round Off</LEDGERNAME>
@@ -770,7 +795,6 @@ def process_single_bill(file_name, file_bytes, mime, file_hash, client, ledgers_
                 bill_entry["gst_treatment"] = "Regular"
                 bill_entry["client_name"] = client_name
 
-                # Auto calculate round_off if omitted
                 calc_expected = bill_entry["subtotal"] + bill_entry["cgst"] + bill_entry["sgst"] + bill_entry["igst"]
                 if bill_entry.get("round_off", 0.0) == 0.0 and abs(bill_entry["grand_total"] - calc_expected) > 0.001:
                     bill_entry["round_off"] = round(bill_entry["grand_total"] - calc_expected, 2)
@@ -780,7 +804,8 @@ def process_single_bill(file_name, file_bytes, mime, file_hash, client, ledgers_
                         client_name,
                         itm.get("description", ""),
                         rules_dict,
-                        valid_ledgers
+                        valid_ledgers,
+                        is_bank=False
                     )
                     if learned_ledger:
                         itm["ledger"] = learned_ledger
@@ -846,7 +871,7 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# 10. Detail Review Workspace (With Image Zoom & Round-Off Reconciliation)
+# 10. Detail Review Workspace (With Image Zoom, Auto-Advance & Round-Off)
 if st.session_state["active_review_index"] is not None and len(pending_bills_list) > 0:
     if st.session_state["active_review_index"] >= len(pending_bills_list):
         st.session_state["active_review_index"] = max(0, len(pending_bills_list) - 1)
@@ -897,7 +922,6 @@ if st.session_state["active_review_index"] is not None and len(pending_bills_lis
     col_preview, col_form = st.columns([1, 1.2], gap="large")
 
     with col_preview:
-        # ZOOM CONTROLS HEADER
         z_c1, z_c2, z_c3, z_c4 = st.columns([2.5, 1, 1, 1])
         with z_c1:
             st.markdown(f"**📄 Document Preview** ({st.session_state['zoom_level']}%)")
@@ -914,7 +938,6 @@ if st.session_state["active_review_index"] is not None and len(pending_bills_lis
                 st.session_state["zoom_level"] = 100
                 st.rerun()
 
-        # ZOOM CONTAINER (SCROLLABLE & ZOOMABLE)
         if bill.get("file_base64"):
             if bill.get("mime_type", "").startswith("image"):
                 img_data_uri = f"data:{bill.get('mime_type')};base64,{bill['file_base64']}"
@@ -969,7 +992,7 @@ if st.session_state["active_review_index"] is not None and len(pending_bills_lis
                 if curr_l.lower() in clean_map:
                     itm["ledger"] = clean_map[curr_l.lower()]
                 else:
-                    re_matched = match_learned_ledger(selected_client, itm.get("description", ""), item_rules, active_ledgers)
+                    re_matched = match_learned_ledger(selected_client, itm.get("description", ""), item_rules, active_ledgers, is_bank=False)
                     itm["ledger"] = re_matched if re_matched else clean_active_ledgers[0]
 
             df_items = pd.DataFrame(bill["items"])
@@ -1004,7 +1027,7 @@ if st.session_state["active_review_index"] is not None and len(pending_bills_lis
             with t_c3:
                 v_igst = st.number_input("IGST (₹)", value=float(bill.get("igst", 0.0)), step=0.01, format="%.2f")
             with t_c4:
-                v_round_off = st.number_input("Round-Off (₹)", value=float(bill.get("round_off", 0.0)), step=0.01, format="%.2f", help="Adjusts paisa difference to match printed bill")
+                v_round_off = st.number_input("Round-Off (₹)", value=float(bill.get("round_off", 0.0)), step=0.01, format="%.2f", help="Paisa adjustment to match printed invoice total")
 
             v_narration = st.text_area(
                 "Voucher Narration",
@@ -1358,14 +1381,14 @@ else:
                         st.rerun()
 
     # ========================================================
-    # MODULE 2: BANK STATEMENTS
+    # MODULE 2: BANK STATEMENTS (WITH DEDICATED BANK CLEANER)
     # ========================================================
     elif st.session_state["active_main_module"] == "Bank":
         st.markdown(f"""
         <div class="app-panel">
             <h4 style="color: #0D2240; font-family:'Playfair Display',serif; font-weight: 700; margin-top: 0;">Bank Statement Reconciliation: {selected_client}</h4>
             <p style="color: #64748B; font-size: 0.88rem; margin-bottom: 0;">
-                Upload bank statements in Excel or CSV. The system cleans narration noise, matches known vendors/customers, and generates Tally Payment & Receipt XML.
+                Upload bank statements in Excel or CSV. The dedicated bank engine cleans UPI, IMPS, and reference noise to match learned counterparties reliably.
             </p>
         </div>
         """, unsafe_allow_html=True)
@@ -1399,6 +1422,8 @@ else:
                     else:
                         parsed_rows = []
                         rules = load_bank_rules()
+                        clean_active_ledgers = [l.strip() for l in active_ledgers]
+
                         for _, row in df_raw.iterrows():
                             d_val = str(row.get(date_col, "")).split(" ")[0]
                             n_val = str(row.get(narration_col, "")).strip()
@@ -1408,8 +1433,9 @@ else:
                             dr = float(row.get(debit_col, 0.0) or 0.0) if debit_col else 0.0
                             cr = float(row.get(credit_col, 0.0) or 0.0) if credit_col else 0.0
 
-                            matched_ledger = match_learned_ledger(selected_client, n_val, rules, active_ledgers)
-                            default_ledger = matched_ledger if matched_ledger else active_ledgers[0]
+                            # Run through dedicated bank cleaner & matcher
+                            matched_ledger = match_learned_ledger(selected_client, n_val, rules, clean_active_ledgers, is_bank=True)
+                            default_ledger = matched_ledger if matched_ledger else clean_active_ledgers[0]
 
                             parsed_rows.append({
                                 "Date": d_val,
@@ -1425,8 +1451,9 @@ else:
 
         if st.session_state["bank_df_working"] is not None:
             st.markdown(f"#### Verified Transactions ({len(st.session_state['bank_df_working'])} Entries)")
-            st.caption("Change any ledger in the table below. Saving will store the rule for future uploads.")
+            st.caption("Change any ledger in the table below. Saving will store the counterparty rule for all future uploads.")
 
+            clean_active_ledgers = [l.strip() for l in active_ledgers]
             edited_bank_df = st.data_editor(
                 st.session_state["bank_df_working"],
                 column_config={
@@ -1438,7 +1465,7 @@ else:
                         "Assigned Tally Ledger",
                         help="Select the expense, revenue, or party ledger",
                         width="medium",
-                        options=active_ledgers,
+                        options=clean_active_ledgers,
                         required=True,
                     )
                 },
@@ -1453,7 +1480,7 @@ else:
                     if selected_client not in rules:
                         rules[selected_client] = {}
                     for _, row in edited_bank_df.iterrows():
-                        cleaned_narr = clean_text(row["Narration"])
+                        cleaned_narr = clean_bank_narration(row["Narration"])
                         if cleaned_narr:
                             rules[selected_client][cleaned_narr] = row["Assigned Ledger"]
                     save_bank_rules(rules)
