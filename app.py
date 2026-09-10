@@ -10,6 +10,7 @@ import os
 import time
 import base64
 import re
+import hashlib
 from difflib import SequenceMatcher
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from PIL import Image
@@ -194,7 +195,6 @@ CUSTOM_CSS = """
         font-size: 0.9rem;
     }
 
-    /* Duplicate Warning Alert Banner */
     .duplicate-alert {
         background: #FEF2F2;
         border: 1.5px solid #F87171;
@@ -396,6 +396,10 @@ def clean_text(text: str) -> str:
     text = re.sub(r'[^a-z0-9\s]', ' ', text)
     return re.sub(r'\s+', ' ', text).strip()
 
+def compute_file_hash(raw_bytes: bytes) -> str:
+    """Computes instant MD5 hash to recognize duplicate files before calling Gemini."""
+    return hashlib.md5(raw_bytes).hexdigest()
+
 def match_learned_ledger(client_name: str, item_desc: str, rules_dict: dict, valid_ledgers: list) -> Optional[str]:
     client_rules = rules_dict.get(client_name, {})
     if not client_rules:
@@ -441,7 +445,6 @@ def record_approval_learning(bill_dict: dict):
 
     save_item_rules(rules)
 
-# DUPLICATE INVOICE CHECK FUNCTION
 def check_invoice_duplicate(vendor_name: str, invoice_no: str, current_idx: int, pending_list: list, approved_list: list):
     clean_v = clean_text(vendor_name)
     clean_inv = clean_text(invoice_no)
@@ -449,7 +452,6 @@ def check_invoice_duplicate(vendor_name: str, invoice_no: str, current_idx: int,
     if not clean_inv or not clean_v:
         return None
 
-    # Check across Approved Bills Archive
     for b in approved_list:
         if clean_text(b.get("vendor_name", "")) == clean_v and clean_text(b.get("invoice_number", "")) == clean_inv:
             return {
@@ -461,7 +463,6 @@ def check_invoice_duplicate(vendor_name: str, invoice_no: str, current_idx: int,
                 "file": b.get("file_name", "Previous Upload")
             }
 
-    # Check across other pending bills in queue
     for i, b in enumerate(pending_list):
         if i == current_idx:
             continue
@@ -679,7 +680,7 @@ def optimize_file(file_name, raw_bytes):
             return "image/jpeg", raw_bytes
     return "application/pdf", raw_bytes
 
-def process_single_bill(file_name, file_bytes, mime, client, ledgers_str, client_name, valid_ledgers, rules_dict):
+def process_single_bill(file_name, file_bytes, mime, file_hash, client, ledgers_str, client_name, valid_ledgers, rules_dict):
     prompt = f"""
     Extract invoice details accurately into structured format.
     For each line item, assign the best matching accounting ledger strictly from this list of ledgers available for this client:
@@ -703,6 +704,7 @@ def process_single_bill(file_name, file_bytes, mime, client, ledgers_str, client
                 parsed = InvoiceExtraction.model_validate_json(resp.text)
                 bill_entry = parsed.model_dump()
                 bill_entry["file_name"] = file_name
+                bill_entry["file_hash"] = file_hash
                 bill_entry["file_base64"] = base64.b64encode(file_bytes).decode("utf-8")
                 bill_entry["mime_type"] = mime
                 bill_entry["gst_treatment"] = "Regular"
@@ -784,7 +786,6 @@ if st.session_state["active_review_index"] is not None and st.session_state["act
     idx = st.session_state["active_review_index"]
     bill = pending_bills_list[idx]
 
-    # CHECK FOR DUPLICATES
     dup_match = check_invoice_duplicate(
         bill.get("vendor_name", ""),
         bill.get("invoice_number", ""),
@@ -817,7 +818,6 @@ if st.session_state["active_review_index"] is not None and st.session_state["act
                 st.toast("Invoice approved and memorized!", icon="✨")
                 st.rerun()
 
-    # RENDER DUPLICATE CALLOUT IF TRIGGERED
     if dup_match:
         st.markdown(f"""
         <div class="duplicate-alert">
@@ -978,7 +978,7 @@ else:
             <div class="app-panel">
                 <h4 style="color: #0D2240; font-family:'Playfair Display',serif; font-weight: 700; margin-top: 0;">Upload Purchase Documents: {selected_client}</h4>
                 <p style="color: #64748B; font-size: 0.88rem; margin-bottom: 0;">
-                    Upload purchase bills (PDF, JPG, PNG). The system extracts items and auto-assigns memorized ledgers.
+                    Upload purchase bills (PDF, JPG, PNG). Exact duplicate files are checked in local memory and skipped before sending to Google AI, protecting your API balance.
                 </p>
             </div>
             """, unsafe_allow_html=True)
@@ -998,54 +998,81 @@ else:
                     client = genai.Client(api_key=api_key)
                     progress_bar = st.progress(0)
                     status_placeholder = st.empty()
-                    status_placeholder.info("⚡ Extracting line items and matching learned ledgers...")
+                    status_placeholder.info("⚡ Inspecting file fingerprints & checking for duplicates...")
+
+                    # Gather existing known file hashes
+                    existing_hashes = set()
+                    for b in pending_bills_list:
+                        if b.get("file_hash"):
+                            existing_hashes.add(b["file_hash"])
+                    for b in approved_bills_list:
+                        if b.get("file_hash"):
+                            existing_hashes.add(b["file_hash"])
 
                     prepared_files = []
+                    skipped_duplicates = []
+
                     for f in uploaded_files:
                         f.seek(0)
-                        mime, optimized_bytes = optimize_file(f.name, f.read())
-                        prepared_files.append((f.name, optimized_bytes, mime))
+                        raw_bytes = f.read()
+                        f_hash = compute_file_hash(raw_bytes)
 
-                    ledgers_str = ", ".join(active_ledgers)
-                    completed_count = 0
-                    total_files = len(prepared_files)
-                    newly_extracted = []
+                        # ZERO-COST DUPLICATE GUARD
+                        if f_hash in existing_hashes:
+                            skipped_duplicates.append(f.name)
+                            continue
 
-                    fresh_rules = load_item_rules()
-                    max_workers = min(4, total_files)
+                        mime, optimized_bytes = optimize_file(f.name, raw_bytes)
+                        prepared_files.append((f.name, optimized_bytes, mime, f_hash))
 
-                    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                        futures = [
-                            executor.submit(
-                                process_single_bill,
-                                fname,
-                                fbytes,
-                                fmime,
-                                client,
-                                ledgers_str,
-                                selected_client,
-                                active_ledgers,
-                                fresh_rules
-                            )
-                            for fname, fbytes, fmime in prepared_files
-                        ]
+                    if skipped_duplicates:
+                        st.info(f"🛡️ Skipped {len(skipped_duplicates)} identical file(s) already in the database (₹0.00 spent): {', '.join(skipped_duplicates)}")
 
-                        for future in as_completed(futures):
-                            success, bill_data, err_msg = future.result()
-                            if success:
-                                newly_extracted.append(bill_data)
-                            else:
-                                st.error(f"❌ {err_msg}")
+                    if not prepared_files:
+                        if skipped_duplicates:
+                            st.warning("All uploaded files were already processed previously. No new API calls were made.")
+                    else:
+                        ledgers_str = ", ".join(active_ledgers)
+                        completed_count = 0
+                        total_files = len(prepared_files)
+                        newly_extracted = []
 
-                            completed_count += 1
-                            progress_bar.progress(completed_count / total_files)
+                        fresh_rules = load_item_rules()
+                        max_workers = min(4, total_files)
 
-                    if newly_extracted:
-                        pending_bills_list.extend(newly_extracted)
-                        save_pending_bills(pending_bills_list)
-                        status_placeholder.success(f"✅ Successfully staged {len(newly_extracted)} invoice(s) for review!")
-                        time.sleep(1)
-                        st.rerun()
+                        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                            futures = [
+                                executor.submit(
+                                    process_single_bill,
+                                    fname,
+                                    fbytes,
+                                    fmime,
+                                    fhash,
+                                    client,
+                                    ledgers_str,
+                                    selected_client,
+                                    active_ledgers,
+                                    fresh_rules
+                                )
+                                for fname, fbytes, fmime, fhash in prepared_files
+                            ]
+
+                            for future in as_completed(futures):
+                                success, bill_data, err_msg = future.result()
+                                if success:
+                                    newly_extracted.append(bill_data)
+                                else:
+                                    st.error(f"❌ {err_msg}")
+
+                                completed_count += 1
+                                progress_bar.progress(completed_count / total_files)
+
+                        if newly_extracted:
+                            pending_bills_list.extend(newly_extracted)
+                            save_pending_bills(pending_bills_list)
+                            status_placeholder.success(f"✅ Successfully staged {len(newly_extracted)} invoice(s) for review!")
+                            time.sleep(1)
+                            st.rerun()
 
         with p_sub_review:
             if not pending_bills_list:
@@ -1056,7 +1083,6 @@ else:
                 """, unsafe_allow_html=True)
             else:
                 for idx, item in enumerate(pending_bills_list):
-                    # Quick list-level duplicate tag
                     is_dup = check_invoice_duplicate(
                         item.get("vendor_name", ""),
                         item.get("invoice_number", ""),
@@ -1313,7 +1339,7 @@ else:
                     st.rerun()
 
         with cfg_col2:
-            st.markdown(f"<div style='font-weight:700; color:#0F172A; margin-bottom:8px;'>✏️ Edit Ledgers for: <b>{selected_client}</b></div>", unsafe_allow_html=True)
+            st.markdown(f"<div style='font-weight:700; color:#0D2240; margin-bottom:8px;'>✏️ Edit Ledgers for: <b>{selected_client}</b></div>", unsafe_allow_html=True)
             current_ledgers_text = "\n".join(client_masters.get(selected_client, []))
             updated_text = st.text_area("Chart of Accounts", value=current_ledgers_text, height=150)
             
