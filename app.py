@@ -304,7 +304,12 @@ DEFAULT_CLIENTS = {
         "Bank Charges",
         "Electricity Expense",
         "Rent Expense",
-        "Staff Welfare Expense"
+        "Staff Welfare Expense",
+        "Repairs & Maintenance - Kitchen",
+        "Housekeeping Expenses",
+        "Printing & Stationery",
+        "Delivery Partner Charges (Zomato/Swiggy)",
+        "Miscellaneous Expenses"
     ],
     "Indbuy Global Pvt Ltd": [
         "Trading Goods Purchase",
@@ -397,7 +402,6 @@ def clean_text(text: str) -> str:
     return re.sub(r'\s+', ' ', text).strip()
 
 def compute_file_hash(raw_bytes: bytes) -> str:
-    """Computes instant MD5 hash to recognize duplicate files before calling Gemini."""
     return hashlib.md5(raw_bytes).hexdigest()
 
 def match_learned_ledger(client_name: str, item_desc: str, rules_dict: dict, valid_ledgers: list) -> Optional[str]:
@@ -781,8 +785,12 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# --- DETAIL REVIEW WORKSPACE ---
-if st.session_state["active_review_index"] is not None and st.session_state["active_review_index"] < len(pending_bills_list):
+# --- DETAIL REVIEW WORKSPACE (FIXED AUTO-ADVANCE & NO-REFRESH TABLE) ---
+if st.session_state["active_review_index"] is not None and len(pending_bills_list) > 0:
+    # Boundary guard
+    if st.session_state["active_review_index"] >= len(pending_bills_list):
+        st.session_state["active_review_index"] = max(0, len(pending_bills_list) - 1)
+
     idx = st.session_state["active_review_index"]
     bill = pending_bills_list[idx]
 
@@ -794,28 +802,23 @@ if st.session_state["active_review_index"] is not None and st.session_state["act
         approved_bills_list
     )
 
-    c_nav1, c_nav2 = st.columns([7, 3])
-    with c_nav1:
-        if st.button("← Back to Invoice Queue", type="secondary"):
+    # Top Navigation Row (Previous / Queue / Next / Counter)
+    nav_c1, nav_c2, nav_c3, nav_c4 = st.columns([2.5, 3.5, 2, 2])
+    with nav_c1:
+        if st.button("← Back to Invoice Queue", type="secondary", use_container_width=True):
             st.session_state["active_review_index"] = None
             st.rerun()
-    with c_nav2:
-        btn_del, btn_app = st.columns(2)
-        with btn_del:
-            if st.button("🗑️ Reject Bill", type="secondary", use_container_width=True):
-                pending_bills_list.pop(idx)
-                save_pending_bills(pending_bills_list)
-                st.session_state["active_review_index"] = None
+    with nav_c2:
+        st.markdown(f"<div style='text-align:center; font-weight:700; color:#0D2240; padding-top:8px;'>Invoice {idx + 1} of {len(pending_bills_list)} in Queue</div>", unsafe_allow_html=True)
+    with nav_c3:
+        if idx > 0:
+            if st.button("⏮️ Previous", type="secondary", use_container_width=True):
+                st.session_state["active_review_index"] = idx - 1
                 st.rerun()
-        with btn_app:
-            if st.button("✅ Approve & Save", type="primary", use_container_width=True):
-                approved_entry = pending_bills_list.pop(idx)
-                record_approval_learning(approved_entry)
-                approved_bills_list.append(approved_entry)
-                save_pending_bills(pending_bills_list)
-                save_approved_bills(approved_bills_list)
-                st.session_state["active_review_index"] = None
-                st.toast("Invoice approved and memorized!", icon="✨")
+    with nav_c4:
+        if idx < len(pending_bills_list) - 1:
+            if st.button("⏭️ Skip to Next", type="secondary", use_container_width=True):
+                st.session_state["active_review_index"] = idx + 1
                 st.rerun()
 
     if dup_match:
@@ -832,7 +835,7 @@ if st.session_state["active_review_index"] is not None and st.session_state["act
         """, unsafe_allow_html=True)
 
     st.markdown("---")
-    col_preview, col_form = st.columns([1, 1.1], gap="large")
+    col_preview, col_form = st.columns([1, 1.2], gap="large")
 
     with col_preview:
         st.markdown(f"""
@@ -848,100 +851,162 @@ if st.session_state["active_review_index"] is not None and st.session_state["act
                 st.info("PDF document preview active")
 
     with col_form:
-        st.markdown("""
-        <div class="app-panel">
-            <div style="font-weight: 700; color: #0D2240;">Invoice Header & GST Controls</div>
-        </div>
-        """, unsafe_allow_html=True)
+        # WRAP IN FORM TO PREVENT MID-SELECTION PAGE DESELECTION / REFRESH
+        with st.form(key=f"review_form_{idx}"):
+            st.markdown("""
+            <div class="app-panel" style="padding: 16px 20px; margin-bottom: 12px;">
+                <div style="font-weight: 700; color: #0D2240;">Invoice Header & GST Controls</div>
+            </div>
+            """, unsafe_allow_html=True)
 
-        bill["vendor_name"] = st.text_input("Vendor / Supplier Name", value=bill["vendor_name"])
-        bill["billing_address"] = st.text_input("Billing Address", value=bill.get("billing_address", ""))
-        
-        r1_c1, r1_c2 = st.columns(2)
-        with r1_c1:
-            curr_gst = bill.get("gst_treatment", "Regular")
-            gst_idx = GST_TREATMENTS.index(curr_gst) if curr_gst in GST_TREATMENTS else 0
-            bill["gst_treatment"] = st.selectbox("GST Treatment", GST_TREATMENTS, index=gst_idx)
-        with r1_c2:
-            bill["vendor_gstin"] = st.text_input("Vendor GSTIN", value=bill.get("vendor_gstin", ""))
+            v_name = st.text_input("Vendor / Supplier Name", value=bill.get("vendor_name", ""))
+            v_address = st.text_input("Billing Address", value=bill.get("billing_address", ""))
+            
+            r1_c1, r1_c2 = st.columns(2)
+            with r1_c1:
+                curr_gst = bill.get("gst_treatment", "Regular")
+                gst_idx = GST_TREATMENTS.index(curr_gst) if curr_gst in GST_TREATMENTS else 0
+                v_gst_treat = st.selectbox("GST Treatment", GST_TREATMENTS, index=gst_idx)
+            with r1_c2:
+                v_gstin = st.text_input("Vendor GSTIN", value=bill.get("vendor_gstin", ""))
 
-        r2_c1, r2_c2 = st.columns(2)
-        with r2_c1:
-            src_idx = STATES.index(bill["source_state"]) if bill.get("source_state") in STATES else 0
-            bill["source_state"] = st.selectbox("Source State (Supplier)", STATES, index=src_idx)
-        with r2_c2:
-            dest_idx = STATES.index(bill["destination_state"]) if bill.get("destination_state") in STATES else 0
-            bill["destination_state"] = st.selectbox("Place of Supply (POS)", STATES, index=dest_idx)
+            r2_c1, r2_c2 = st.columns(2)
+            with r2_c1:
+                src_idx = STATES.index(bill.get("source_state")) if bill.get("source_state") in STATES else 0
+                v_src_state = st.selectbox("Source State (Supplier)", STATES, index=src_idx)
+            with r2_c2:
+                dest_idx = STATES.index(bill.get("destination_state")) if bill.get("destination_state") in STATES else 0
+                v_dest_state = st.selectbox("Place of Supply (POS)", STATES, index=dest_idx)
 
-        bill["invoice_number"] = st.text_input("Invoice Number", value=bill.get("invoice_number", ""))
-        bill["invoice_date"] = st.text_input("Invoice Date (DD-MM-YYYY)", value=bill.get("invoice_date", ""))
+            r3_c1, r3_c2 = st.columns(2)
+            with r3_c1:
+                v_inv_no = st.text_input("Invoice Number", value=bill.get("invoice_number", ""))
+            with r3_c2:
+                v_inv_date = st.text_input("Invoice Date (DD-MM-YYYY)", value=bill.get("invoice_date", ""))
 
-        st.markdown("<div style='font-weight: 700; color: #0D2240; margin: 16px 0 8px 0;'>Line Items & Ledger Assignment</div>", unsafe_allow_html=True)
+            st.markdown("<div style='font-weight: 700; color: #0D2240; margin: 16px 0 8px 0;'>Line Items & Ledger Assignment (No-Refresh Editor)</div>", unsafe_allow_html=True)
 
-        df_items = pd.DataFrame(bill["items"])
-        if "ledger" not in df_items.columns:
-            df_items["ledger"] = active_ledgers[0]
-        else:
-            df_items["ledger"] = df_items["ledger"].apply(
-                lambda x: x if x in active_ledgers else active_ledgers[0]
+            df_items = pd.DataFrame(bill["items"])
+            if "ledger" not in df_items.columns:
+                df_items["ledger"] = active_ledgers[0]
+            else:
+                df_items["ledger"] = df_items["ledger"].apply(
+                    lambda x: x if x in active_ledgers else active_ledgers[0]
+                )
+
+            edited_df = st.data_editor(
+                df_items,
+                key=f"items_editor_{idx}",
+                column_config={
+                    "description": "Item Description",
+                    "hsn_code": "HSN",
+                    "qty": st.column_config.NumberColumn("Qty", min_value=0, format="%.2f"),
+                    "rate": st.column_config.NumberColumn("Rate", format="₹%.2f"),
+                    "amount": st.column_config.NumberColumn("Taxable (₹)", format="₹%.2f"),
+                    "ledger": st.column_config.SelectboxColumn(
+                        "Tally Purchase Ledger",
+                        help="Select purchase or expense ledger for each line item",
+                        width="medium",
+                        options=active_ledgers,
+                        required=True,
+                    )
+                },
+                num_rows="dynamic",
+                use_container_width=True
             )
 
-        edited_df = st.data_editor(
-            df_items,
-            column_config={
-                "description": "Item Description",
-                "hsn_code": "HSN",
-                "qty": st.column_config.NumberColumn("Qty", min_value=0, format="%.2f"),
-                "rate": st.column_config.NumberColumn("Rate", format="₹%.2f"),
-                "amount": st.column_config.NumberColumn("Taxable (₹)", format="₹%.2f"),
-                "ledger": st.column_config.SelectboxColumn(
-                    "Tally Purchase Ledger",
-                    help="Confirm or adjust the expense ledger for this item",
-                    width="medium",
-                    options=active_ledgers,
-                    required=True,
-                )
-            },
-            num_rows="dynamic",
-            use_container_width=True
-        )
-        bill["items"] = edited_df.to_dict(orient="records")
+            st.markdown("<div style='font-weight: 700; color: #0D2240; margin: 16px 0 8px 0;'>Tax Breakdown</div>", unsafe_allow_html=True)
+            t_c1, t_c2, t_c3 = st.columns(3)
+            with t_c1:
+                v_cgst = st.number_input("CGST (₹)", value=float(bill.get("cgst", 0.0)), step=1.0)
+            with t_c2:
+                v_sgst = st.number_input("SGST (₹)", value=float(bill.get("sgst", 0.0)), step=1.0)
+            with t_c3:
+                v_igst = st.number_input("IGST (₹)", value=float(bill.get("igst", 0.0)), step=1.0)
 
-        st.markdown("<div style='font-weight: 700; color: #0D2240; margin: 16px 0 8px 0;'>Tax Breakdown</div>", unsafe_allow_html=True)
-        t_c1, t_c2, t_c3 = st.columns(3)
-        with t_c1:
-            bill["cgst"] = st.number_input("CGST (₹)", value=float(bill["cgst"]), step=1.0)
-        with t_c2:
-            bill["sgst"] = st.number_input("SGST (₹)", value=float(bill["sgst"]), step=1.0)
-        with t_c3:
-            bill["igst"] = st.number_input("IGST (₹)", value=float(bill["igst"]), step=1.0)
+            v_narration = st.text_area(
+                "Voucher Narration",
+                value=bill.get("narration", f"Purchase from {v_name} via Inv #{v_inv_no}")
+            )
 
-        bill["narration"] = st.text_area(
-            "Voucher Narration",
-            value=bill.get("narration", f"Purchase from {bill['vendor_name']} via Inv #{bill['invoice_number']}")
-        )
+            # Recalculate Totals
+            updated_items = edited_df.to_dict(orient="records")
+            calc_subtotal = sum([float(r.get("amount", 0.0)) for r in updated_items])
+            calc_grand_total = calc_subtotal + v_cgst + v_sgst + v_igst
 
-        subtotal = sum([float(row.get("amount", 0.0)) for row in bill["items"]])
-        grand_total = subtotal + bill["cgst"] + bill["sgst"] + bill["igst"]
-        bill["subtotal"] = subtotal
-        bill["grand_total"] = grand_total
-
-        pending_bills_list[idx] = bill
-        save_pending_bills(pending_bills_list)
-
-        st.markdown(f"""
-        <div style="background: #FFFFFF; border: 1px solid #CBD5E1; padding: 18px 24px; border-radius: 14px; margin-top: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.03);">
-            <div style="display: flex; justify-content: space-between; font-weight: 600; color: #475569; font-size: 0.95rem;">
-                <span>Taxable Subtotal: ₹{subtotal:,.2f}</span>
-                <span>GST Total: ₹{(bill['cgst']+bill['sgst']+bill['igst']):,.2f}</span>
+            st.markdown(f"""
+            <div style="background: #FFFFFF; border: 1px solid #CBD5E1; padding: 14px 20px; border-radius: 12px; margin: 14px 0;">
+                <div style="display: flex; justify-content: space-between; font-weight: 600; color: #475569; font-size: 0.9rem;">
+                    <span>Taxable: ₹{calc_subtotal:,.2f}</span>
+                    <span>GST: ₹{(v_cgst+v_sgst+v_igst):,.2f}</span>
+                </div>
+                <div style="font-size: 1.45rem; font-weight: 800; color: #0D2240; margin-top: 4px;">Grand Total: ₹{calc_grand_total:,.2f}</div>
             </div>
-            <div style="font-size: 1.6rem; font-weight: 800; color: #0D2240; margin-top: 8px;">Grand Total: ₹{grand_total:,.2f}</div>
-        </div>
-        """, unsafe_allow_html=True)
+            """, unsafe_allow_html=True)
+
+            # ACTION BAR INSIDE FORM (Approve, Reject, Save Changes)
+            act_col1, act_col2, act_col3 = st.columns([1.5, 1, 1])
+            with act_col1:
+                submit_approve = st.form_submit_button("✅ Approve & Next Invoice", type="primary", use_container_width=True)
+            with act_col2:
+                submit_save_only = st.form_submit_button("💾 Save Draft", type="secondary", use_container_width=True)
+            with act_col3:
+                submit_reject = st.form_submit_button("🗑️ Reject Bill", type="secondary", use_container_width=True)
+
+        # PROCESS FORM SUBMISSIONS
+        if submit_approve or submit_save_only or submit_reject:
+            # Update current bill dictionary with latest fields
+            bill["vendor_name"] = v_name
+            bill["billing_address"] = v_address
+            bill["gst_treatment"] = v_gst_treat
+            bill["vendor_gstin"] = v_gstin
+            bill["source_state"] = v_src_state
+            bill["destination_state"] = v_dest_state
+            bill["invoice_number"] = v_inv_no
+            bill["invoice_date"] = v_inv_date
+            bill["items"] = updated_items
+            bill["cgst"] = v_cgst
+            bill["sgst"] = v_sgst
+            bill["igst"] = v_igst
+            bill["subtotal"] = calc_subtotal
+            bill["grand_total"] = calc_grand_total
+            bill["narration"] = v_narration
+
+            if submit_approve:
+                approved_entry = pending_bills_list.pop(idx)
+                record_approval_learning(bill)
+                approved_bills_list.append(bill)
+                save_pending_bills(pending_bills_list)
+                save_approved_bills(approved_bills_list)
+
+                # Keep user in review mode if more bills remain
+                if len(pending_bills_list) > 0:
+                    st.session_state["active_review_index"] = min(idx, len(pending_bills_list) - 1)
+                    st.toast("Approved! Loaded next invoice.", icon="✨")
+                else:
+                    st.session_state["active_review_index"] = None
+                    st.toast("All pending invoices reviewed!", icon="🎉")
+                st.rerun()
+
+            elif submit_reject:
+                pending_bills_list.pop(idx)
+                save_pending_bills(pending_bills_list)
+                if len(pending_bills_list) > 0:
+                    st.session_state["active_review_index"] = min(idx, len(pending_bills_list) - 1)
+                    st.toast("Bill rejected. Loaded next invoice.", icon="🗑️")
+                else:
+                    st.session_state["active_review_index"] = None
+                st.rerun()
+
+            elif submit_save_only:
+                pending_bills_list[idx] = bill
+                save_pending_bills(pending_bills_list)
+                st.toast("Draft saved successfully!", icon="💾")
+                st.rerun()
 
 # --- MAIN DASHBOARD INTERFACE ---
 else:
-    if st.session_state["active_review_index"] is not None:
+    if st.session_state["active_review_index"] is not None and len(pending_bills_list) == 0:
         st.session_state["active_review_index"] = None
 
     col_mod1, col_mod2, col_mod3, col_mod_space = st.columns([1.6, 1.6, 1.4, 3.4])
@@ -978,7 +1043,7 @@ else:
             <div class="app-panel">
                 <h4 style="color: #0D2240; font-family:'Playfair Display',serif; font-weight: 700; margin-top: 0;">Upload Purchase Documents: {selected_client}</h4>
                 <p style="color: #64748B; font-size: 0.88rem; margin-bottom: 0;">
-                    Upload purchase bills (PDF, JPG, PNG). Exact duplicate files are checked in local memory and skipped before sending to Google AI, protecting your API balance.
+                    Upload purchase bills (PDF, JPG, PNG). Exact duplicate files are skipped before AI extraction to protect your balance.
                 </p>
             </div>
             """, unsafe_allow_html=True)
@@ -1000,7 +1065,6 @@ else:
                     status_placeholder = st.empty()
                     status_placeholder.info("⚡ Inspecting file fingerprints & checking for duplicates...")
 
-                    # Gather existing known file hashes
                     existing_hashes = set()
                     for b in pending_bills_list:
                         if b.get("file_hash"):
@@ -1017,7 +1081,6 @@ else:
                         raw_bytes = f.read()
                         f_hash = compute_file_hash(raw_bytes)
 
-                        # ZERO-COST DUPLICATE GUARD
                         if f_hash in existing_hashes:
                             skipped_duplicates.append(f.name)
                             continue
@@ -1116,6 +1179,7 @@ else:
                             st.rerun()
                     st.write("")
 
+        # SUB-TAB 3: APPROVED VOUCHERS (WITH POST-APPROVAL RECTIFICATION)
         with p_sub_approved:
             if not approved_bills_list:
                 st.markdown("""
@@ -1124,6 +1188,35 @@ else:
                 </div>
                 """, unsafe_allow_html=True)
             else:
+                st.markdown("<div style='font-weight:700; color:#0D2240; margin-bottom:8px;'>Approved Purchase Invoices Register</div>", unsafe_allow_html=True)
+                
+                # Render itemized list with Edit / Rectify button
+                for a_idx, b in enumerate(approved_bills_list):
+                    c_app_info, c_app_act = st.columns([8, 2])
+                    with c_app_info:
+                        st.markdown(f"""
+                        <div style="background:#FFFFFF; border:1px solid #E2E8F0; border-radius:10px; padding:12px 16px; margin-bottom:8px;">
+                            <div style="display:flex; justify-content:space-between;">
+                                <span style="font-weight:700; color:#0D2240;">{b['vendor_name']} (Inv #{b['invoice_number']})</span>
+                                <span style="font-weight:800; color:#0D2240;">₹{b['grand_total']:,.2f}</span>
+                            </div>
+                            <div style="font-size:0.8rem; color:#64748B; margin-top:3px;">
+                                Date: {b['invoice_date']} | GSTIN: {b.get('vendor_gstin', 'N/A')} | Items: {len(b.get('items', []))}
+                            </div>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    with c_app_act:
+                        if st.button("✏️ Rectify / Edit", key=f"rectify_{a_idx}", use_container_width=True):
+                            # Move approved voucher back to pending review queue for editing
+                            voucher_to_edit = approved_bills_list.pop(a_idx)
+                            pending_bills_list.append(voucher_to_edit)
+                            save_approved_bills(approved_bills_list)
+                            save_pending_bills(pending_bills_list)
+                            st.session_state["active_review_index"] = len(pending_bills_list) - 1
+                            st.rerun()
+
+                st.markdown("---")
+
                 summary_rows = []
                 itemized_rows = []
 
@@ -1156,14 +1249,11 @@ else:
                 df_summary = pd.DataFrame(summary_rows)
                 df_items_approved = pd.DataFrame(itemized_rows)
 
-                st.dataframe(df_summary, use_container_width=True, height=280)
-
                 excel_buf = io.BytesIO()
                 with pd.ExcelWriter(excel_buf, engine='openpyxl') as writer:
                     df_summary.to_excel(writer, sheet_name="Invoice Summary", index=False)
                     df_items_approved.to_excel(writer, sheet_name="Item-Wise Ledgers", index=False)
 
-                st.write("")
                 exp_c1, exp_c2, exp_c3 = st.columns([1, 1, 1])
                 with exp_c1:
                     st.download_button(
@@ -1339,7 +1429,7 @@ else:
                     st.rerun()
 
         with cfg_col2:
-            st.markdown(f"<div style='font-weight:700; color:#0D2240; margin-bottom:8px;'>✏️ Edit Ledgers for: <b>{selected_client}</b></div>", unsafe_allow_html=True)
+            st.markdown(f"<div style='font-weight:700; color:#0F172A; margin-bottom:8px;'>✏️ Edit Ledgers for: <b>{selected_client}</b></div>", unsafe_allow_html=True)
             current_ledgers_text = "\n".join(client_masters.get(selected_client, []))
             updated_text = st.text_area("Chart of Accounts", value=current_ledgers_text, height=150)
             
