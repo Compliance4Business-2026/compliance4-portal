@@ -24,7 +24,6 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Create local image storage folder to keep RAM clean
 IMAGE_STORAGE_DIR = "invoice_images"
 os.makedirs(IMAGE_STORAGE_DIR, exist_ok=True)
 
@@ -301,7 +300,7 @@ if not check_password():
 
 LOGO_PATH = "logo.png"
 
-# 4. Persistent Stores & Default Chart of Accounts (Google Sheets Cloud Persistence)
+# 4. Persistent Stores (Google Sheets Cloud Persistence)
 try:
     conn = st.connection("gsheets", type=GSheetsConnection)
 except Exception:
@@ -422,7 +421,7 @@ def load_bank_rules():
 def save_bank_rules(rules):
     _write_store("bank_ledger_rules", rules)
 
-# 5. Dedicated Normalizers for Bills & Bank Statements
+# 5. Normalizers
 STOP_WORDS = {
     "1ltr", "1 ltr", "ltr", "500g", "1kg", "kg", "gm", "ml", 
     "pkt", "pcs", "box", "can", "tin", "nos", "no", "unit", 
@@ -690,6 +689,10 @@ def generate_bank_tally_xml(df_bank, bank_ledger_name):
         clean_date = "".join(filter(str.isdigit, raw_date))
         if len(clean_date) == 8 and "-" in raw_date:
             p = raw_date.split("-")
+            if len(p[0]) == 2:
+                clean_date = f"{p[2]}{p[1]}{p[0]}"
+        elif len(clean_date) == 8 and "/" in raw_date:
+            p = raw_date.split("/")
             if len(p[0]) == 2:
                 clean_date = f"{p[2]}{p[1]}{p[0]}"
         elif len(clean_date) != 8:
@@ -1399,14 +1402,14 @@ else:
                         st.rerun()
 
     # ========================================================
-    # MODULE 2: BANK STATEMENTS
+    # MODULE 2: BANK STATEMENTS (UNIVERSAL PARSER FOR ICICI & ALL BANKS)
     # ========================================================
     elif st.session_state["active_main_module"] == "Bank":
         st.markdown(f"""
         <div class="app-panel">
             <h4 style="color: #0D2240; font-family:'Playfair Display',serif; font-weight: 700; margin-top: 0;">Bank Statement Reconciliation: {selected_client}</h4>
             <p style="color: #64748B; font-size: 0.88rem; margin-bottom: 0;">
-                Upload bank statements in Excel or CSV. The dedicated bank engine cleans UPI, IMPS, and reference noise to match learned counterparties reliably.
+                Upload bank statements in Excel or CSV. Supports both two-column (Debit/Credit) and single-column (Amount with Cr/Dr indicator) formats like ICICI Bank.
             </p>
         </div>
         """, unsafe_allow_html=True)
@@ -1429,27 +1432,78 @@ else:
                     else:
                         df_raw = pd.read_excel(uploaded_bank)
 
+                    # Identify header row if empty metadata rows exist above
+                    def find_header_df(df_in):
+                        for r_idx in range(min(15, len(df_in))):
+                            row_vals = [str(x).lower().strip() for x in df_in.iloc[r_idx].values]
+                            if any("date" in v for v in row_vals) and any(any(k in v for k in ["description", "particulars", "narration", "remarks"]) for v in row_vals):
+                                df_in.columns = df_in.iloc[r_idx]
+                                return df_in.iloc[r_idx + 1:].reset_index(drop=True)
+                        return df_in
+
+                    # Check if standard columns match directly, otherwise inspect rows
+                    test_cols = [str(c).lower().strip() for c in df_raw.columns]
+                    if not (any("date" in c for c in test_cols) and any(any(k in c for k in ["description", "particulars", "narration", "remarks"]) for c in test_cols)):
+                        df_raw = find_header_df(df_raw)
+
                     clean_cols = {c: str(c).strip().lower() for c in df_raw.columns}
-                    date_col = next((c for c, n in clean_cols.items() if "date" in n or "txn date" in n), None)
-                    narration_col = next((c for c, n in clean_cols.items() if any(k in n for k in ["narration", "description", "particulars", "remarks"])), None)
-                    debit_col = next((c for c, n in clean_cols.items() if any(k in n for k in ["debit", "withdrawal", "dr"])), None)
-                    credit_col = next((c for c, n in clean_cols.items() if any(k in n for k in ["credit", "deposit", "cr"])), None)
+
+                    # Locate Key Columns
+                    date_col = next((c for c, n in clean_cols.items() if any(k in n for k in ["value date", "txn date", "transaction date", "date"])), None)
+                    narration_col = next((c for c, n in clean_cols.items() if any(k in n for k in ["description", "narration", "particulars", "remarks"])), None)
+                    
+                    # Indicator Column (e.g. 'Cr/Dr', 'Type')
+                    indicator_col = next((c for c, n in clean_cols.items() if any(k in n for k in ["cr/dr", "dr/cr", "cr / dr", "dr / cr", "type"])), None)
+                    
+                    # Amount Columns
+                    txn_amount_col = next((c for c, n in clean_cols.items() if any(k in n for k in ["transaction amount", "txn amount", "amount(inr)", "amount (inr)"]) and "balance" not in n), None)
+                    debit_col = next((c for c, n in clean_cols.items() if any(k in n for k in ["debit", "withdrawal", "dr amount"]) and c != indicator_col), None)
+                    credit_col = next((c for c, n in clean_cols.items() if any(k in n for k in ["credit", "deposit", "cr amount"]) and c != indicator_col), None)
 
                     if not (date_col and narration_col):
-                        st.error("Could not automatically locate 'Date' and 'Narration' columns. Please check your Excel structure.")
+                        st.error("Could not automatically locate 'Date' and 'Description / Narration' columns. Please check your file layout.")
                     else:
                         parsed_rows = []
                         rules = load_bank_rules()
                         clean_active_ledgers = [l.strip() for l in active_ledgers]
 
+                        def parse_num(val):
+                            if pd.isna(val):
+                                return 0.0
+                            s = str(val).replace(",", "").strip()
+                            s = re.sub(r'[^0-9.-]', '', s)
+                            try:
+                                return float(s) if s else 0.0
+                            except Exception:
+                                return 0.0
+
                         for _, row in df_raw.iterrows():
-                            d_val = str(row.get(date_col, "")).split(" ")[0]
+                            d_val = str(row.get(date_col, "")).split(" ")[0].strip()
                             n_val = str(row.get(narration_col, "")).strip()
                             if not n_val or n_val.lower() == "nan":
                                 continue
 
-                            dr = float(row.get(debit_col, 0.0) or 0.0) if debit_col else 0.0
-                            cr = float(row.get(credit_col, 0.0) or 0.0) if credit_col else 0.0
+                            dr = 0.0
+                            cr = 0.0
+
+                            # Pattern A: Single Amount Column with Cr/Dr Indicator (e.g., ICICI Bank)
+                            if indicator_col and txn_amount_col:
+                                ind = str(row.get(indicator_col, "")).strip().upper()
+                                amt = parse_num(row.get(txn_amount_col, 0.0))
+                                if "DR" in ind:
+                                    dr = amt
+                                elif "CR" in ind:
+                                    cr = amt
+
+                            # Pattern B: Separate Debit and Credit Columns (e.g., HDFC, SBI)
+                            else:
+                                if debit_col:
+                                    dr = parse_num(row.get(debit_col, 0.0))
+                                if credit_col:
+                                    cr = parse_num(row.get(credit_col, 0.0))
+
+                            if dr == 0.0 and cr == 0.0:
+                                continue
 
                             matched_ledger = match_learned_ledger(selected_client, n_val, rules, clean_active_ledgers, is_bank=True)
                             default_ledger = matched_ledger if matched_ledger else clean_active_ledgers[0]
@@ -1462,13 +1516,16 @@ else:
                                 "Assigned Ledger": default_ledger
                             })
 
-                        st.session_state["bank_df_working"] = pd.DataFrame(parsed_rows)
+                        if not parsed_rows:
+                            st.warning("No transactions found. Please confirm the statement contains transaction data.")
+                        else:
+                            st.session_state["bank_df_working"] = pd.DataFrame(parsed_rows)
                 except Exception as e:
                     st.error(f"Error parsing bank statement: {e}")
 
         if st.session_state["bank_df_working"] is not None:
             st.markdown(f"#### Verified Transactions ({len(st.session_state['bank_df_working'])} Entries)")
-            st.caption("Change any ledger in the table below. Saving will store the counterparty rule for all future uploads.")
+            st.caption("Review or adjust ledgers below. Click 'Memorize Counterparties' to save rules to your Google Sheet.")
 
             clean_active_ledgers = [l.strip() for l in active_ledgers]
             edited_bank_df = st.data_editor(
@@ -1502,7 +1559,7 @@ else:
                             rules[selected_client][cleaned_narr] = row["Assigned Ledger"]
                     save_bank_rules(rules)
                     st.session_state["bank_df_working"] = edited_bank_df
-                    st.toast("Bank counterparty rules saved!", icon="💾")
+                    st.toast("Bank counterparty rules saved to Google Sheets!", icon="💾")
                     st.rerun()
 
             with b_btn2:
@@ -1528,7 +1585,7 @@ else:
         <div class="app-panel">
             <h4 style="color: #0D2240; font-family:'Playfair Display',serif; font-weight: 700; margin-top: 0;">Chart of Accounts & AI Memory</h4>
             <p style="color: #64748B; font-size: 0.88rem; margin-bottom: 0;">
-                Configure client ledgers and inspect memorized items or bank counterparty rules.
+                Configure client ledgers and inspect memorized items or bank counterparty rules saved in your Google Sheet database.
             </p>
         </div>
         """, unsafe_allow_html=True)
@@ -1548,7 +1605,7 @@ else:
                     ledgers_list = [l.strip() for l in new_client_ledgers_raw.split("\n") if l.strip()]
                     client_masters[new_client_name.strip()] = ledgers_list
                     save_client_masters(client_masters)
-                    st.success(f"Saved '{new_client_name}'!")
+                    st.success(f"Saved '{new_client_name}' to Google Sheets!")
                     st.rerun()
 
         with cfg_col2:
@@ -1562,7 +1619,7 @@ else:
                     new_list = [l.strip() for l in updated_text.split("\n") if l.strip()]
                     client_masters[selected_client] = new_list
                     save_client_masters(client_masters)
-                    st.success("Ledgers updated successfully!")
+                    st.success("Ledgers updated and synced to Google Sheets!")
                     st.rerun()
             with s_c2:
                 if st.button("🗑️ Delete Client", type="secondary", use_container_width=True):
