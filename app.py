@@ -14,6 +14,7 @@ import hashlib
 from difflib import SequenceMatcher
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from PIL import Image
+from streamlit_gsheets import GSheetsConnection
 
 # 1. Page Config
 st.set_page_config(
@@ -300,12 +301,11 @@ if not check_password():
 
 LOGO_PATH = "logo.png"
 
-# 4. Persistent Stores & Default Chart of Accounts
-CLIENTS_FILE = "client_ledgers.json"
-PENDING_BILLS_FILE = "pending_bills.json"
-APPROVED_BILLS_FILE = "approved_bills.json"
-ITEM_RULES_FILE = "item_ledger_rules.json"
-BANK_RULES_FILE = "bank_ledger_rules.json"
+# 4. Persistent Stores & Default Chart of Accounts (Google Sheets Cloud Persistence)
+try:
+    conn = st.connection("gsheets", type=GSheetsConnection)
+except Exception:
+    conn = None
 
 DEFAULT_CLIENTS = {
     "The Marx Ventures": [
@@ -343,72 +343,84 @@ DEFAULT_CLIENTS = {
     ]
 }
 
-def load_client_masters():
-    if os.path.exists(CLIENTS_FILE):
+def _get_gsheet_df():
+    if conn is None:
+        return pd.DataFrame(columns=["key", "data"])
+    try:
+        df = conn.read(worksheet="app_data", ttl=0)
+        if df is None or df.empty or "key" not in df.columns:
+            return pd.DataFrame(columns=["key", "data"])
+        return df
+    except Exception:
+        return pd.DataFrame(columns=["key", "data"])
+
+def _read_store(key: str, default_val):
+    try:
+        df = _get_gsheet_df()
+        row = df[df["key"] == key]
+        if not row.empty:
+            raw_json = str(row.iloc[0]["data"])
+            return json.loads(raw_json)
+    except Exception:
+        pass
+    if os.path.exists(f"{key}.json"):
         try:
-            with open(CLIENTS_FILE, "r") as f:
-                data = json.load(f)
-                if data:
-                    return data
+            with open(f"{key}.json", "r") as f:
+                return json.load(f)
         except Exception:
-            return DEFAULT_CLIENTS
-    return DEFAULT_CLIENTS
+            return default_val
+    return default_val
+
+def _write_store(key: str, val):
+    try:
+        with open(f"{key}.json", "w") as f:
+            json.dump(val, f, indent=4)
+    except Exception:
+        pass
+
+    if conn is not None:
+        try:
+            df = _get_gsheet_df()
+            json_str = json.dumps(val)
+            if not df.empty and key in df["key"].values:
+                df.loc[df["key"] == key, "data"] = json_str
+            else:
+                new_row = pd.DataFrame([{"key": key, "data": json_str}])
+                df = pd.concat([df, new_row], ignore_index=True)
+            conn.update(worksheet="app_data", data=df)
+        except Exception as e:
+            st.warning(f"Note: Cloud sync failed ({e}), saved locally.")
+
+def load_client_masters():
+    res = _read_store("client_ledgers", DEFAULT_CLIENTS)
+    return res if res else DEFAULT_CLIENTS
 
 def save_client_masters(data):
-    with open(CLIENTS_FILE, "w") as f:
-        json.dump(data, f, indent=4)
+    _write_store("client_ledgers", data)
 
 def load_pending_bills():
-    if os.path.exists(PENDING_BILLS_FILE):
-        try:
-            with open(PENDING_BILLS_FILE, "r") as f:
-                return json.load(f)
-        except Exception:
-            return []
-    return []
+    return _read_store("pending_bills", [])
 
 def save_pending_bills(bills):
-    with open(PENDING_BILLS_FILE, "w") as f:
-        json.dump(bills, f, indent=4)
+    _write_store("pending_bills", bills)
 
 def load_approved_bills():
-    if os.path.exists(APPROVED_BILLS_FILE):
-        try:
-            with open(APPROVED_BILLS_FILE, "r") as f:
-                return json.load(f)
-        except Exception:
-            return []
-    return []
+    return _read_store("approved_bills", [])
 
 def save_approved_bills(bills):
-    with open(APPROVED_BILLS_FILE, "w") as f:
-        json.dump(bills, f, indent=4)
+    _write_store("approved_bills", bills)
 
 def load_item_rules():
-    if os.path.exists(ITEM_RULES_FILE):
-        try:
-            with open(ITEM_RULES_FILE, "r") as f:
-                return json.load(f)
-        except Exception:
-            return {}
-    return {}
+    return _read_store("item_ledger_rules", {})
 
 def save_item_rules(rules):
-    with open(ITEM_RULES_FILE, "w") as f:
-        json.dump(rules, f, indent=4)
+    _write_store("item_ledger_rules", rules)
 
 def load_bank_rules():
-    if os.path.exists(BANK_RULES_FILE):
-        try:
-            with open(BANK_RULES_FILE, "r") as f:
-                return json.load(f)
-        except Exception:
-            return {}
-    return {}
+    return _read_store("bank_ledger_rules", {})
 
 def save_bank_rules(rules):
-    with open(BANK_RULES_FILE, "w") as f:
-        json.dump(rules, f, indent=4)
+    _write_store("bank_ledger_rules", rules)
 
 # 5. Dedicated Normalizers for Bills & Bank Statements
 STOP_WORDS = {
@@ -735,7 +747,6 @@ def generate_bank_tally_xml(df_bank, bank_ledger_name):
     return xml
 
 def optimize_file(file_name, raw_bytes):
-    """Memory-conscious image compressor: shrinks image to light 1200px preview and frees RAM."""
     ext = file_name.lower().split('.')[-1]
     if ext in ['jpg', 'jpeg', 'png']:
         try:
@@ -761,7 +772,7 @@ def process_single_bill(file_name, file_bytes, mime, file_hash, client, ledgers_
     for attempt in range(1, 4):
         try:
             resp = client.models.generate_content(
-                model='gemini-3.6-flash',
+                model='gemini-2.5-flash',
                 contents=[
                     types.Part.from_bytes(data=file_bytes, mime_type=mime),
                     prompt
@@ -781,7 +792,6 @@ def process_single_bill(file_name, file_bytes, mime, file_hash, client, ledgers_
                 bill_entry["gst_treatment"] = "Regular"
                 bill_entry["client_name"] = client_name
 
-                # Store image on disk instead of holding heavy Base64 in RAM
                 saved_rel_path = os.path.join(IMAGE_STORAGE_DIR, f"{file_hash[:12]}_{file_name}")
                 with open(saved_rel_path, "wb") as f_out:
                     f_out.write(file_bytes)
@@ -930,7 +940,6 @@ if st.session_state["active_review_index"] is not None and len(pending_bills_lis
                 st.session_state["zoom_level"] = 100
                 st.rerun()
 
-        # Load image from disk to save RAM
         img_path = bill.get("saved_image_path", "")
         if img_path and os.path.exists(img_path):
             with open(img_path, "rb") as f_img:
@@ -1093,7 +1102,6 @@ if st.session_state["active_review_index"] is not None and len(pending_bills_lis
                 st.rerun()
 
             elif submit_reject:
-                # Remove cached file on disk to free storage
                 img_to_del = bill.get("saved_image_path", "")
                 if img_to_del and os.path.exists(img_to_del):
                     try:
@@ -1213,7 +1221,6 @@ else:
                         newly_extracted = []
 
                         fresh_rules = load_item_rules()
-                        # Limit to 2 workers to keep memory overhead low
                         max_workers = min(2, total_files)
 
                         with ThreadPoolExecutor(max_workers=max_workers) as executor:
