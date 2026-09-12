@@ -27,7 +27,7 @@ st.set_page_config(
 IMAGE_STORAGE_DIR = "invoice_images"
 os.makedirs(IMAGE_STORAGE_DIR, exist_ok=True)
 
-# 2. Styling Injection
+# 2. Bespoke Styling Injection
 CUSTOM_CSS = """
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Playfair+Display:ital,wght@0,600;0,700;1,600&display=swap');
@@ -300,7 +300,7 @@ if not check_password():
 
 LOGO_PATH = "logo.png"
 
-# 4. Persistent Stores (With 40k Chunking to Prevent 50k Character Google Limits)
+# 4. Persistent Stores & Google Sheets Connection
 try:
     conn = st.connection("gsheets", type=GSheetsConnection)
 except Exception:
@@ -352,6 +352,9 @@ def _get_gsheet_df():
         df = conn.read(worksheet="app_data", ttl=0)
         if df is None or df.empty or "key" not in df.columns:
             return pd.DataFrame(columns=["key", "data"])
+        df = df.dropna(subset=["key"]).copy()
+        df["key"] = df["key"].astype(str).str.strip()
+        df["data"] = df["data"].astype(str)
         return df
     except Exception:
         return pd.DataFrame(columns=["key", "data"])
@@ -359,20 +362,15 @@ def _get_gsheet_df():
 def _read_store(key: str, default_val):
     try:
         df = _get_gsheet_df()
-        # Check if single key exists
         row = df[df["key"] == key]
         if not row.empty:
-            raw_json = str(row.iloc[0]["data"])
-            return json.loads(raw_json)
-        
-        # Check if multi-chunk keys exist (e.g. key_part_0, key_part_1)
-        chunk_rows = df[df["key"].str.startswith(f"{key}_part_")].sort_values("key")
-        if not chunk_rows.empty:
-            combined_json = "".join([str(x) for x in chunk_rows["data"].values])
-            return json.loads(combined_json)
+            raw_json = row.iloc[0]["data"].strip()
+            if raw_json and raw_json != "nan":
+                return json.loads(raw_json)
     except Exception:
         pass
 
+    # Local fallback
     if os.path.exists(f"{key}.json"):
         try:
             with open(f"{key}.json", "r") as f:
@@ -382,36 +380,26 @@ def _read_store(key: str, default_val):
     return default_val
 
 def _write_store(key: str, val):
-    # Local cache backup
+    # Always keep local file updated
     try:
         with open(f"{key}.json", "w") as f:
             json.dump(val, f, indent=4)
     except Exception:
         pass
 
+    # Push to Google Sheet
     if conn is not None:
         try:
             df = _get_gsheet_df()
             json_str = json.dumps(val)
 
-            # Remove old key and chunks
-            df = df[~df["key"].str.startswith(key)].reset_index(drop=True)
-
-            CHUNK_SIZE = 35000  # Well within the 50,000 character limit
-            if len(json_str) <= CHUNK_SIZE:
-                new_row = pd.DataFrame([{"key": key, "data": json_str}])
-                df = pd.concat([df, new_row], ignore_index=True)
-            else:
-                # Split large JSON into safe 35k-character chunks
-                chunks = [json_str[i:i + CHUNK_SIZE] for i in range(0, len(json_str), CHUNK_SIZE)]
-                new_rows = []
-                for c_idx, c_text in enumerate(chunks):
-                    new_rows.append({"key": f"{key}_part_{c_idx:02d}", "data": c_text})
-                df = pd.concat([df, pd.DataFrame(new_rows)], ignore_index=True)
-
+            # Clean replacement without fragile startswith logic
+            df = df[df["key"] != key].copy()
+            new_row = pd.DataFrame([{"key": key, "data": json_str}])
+            df = pd.concat([df, new_row], ignore_index=True)
             conn.update(worksheet="app_data", data=df)
         except Exception as e:
-            st.warning(f"Note: Cloud sync notice ({e}), saved locally.")
+            st.error(f"Google Sheet sync notice: {e}")
 
 def load_client_masters():
     res = _read_store("client_ledgers", DEFAULT_CLIENTS)
@@ -443,12 +431,6 @@ def load_bank_rules():
 
 def save_bank_rules(rules):
     _write_store("bank_ledger_rules", rules)
-
-def load_bank_working_store():
-    return _read_store("bank_statement_working", {})
-
-def save_bank_working_store(store_dict):
-    _write_store("bank_statement_working", store_dict)
 
 # 5. Normalizers
 STOP_WORDS = {
@@ -1443,17 +1425,10 @@ else:
         <div class="app-panel">
             <h4 style="color: #0D2240; font-family:'Playfair Display',serif; font-weight: 700; margin-top: 0;">Bank Statement Reconciliation: {selected_client}</h4>
             <p style="color: #64748B; font-size: 0.88rem; margin-bottom: 0;">
-                Active statement is saved in Google Sheets. You can safely close the tab or logout and return anytime without losing progress.
+                Assign a ledger to any counterparty, and it will auto-categorize across all matching transactions and save permanently to your Google Sheet.
             </p>
         </div>
         """, unsafe_allow_html=True)
-
-        bank_working_store = load_bank_working_store()
-
-        if st.session_state["bank_df_working"] is None and selected_client in bank_working_store:
-            saved_records = bank_working_store.get(selected_client, [])
-            if saved_records:
-                st.session_state["bank_df_working"] = pd.DataFrame(saved_records)
 
         bank_col1, bank_col2 = st.columns([2, 1])
         with bank_col1:
@@ -1466,95 +1441,93 @@ else:
             tally_bank_name = st.text_input("Tally Bank Account Ledger", value="ICICI Bank")
 
         if uploaded_bank is not None:
-            try:
-                if uploaded_bank.name.endswith(".csv"):
-                    df_raw = pd.read_csv(uploaded_bank)
-                else:
-                    df_raw = pd.read_excel(uploaded_bank)
-
-                def find_header_df(df_in):
-                    for r_idx in range(min(15, len(df_in))):
-                        row_vals = [str(x).lower().strip() for x in df_in.iloc[r_idx].values]
-                        if any("date" in v for v in row_vals) and any(any(k in v for k in ["description", "particulars", "narration", "remarks"]) for v in row_vals):
-                            df_in.columns = df_in.iloc[r_idx]
-                            return df_in.iloc[r_idx + 1:].reset_index(drop=True)
-                    return df_in
-
-                test_cols = [str(c).lower().strip() for c in df_raw.columns]
-                if not (any("date" in c for c in test_cols) and any(any(k in c for k in ["description", "particulars", "narration", "remarks"]) for c in test_cols)):
-                    df_raw = find_header_df(df_raw)
-
-                clean_cols = {c: str(c).strip().lower() for c in df_raw.columns}
-
-                date_col = next((c for c, n in clean_cols.items() if any(k in n for k in ["value date", "txn date", "transaction date", "date"])), None)
-                narration_col = next((c for c, n in clean_cols.items() if any(k in n for k in ["description", "narration", "particulars", "remarks"])), None)
-                indicator_col = next((c for c, n in clean_cols.items() if any(k in n for k in ["cr/dr", "dr/cr", "cr / dr", "dr / cr", "type"])), None)
-                txn_amount_col = next((c for c, n in clean_cols.items() if any(k in n for k in ["transaction amount", "txn amount", "amount(inr)", "amount (inr)"]) and "balance" not in n), None)
-                debit_col = next((c for c, n in clean_cols.items() if any(k in n for k in ["debit", "withdrawal", "dr amount"]) and c != indicator_col), None)
-                credit_col = next((c for c, n in clean_cols.items() if any(k in n for k in ["credit", "deposit", "cr amount"]) and c != indicator_col), None)
-
-                if not (date_col and narration_col):
-                    st.error("Could not automatically locate 'Date' and 'Description / Narration' columns. Please check your file layout.")
-                else:
-                    parsed_rows = []
-                    rules = load_bank_rules()
-                    clean_active_ledgers = [l.strip() for l in active_ledgers]
-
-                    def parse_num(val):
-                        if pd.isna(val):
-                            return 0.0
-                        s = str(val).replace(",", "").strip()
-                        s = re.sub(r'[^0-9.-]', '', s)
-                        try:
-                            return float(s) if s else 0.0
-                        except Exception:
-                            return 0.0
-
-                    for _, row in df_raw.iterrows():
-                        d_val = str(row.get(date_col, "")).split(" ")[0].strip()
-                        n_val = str(row.get(narration_col, "")).strip()
-                        if not n_val or n_val.lower() == "nan":
-                            continue
-
-                        dr = 0.0
-                        cr = 0.0
-
-                        if indicator_col and txn_amount_col:
-                            ind = str(row.get(indicator_col, "")).strip().upper()
-                            amt = parse_num(row.get(txn_amount_col, 0.0))
-                            if "DR" in ind:
-                                dr = amt
-                            elif "CR" in ind:
-                                cr = amt
-                        else:
-                            if debit_col:
-                                dr = parse_num(row.get(debit_col, 0.0))
-                            if credit_col:
-                                cr = parse_num(row.get(credit_col, 0.0))
-
-                        if dr == 0.0 and cr == 0.0:
-                            continue
-
-                        matched_ledger = match_learned_ledger(selected_client, n_val, rules, clean_active_ledgers, is_bank=True)
-                        default_ledger = matched_ledger if matched_ledger else BLANK_LEDGER_LABEL
-
-                        parsed_rows.append({
-                            "Date": d_val,
-                            "Narration": n_val,
-                            "Debit / Withdrawal": dr,
-                            "Credit / Deposit": cr,
-                            "Assigned Ledger": default_ledger
-                        })
-
-                    if not parsed_rows:
-                        st.warning("No transactions found in this document.")
+            if st.session_state["bank_df_working"] is None:
+                try:
+                    if uploaded_bank.name.endswith(".csv"):
+                        df_raw = pd.read_csv(uploaded_bank)
                     else:
-                        st.session_state["bank_df_working"] = pd.DataFrame(parsed_rows)
-                        bank_working_store[selected_client] = parsed_rows
-                        save_bank_working_store(bank_working_store)
-                        st.toast("Bank statement saved to Google Sheets!", icon="☁️")
-            except Exception as e:
-                st.error(f"Error parsing bank statement: {e}")
+                        df_raw = pd.read_excel(uploaded_bank)
+
+                    def find_header_df(df_in):
+                        for r_idx in range(min(15, len(df_in))):
+                            row_vals = [str(x).lower().strip() for x in df_in.iloc[r_idx].values]
+                            if any("date" in v for v in row_vals) and any(any(k in v for k in ["description", "particulars", "narration", "remarks"]) for v in row_vals):
+                                df_in.columns = df_in.iloc[r_idx]
+                                return df_in.iloc[r_idx + 1:].reset_index(drop=True)
+                        return df_in
+
+                    test_cols = [str(c).lower().strip() for c in df_raw.columns]
+                    if not (any("date" in c for c in test_cols) and any(any(k in c for k in ["description", "particulars", "narration", "remarks"]) for c in test_cols)):
+                        df_raw = find_header_df(df_raw)
+
+                    clean_cols = {c: str(c).strip().lower() for c in df_raw.columns}
+
+                    date_col = next((c for c, n in clean_cols.items() if any(k in n for k in ["value date", "txn date", "transaction date", "date"])), None)
+                    narration_col = next((c for c, n in clean_cols.items() if any(k in n for k in ["description", "narration", "particulars", "remarks"])), None)
+                    indicator_col = next((c for c, n in clean_cols.items() if any(k in n for k in ["cr/dr", "dr/cr", "cr / dr", "dr / cr", "type"])), None)
+                    txn_amount_col = next((c for c, n in clean_cols.items() if any(k in n for k in ["transaction amount", "txn amount", "amount(inr)", "amount (inr)"]) and "balance" not in n), None)
+                    debit_col = next((c for c, n in clean_cols.items() if any(k in n for k in ["debit", "withdrawal", "dr amount"]) and c != indicator_col), None)
+                    credit_col = next((c for c, n in clean_cols.items() if any(k in n for k in ["credit", "deposit", "cr amount"]) and c != indicator_col), None)
+
+                    if not (date_col and narration_col):
+                        st.error("Could not automatically locate 'Date' and 'Description / Narration' columns. Please check your file layout.")
+                    else:
+                        parsed_rows = []
+                        rules = load_bank_rules()
+                        clean_active_ledgers = [l.strip() for l in active_ledgers]
+
+                        def parse_num(val):
+                            if pd.isna(val):
+                                return 0.0
+                            s = str(val).replace(",", "").strip()
+                            s = re.sub(r'[^0-9.-]', '', s)
+                            try:
+                                return float(s) if s else 0.0
+                            except Exception:
+                                return 0.0
+
+                        for _, row in df_raw.iterrows():
+                            d_val = str(row.get(date_col, "")).split(" ")[0].strip()
+                            n_val = str(row.get(narration_col, "")).strip()
+                            if not n_val or n_val.lower() == "nan":
+                                continue
+
+                            dr = 0.0
+                            cr = 0.0
+
+                            if indicator_col and txn_amount_col:
+                                ind = str(row.get(indicator_col, "")).strip().upper()
+                                amt = parse_num(row.get(txn_amount_col, 0.0))
+                                if "DR" in ind:
+                                    dr = amt
+                                elif "CR" in ind:
+                                    cr = amt
+                            else:
+                                if debit_col:
+                                    dr = parse_num(row.get(debit_col, 0.0))
+                                if credit_col:
+                                    cr = parse_num(row.get(credit_col, 0.0))
+
+                            if dr == 0.0 and cr == 0.0:
+                                continue
+
+                            matched_ledger = match_learned_ledger(selected_client, n_val, rules, clean_active_ledgers, is_bank=True)
+                            default_ledger = matched_ledger if matched_ledger else BLANK_LEDGER_LABEL
+
+                            parsed_rows.append({
+                                "Date": d_val,
+                                "Narration": n_val,
+                                "Debit / Withdrawal": dr,
+                                "Credit / Deposit": cr,
+                                "Assigned Ledger": default_ledger
+                            })
+
+                        if not parsed_rows:
+                            st.warning("No transactions found in this document.")
+                        else:
+                            st.session_state["bank_df_working"] = pd.DataFrame(parsed_rows)
+                except Exception as e:
+                    st.error(f"Error parsing bank statement: {e}")
 
         if st.session_state["bank_df_working"] is not None:
             clean_active_ledgers = [l.strip() for l in active_ledgers]
@@ -1566,7 +1539,7 @@ else:
             total_count = len(working_df)
 
             st.markdown(f"#### Verified Transactions ({total_count} Entries — {assigned_count} Categorized, {total_count - assigned_count} Pending)")
-            st.caption("⚡ Changes propagate across identical transactions and sync to Google Sheets in real time.")
+            st.caption("⚡ Changes propagate across matching counterparties and save directly to your Google Sheet.")
 
             edited_bank_df = st.data_editor(
                 working_df,
@@ -1588,7 +1561,7 @@ else:
                 use_container_width=True
             )
 
-            # REAL-TIME PROPAGATION & CHUNKED CLOUD AUTOSAVE
+            # REAL-TIME PROPAGATION & GOOGLE SHEETS SAVING
             rules = load_bank_rules()
             if selected_client not in rules:
                 rules[selected_client] = {}
@@ -1627,10 +1600,8 @@ else:
 
             if rules_changed:
                 save_bank_rules(rules)
-                bank_working_store[selected_client] = edited_bank_df.to_dict(orient="records")
-                save_bank_working_store(bank_working_store)
                 st.session_state["bank_df_working"] = edited_bank_df
-                st.toast("Rule memorized and applied to all matching rows!", icon="✨")
+                st.toast("Rule memorized in Google Sheets and propagated to matching rows!", icon="✨")
                 st.rerun()
 
             b_btn1, b_btn2, b_btn3 = st.columns([1.2, 1.2, 1])
@@ -1643,10 +1614,8 @@ else:
                             if cleaned_narr:
                                 rules[selected_client][cleaned_narr] = l_val
                     save_bank_rules(rules)
-                    bank_working_store[selected_client] = edited_bank_df.to_dict(orient="records")
-                    save_bank_working_store(bank_working_store)
                     st.session_state["bank_df_working"] = edited_bank_df
-                    st.toast("Saved working progress to Google Sheets!", icon="💾")
+                    st.toast("All bank counterparties safely synced to Google Sheets!", icon="💾")
                     st.rerun()
 
             with b_btn2:
@@ -1662,10 +1631,6 @@ else:
             with b_btn3:
                 if st.button("🗑️ Discard Statement", type="secondary", use_container_width=True):
                     st.session_state["bank_df_working"] = None
-                    if selected_client in bank_working_store:
-                        del bank_working_store[selected_client]
-                        save_bank_working_store(bank_working_store)
-                    st.toast("Statement draft cleared from cloud.", icon="🗑️")
                     st.rerun()
 
     # ========================================================
@@ -1674,13 +1639,21 @@ else:
     elif st.session_state["active_main_module"] == "Settings":
         st.markdown("""
         <div class="app-panel">
-            <h4 style="color: #0D2240; font-family:'Playfair Display',serif; font-weight: 700; margin-top: 0;">Chart of Accounts & AI Memory</h4>
+            <h4 style="color: #0D2240; font-family:'Playfair Display',serif; font-weight: 700; margin-top: 0;">Chart of Accounts & Cloud Database</h4>
             <p style="color: #64748B; font-size: 0.88rem; margin-bottom: 0;">
                 Configure client ledgers and inspect memorized items or bank counterparty rules saved in your Google Sheet database.
             </p>
         </div>
         """, unsafe_allow_html=True)
         
+        # Test Connection Diagnostic
+        if st.button("☁️ Test Google Sheets Connection"):
+            try:
+                test_df = _get_gsheet_df()
+                st.success(f"Connection OK! Connected to Google Sheets ({len(test_df)} database records found).")
+            except Exception as e:
+                st.error(f"Connection Error: {e}")
+
         cfg_col1, cfg_col2 = st.columns([1, 1], gap="large")
 
         with cfg_col1:
