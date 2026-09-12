@@ -424,6 +424,13 @@ def load_bank_rules():
 def save_bank_rules(rules):
     _write_store("bank_ledger_rules", rules)
 
+# Bank Draft Cloud Persistence Helpers
+def load_bank_working_store():
+    return _read_store("bank_statement_working", {})
+
+def save_bank_working_store(store_dict):
+    _write_store("bank_statement_working", store_dict)
+
 # 5. Normalizers
 STOP_WORDS = {
     "1ltr", "1 ltr", "ltr", "500g", "1kg", "kg", "gm", "ml", 
@@ -1135,7 +1142,7 @@ if st.session_state["active_review_index"] is not None and len(pending_bills_lis
                 st.toast("Draft saved successfully!", icon="💾")
                 st.rerun()
 
-# 11. Main Dashboard Interface (Modular View)
+# 11. Main Dashboard Interface
 else:
     if st.session_state["active_review_index"] is not None and len(pending_bills_list) == 0:
         st.session_state["active_review_index"] = None
@@ -1410,18 +1417,26 @@ else:
                         st.rerun()
 
     # ========================================================
-    # MODULE 2: BANK STATEMENTS (REAL-TIME SPREAD & PERSISTENCE)
+    # MODULE 2: BANK STATEMENTS (PERSISTENT CLOUD DRAFT)
     # ========================================================
     elif st.session_state["active_main_module"] == "Bank":
         st.markdown(f"""
         <div class="app-panel">
             <h4 style="color: #0D2240; font-family:'Playfair Display',serif; font-weight: 700; margin-top: 0;">Bank Statement Reconciliation: {selected_client}</h4>
             <p style="color: #64748B; font-size: 0.88rem; margin-bottom: 0;">
-                Unassigned transactions show blank. When you assign a ledger to any transaction, all identical and similar counterparties across the statement update automatically.
+                Active statement is saved in Google Sheets. You can safely close the tab or logout and return anytime without losing progress.
             </p>
         </div>
         """, unsafe_allow_html=True)
-        
+
+        bank_working_store = load_bank_working_store()
+
+        # Restore from Google Sheet if session state was cleared
+        if st.session_state["bank_df_working"] is None and selected_client in bank_working_store:
+            saved_records = bank_working_store.get(selected_client, [])
+            if saved_records:
+                st.session_state["bank_df_working"] = pd.DataFrame(saved_records)
+
         bank_col1, bank_col2 = st.columns([2, 1])
         with bank_col1:
             uploaded_bank = st.file_uploader(
@@ -1433,109 +1448,108 @@ else:
             tally_bank_name = st.text_input("Tally Bank Account Ledger", value="ICICI Bank")
 
         if uploaded_bank is not None:
-            if st.session_state["bank_df_working"] is None:
-                try:
-                    if uploaded_bank.name.endswith(".csv"):
-                        df_raw = pd.read_csv(uploaded_bank)
-                    else:
-                        df_raw = pd.read_excel(uploaded_bank)
+            try:
+                if uploaded_bank.name.endswith(".csv"):
+                    df_raw = pd.read_csv(uploaded_bank)
+                else:
+                    df_raw = pd.read_excel(uploaded_bank)
 
-                    def find_header_df(df_in):
-                        for r_idx in range(min(15, len(df_in))):
-                            row_vals = [str(x).lower().strip() for x in df_in.iloc[r_idx].values]
-                            if any("date" in v for v in row_vals) and any(any(k in v for k in ["description", "particulars", "narration", "remarks"]) for v in row_vals):
-                                df_in.columns = df_in.iloc[r_idx]
-                                return df_in.iloc[r_idx + 1:].reset_index(drop=True)
-                        return df_in
+                def find_header_df(df_in):
+                    for r_idx in range(min(15, len(df_in))):
+                        row_vals = [str(x).lower().strip() for x in df_in.iloc[r_idx].values]
+                        if any("date" in v for v in row_vals) and any(any(k in v for k in ["description", "particulars", "narration", "remarks"]) for v in row_vals):
+                            df_in.columns = df_in.iloc[r_idx]
+                            return df_in.iloc[r_idx + 1:].reset_index(drop=True)
+                    return df_in
 
-                    test_cols = [str(c).lower().strip() for c in df_raw.columns]
-                    if not (any("date" in c for c in test_cols) and any(any(k in c for k in ["description", "particulars", "narration", "remarks"]) for c in test_cols)):
-                        df_raw = find_header_df(df_raw)
+                test_cols = [str(c).lower().strip() for c in df_raw.columns]
+                if not (any("date" in c for c in test_cols) and any(any(k in c for k in ["description", "particulars", "narration", "remarks"]) for c in test_cols)):
+                    df_raw = find_header_df(df_raw)
 
-                    clean_cols = {c: str(c).strip().lower() for c in df_raw.columns}
+                clean_cols = {c: str(c).strip().lower() for c in df_raw.columns}
 
-                    date_col = next((c for c, n in clean_cols.items() if any(k in n for k in ["value date", "txn date", "transaction date", "date"])), None)
-                    narration_col = next((c for c, n in clean_cols.items() if any(k in n for k in ["description", "narration", "particulars", "remarks"])), None)
-                    indicator_col = next((c for c, n in clean_cols.items() if any(k in n for k in ["cr/dr", "dr/cr", "cr / dr", "dr / cr", "type"])), None)
-                    txn_amount_col = next((c for c, n in clean_cols.items() if any(k in n for k in ["transaction amount", "txn amount", "amount(inr)", "amount (inr)"]) and "balance" not in n), None)
-                    debit_col = next((c for c, n in clean_cols.items() if any(k in n for k in ["debit", "withdrawal", "dr amount"]) and c != indicator_col), None)
-                    credit_col = next((c for c, n in clean_cols.items() if any(k in n for k in ["credit", "deposit", "cr amount"]) and c != indicator_col), None)
+                date_col = next((c for c, n in clean_cols.items() if any(k in n for k in ["value date", "txn date", "transaction date", "date"])), None)
+                narration_col = next((c for c, n in clean_cols.items() if any(k in n for k in ["description", "narration", "particulars", "remarks"])), None)
+                indicator_col = next((c for c, n in clean_cols.items() if any(k in n for k in ["cr/dr", "dr/cr", "cr / dr", "dr / cr", "type"])), None)
+                txn_amount_col = next((c for c, n in clean_cols.items() if any(k in n for k in ["transaction amount", "txn amount", "amount(inr)", "amount (inr)"]) and "balance" not in n), None)
+                debit_col = next((c for c, n in clean_cols.items() if any(k in n for k in ["debit", "withdrawal", "dr amount"]) and c != indicator_col), None)
+                credit_col = next((c for c, n in clean_cols.items() if any(k in n for k in ["credit", "deposit", "cr amount"]) and c != indicator_col), None)
 
-                    if not (date_col and narration_col):
-                        st.error("Could not automatically locate 'Date' and 'Description / Narration' columns. Please check your file layout.")
-                    else:
-                        parsed_rows = []
-                        rules = load_bank_rules()
-                        clean_active_ledgers = [l.strip() for l in active_ledgers]
+                if not (date_col and narration_col):
+                    st.error("Could not automatically locate 'Date' and 'Description / Narration' columns. Please check your file layout.")
+                else:
+                    parsed_rows = []
+                    rules = load_bank_rules()
+                    clean_active_ledgers = [l.strip() for l in active_ledgers]
 
-                        def parse_num(val):
-                            if pd.isna(val):
-                                return 0.0
-                            s = str(val).replace(",", "").strip()
-                            s = re.sub(r'[^0-9.-]', '', s)
-                            try:
-                                return float(s) if s else 0.0
-                            except Exception:
-                                return 0.0
+                    def parse_num(val):
+                        if pd.isna(val):
+                            return 0.0
+                        s = str(val).replace(",", "").strip()
+                        s = re.sub(r'[^0-9.-]', '', s)
+                        try:
+                            return float(s) if s else 0.0
+                        except Exception:
+                            return 0.0
 
-                        for _, row in df_raw.iterrows():
-                            d_val = str(row.get(date_col, "")).split(" ")[0].strip()
-                            n_val = str(row.get(narration_col, "")).strip()
-                            if not n_val or n_val.lower() == "nan":
-                                continue
+                    for _, row in df_raw.iterrows():
+                        d_val = str(row.get(date_col, "")).split(" ")[0].strip()
+                        n_val = str(row.get(narration_col, "")).strip()
+                        if not n_val or n_val.lower() == "nan":
+                            continue
 
-                            dr = 0.0
-                            cr = 0.0
+                        dr = 0.0
+                        cr = 0.0
 
-                            if indicator_col and txn_amount_col:
-                                ind = str(row.get(indicator_col, "")).strip().upper()
-                                amt = parse_num(row.get(txn_amount_col, 0.0))
-                                if "DR" in ind:
-                                    dr = amt
-                                elif "CR" in ind:
-                                    cr = amt
-                            else:
-                                if debit_col:
-                                    dr = parse_num(row.get(debit_col, 0.0))
-                                if credit_col:
-                                    cr = parse_num(row.get(credit_col, 0.0))
-
-                            if dr == 0.0 and cr == 0.0:
-                                continue
-
-                            # Try to match from existing learned rules; if not matched, show blank
-                            matched_ledger = match_learned_ledger(selected_client, n_val, rules, clean_active_ledgers, is_bank=True)
-                            default_ledger = matched_ledger if matched_ledger else BLANK_LEDGER_LABEL
-
-                            parsed_rows.append({
-                                "Date": d_val,
-                                "Narration": n_val,
-                                "Debit / Withdrawal": dr,
-                                "Credit / Deposit": cr,
-                                "Assigned Ledger": default_ledger
-                            })
-
-                        if not parsed_rows:
-                            st.warning("No transactions found. Please confirm the statement contains transaction data.")
+                        if indicator_col and txn_amount_col:
+                            ind = str(row.get(indicator_col, "")).strip().upper()
+                            amt = parse_num(row.get(txn_amount_col, 0.0))
+                            if "DR" in ind:
+                                dr = amt
+                            elif "CR" in ind:
+                                cr = amt
                         else:
-                            st.session_state["bank_df_working"] = pd.DataFrame(parsed_rows)
-                except Exception as e:
-                    st.error(f"Error parsing bank statement: {e}")
+                            if debit_col:
+                                dr = parse_num(row.get(debit_col, 0.0))
+                            if credit_col:
+                                cr = parse_num(row.get(credit_col, 0.0))
+
+                        if dr == 0.0 and cr == 0.0:
+                            continue
+
+                        matched_ledger = match_learned_ledger(selected_client, n_val, rules, clean_active_ledgers, is_bank=True)
+                        default_ledger = matched_ledger if matched_ledger else BLANK_LEDGER_LABEL
+
+                        parsed_rows.append({
+                            "Date": d_val,
+                            "Narration": n_val,
+                            "Debit / Withdrawal": dr,
+                            "Credit / Deposit": cr,
+                            "Assigned Ledger": default_ledger
+                        })
+
+                    if not parsed_rows:
+                        st.warning("No transactions found in this document.")
+                    else:
+                        st.session_state["bank_df_working"] = pd.DataFrame(parsed_rows)
+                        # Save newly uploaded statement draft straight to Google Sheets
+                        bank_working_store[selected_client] = parsed_rows
+                        save_bank_working_store(bank_working_store)
+                        st.toast("Bank statement saved to Google Sheets!", icon="☁️")
+            except Exception as e:
+                st.error(f"Error parsing bank statement: {e}")
 
         if st.session_state["bank_df_working"] is not None:
             clean_active_ledgers = [l.strip() for l in active_ledgers]
-            # Options available in the dropdown (Blank label at the top)
             ledger_dropdown_options = [BLANK_LEDGER_LABEL] + clean_active_ledgers
 
-            # Current state df
             working_df = st.session_state["bank_df_working"]
 
-            # Count assigned vs pending
             assigned_count = (working_df["Assigned Ledger"] != BLANK_LEDGER_LABEL).sum()
             total_count = len(working_df)
 
             st.markdown(f"#### Verified Transactions ({total_count} Entries — {assigned_count} Categorized, {total_count - assigned_count} Pending)")
-            st.caption("⚡ When you change any ledger, the system saves the rule and applies it to all matching rows.")
+            st.caption("⚡ Changes propagate across identical transactions and sync to Google Sheets in real time.")
 
             edited_bank_df = st.data_editor(
                 working_df,
@@ -1557,14 +1571,13 @@ else:
                 use_container_width=True
             )
 
-            # REAL-TIME PROPAGATION: Check if user changed any row from working_df to edited_bank_df
+            # REAL-TIME PROPAGATION & CLOUD AUTOSAVE
             rules = load_bank_rules()
             if selected_client not in rules:
                 rules[selected_client] = {}
 
             rules_changed = False
 
-            # Detect newly modified row(s)
             for i in range(min(len(working_df), len(edited_bank_df))):
                 old_val = working_df.iloc[i]["Assigned Ledger"]
                 new_val = edited_bank_df.iloc[i]["Assigned Ledger"]
@@ -1577,13 +1590,11 @@ else:
                         rules[selected_client][cleaned_key] = new_val
                         rules_changed = True
 
-                        # Propagate this ledger across ALL rows sharing similar counterparty tokens
                         target_tokens = set(cleaned_key.split())
                         for j in range(len(edited_bank_df)):
                             row_narr = edited_bank_df.iloc[j]["Narration"]
                             curr_ledger = edited_bank_df.iloc[j]["Assigned Ledger"]
 
-                            # Only auto-fill rows that are currently unassigned or have identical party
                             if curr_ledger == BLANK_LEDGER_LABEL:
                                 row_cleaned = clean_bank_narration(row_narr)
                                 row_tokens = set(row_cleaned.split())
@@ -1599,6 +1610,9 @@ else:
 
             if rules_changed:
                 save_bank_rules(rules)
+                # Auto-save table state back into Google Sheets
+                bank_working_store[selected_client] = edited_bank_df.to_dict(orient="records")
+                save_bank_working_store(bank_working_store)
                 st.session_state["bank_df_working"] = edited_bank_df
                 st.toast("Rule memorized and applied to all matching rows!", icon="✨")
                 st.rerun()
@@ -1606,7 +1620,6 @@ else:
             b_btn1, b_btn2, b_btn3 = st.columns([1.2, 1.2, 1])
             with b_btn1:
                 if st.button("💾 Save Verified Rules", use_container_width=True):
-                    # Explicit save sweep for any assigned rows
                     for _, row in edited_bank_df.iterrows():
                         l_val = row["Assigned Ledger"]
                         if l_val != BLANK_LEDGER_LABEL:
@@ -1614,8 +1627,10 @@ else:
                             if cleaned_narr:
                                 rules[selected_client][cleaned_narr] = l_val
                     save_bank_rules(rules)
+                    bank_working_store[selected_client] = edited_bank_df.to_dict(orient="records")
+                    save_bank_working_store(bank_working_store)
                     st.session_state["bank_df_working"] = edited_bank_df
-                    st.toast("All assigned counterparties saved to Google Sheets!", icon="💾")
+                    st.toast("Saved working progress to Google Sheets!", icon="💾")
                     st.rerun()
 
             with b_btn2:
@@ -1631,6 +1646,10 @@ else:
             with b_btn3:
                 if st.button("🗑️ Discard Statement", type="secondary", use_container_width=True):
                     st.session_state["bank_df_working"] = None
+                    if selected_client in bank_working_store:
+                        del bank_working_store[selected_client]
+                        save_bank_working_store(bank_working_store)
+                    st.toast("Statement draft cleared from cloud.", icon="🗑️")
                     st.rerun()
 
     # ========================================================
