@@ -300,7 +300,7 @@ if not check_password():
 
 LOGO_PATH = "logo.png"
 
-# 4. Persistent Stores (Google Sheets Cloud Persistence)
+# 4. Persistent Stores (With 40k Chunking to Prevent 50k Character Google Limits)
 try:
     conn = st.connection("gsheets", type=GSheetsConnection)
 except Exception:
@@ -359,12 +359,20 @@ def _get_gsheet_df():
 def _read_store(key: str, default_val):
     try:
         df = _get_gsheet_df()
+        # Check if single key exists
         row = df[df["key"] == key]
         if not row.empty:
             raw_json = str(row.iloc[0]["data"])
             return json.loads(raw_json)
+        
+        # Check if multi-chunk keys exist (e.g. key_part_0, key_part_1)
+        chunk_rows = df[df["key"].str.startswith(f"{key}_part_")].sort_values("key")
+        if not chunk_rows.empty:
+            combined_json = "".join([str(x) for x in chunk_rows["data"].values])
+            return json.loads(combined_json)
     except Exception:
         pass
+
     if os.path.exists(f"{key}.json"):
         try:
             with open(f"{key}.json", "r") as f:
@@ -374,6 +382,7 @@ def _read_store(key: str, default_val):
     return default_val
 
 def _write_store(key: str, val):
+    # Local cache backup
     try:
         with open(f"{key}.json", "w") as f:
             json.dump(val, f, indent=4)
@@ -384,14 +393,25 @@ def _write_store(key: str, val):
         try:
             df = _get_gsheet_df()
             json_str = json.dumps(val)
-            if not df.empty and key in df["key"].values:
-                df.loc[df["key"] == key, "data"] = json_str
-            else:
+
+            # Remove old key and chunks
+            df = df[~df["key"].str.startswith(key)].reset_index(drop=True)
+
+            CHUNK_SIZE = 35000  # Well within the 50,000 character limit
+            if len(json_str) <= CHUNK_SIZE:
                 new_row = pd.DataFrame([{"key": key, "data": json_str}])
                 df = pd.concat([df, new_row], ignore_index=True)
+            else:
+                # Split large JSON into safe 35k-character chunks
+                chunks = [json_str[i:i + CHUNK_SIZE] for i in range(0, len(json_str), CHUNK_SIZE)]
+                new_rows = []
+                for c_idx, c_text in enumerate(chunks):
+                    new_rows.append({"key": f"{key}_part_{c_idx:02d}", "data": c_text})
+                df = pd.concat([df, pd.DataFrame(new_rows)], ignore_index=True)
+
             conn.update(worksheet="app_data", data=df)
         except Exception as e:
-            st.warning(f"Note: Cloud sync failed ({e}), saved locally.")
+            st.warning(f"Note: Cloud sync notice ({e}), saved locally.")
 
 def load_client_masters():
     res = _read_store("client_ledgers", DEFAULT_CLIENTS)
@@ -424,7 +444,6 @@ def load_bank_rules():
 def save_bank_rules(rules):
     _write_store("bank_ledger_rules", rules)
 
-# Bank Draft Cloud Persistence Helpers
 def load_bank_working_store():
     return _read_store("bank_statement_working", {})
 
@@ -1417,7 +1436,7 @@ else:
                         st.rerun()
 
     # ========================================================
-    # MODULE 2: BANK STATEMENTS (PERSISTENT CLOUD DRAFT)
+    # MODULE 2: BANK STATEMENTS
     # ========================================================
     elif st.session_state["active_main_module"] == "Bank":
         st.markdown(f"""
@@ -1431,7 +1450,6 @@ else:
 
         bank_working_store = load_bank_working_store()
 
-        # Restore from Google Sheet if session state was cleared
         if st.session_state["bank_df_working"] is None and selected_client in bank_working_store:
             saved_records = bank_working_store.get(selected_client, [])
             if saved_records:
@@ -1532,7 +1550,6 @@ else:
                         st.warning("No transactions found in this document.")
                     else:
                         st.session_state["bank_df_working"] = pd.DataFrame(parsed_rows)
-                        # Save newly uploaded statement draft straight to Google Sheets
                         bank_working_store[selected_client] = parsed_rows
                         save_bank_working_store(bank_working_store)
                         st.toast("Bank statement saved to Google Sheets!", icon="☁️")
@@ -1571,7 +1588,7 @@ else:
                 use_container_width=True
             )
 
-            # REAL-TIME PROPAGATION & CLOUD AUTOSAVE
+            # REAL-TIME PROPAGATION & CHUNKED CLOUD AUTOSAVE
             rules = load_bank_rules()
             if selected_client not in rules:
                 rules[selected_client] = {}
@@ -1610,7 +1627,6 @@ else:
 
             if rules_changed:
                 save_bank_rules(rules)
-                # Auto-save table state back into Google Sheets
                 bank_working_store[selected_client] = edited_bank_df.to_dict(orient="records")
                 save_bank_working_store(bank_working_store)
                 st.session_state["bank_df_working"] = edited_bank_df
