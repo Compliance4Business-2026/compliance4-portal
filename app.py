@@ -1603,7 +1603,7 @@ else:
 
             st.markdown(f"#### Verified Transactions ({total_count} Entries — {assigned_count} Categorized, {pending_count} Pending)")
 
-            # View Filter to reduce scrolling without premature disappearance
+            # View Filter to reduce scrolling
             v_col1, v_col2 = st.columns([2.2, 1.8])
             with v_col1:
                 filter_view = st.selectbox(
@@ -1623,7 +1623,7 @@ else:
             else:
                 view_subset = working_df.copy()
 
-            # Render Stable Grid (No key modification, no automatic reruns on keystroke)
+            # Render Stable Grid
             edited_grid_output = st.data_editor(
                 view_subset,
                 key="bank_stable_editor_v1",
@@ -1644,7 +1644,7 @@ else:
                 use_container_width=True
             )
 
-            # Apply in-place edits from the visible view into master working_df
+            # Apply in-place edits from visible view into master working_df
             for r_idx in range(len(edited_grid_output)):
                 orig_index = edited_grid_output.index[r_idx]
                 new_assigned = edited_grid_output.iloc[r_idx]["Assigned Ledger"]
@@ -1655,7 +1655,7 @@ else:
             st.write("")
             b_btn1, b_btn2, b_btn3, b_btn4 = st.columns([1.5, 1.2, 1.2, 1])
 
-           with b_btn1:
+            with b_btn1:
                 if st.button("🧠 Memorize & Auto-Fill Matching", type="primary", use_container_width=True, help="Learns your selected ledgers and auto-fills all identical counterparties across the statement"):
                     current_df = st.session_state["bank_df_working"].copy()
                     if selected_client not in rules:
@@ -1678,9 +1678,9 @@ else:
                                 current_df.at[j, "Assigned Ledger"] = rules[selected_client][row_key]
                                 auto_filled_count += 1
 
-                    # Update visual Status tags to reflect assignments
-                    current_df.loc[current_df["Assigned Ledger"] != BLANK_LEDGER_LABEL, "Status"] = "✅ Verified"
-                    current_df.loc[current_df["Assigned Ledger"] == BLANK_LEDGER_LABEL, "Status"] = "❓ Pending"
+                    if "Status" in current_df.columns:
+                        current_df.loc[current_df["Assigned Ledger"] != BLANK_LEDGER_LABEL, "Status"] = "✅ Verified"
+                        current_df.loc[current_df["Assigned Ledger"] == BLANK_LEDGER_LABEL, "Status"] = "❓ Pending"
 
                     save_bank_rules(rules)
                     save_cloud_bank_statement(selected_client, current_df.to_dict(orient="records"))
@@ -1701,15 +1701,15 @@ else:
                             if c_key:
                                 rules[selected_client][c_key] = l_val
 
-                    # Update visual Status tags to reflect assignments
-                    current_df.loc[current_df["Assigned Ledger"] != BLANK_LEDGER_LABEL, "Status"] = "✅ Verified"
-                    current_df.loc[current_df["Assigned Ledger"] == BLANK_LEDGER_LABEL, "Status"] = "❓ Pending"
+                    if "Status" in current_df.columns:
+                        current_df.loc[current_df["Assigned Ledger"] != BLANK_LEDGER_LABEL, "Status"] = "✅ Verified"
+                        current_df.loc[current_df["Assigned Ledger"] == BLANK_LEDGER_LABEL, "Status"] = "❓ Pending"
 
                     save_bank_rules(rules)
                     save_cloud_bank_statement(selected_client, current_df.to_dict(orient="records"))
-                    st.session_state["bank_df_working"] = current_df
-                    st.toast("Saved! All assigned ledgers marked Verified.", icon="💾")
+                    st.toast("Current progress saved to Google Sheets!", icon="💾")
                     st.rerun()
+
             with b_btn3:
                 bank_xml = generate_bank_tally_xml(st.session_state["bank_df_working"], tally_bank_name)
                 st.download_button(
