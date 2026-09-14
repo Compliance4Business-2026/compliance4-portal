@@ -300,7 +300,7 @@ if not check_password():
 
 LOGO_PATH = "logo.png"
 
-# 4. Persistent Stores & Google Sheets Connection
+# 4. Rate-Limit Protected Cloud Persistence (with 10-Second In-Memory TTL)
 try:
     conn = st.connection("gsheets", type=GSheetsConnection)
 except Exception:
@@ -308,6 +308,11 @@ except Exception:
 
 DEFAULT_CLIENTS = {
     "The Marx Ventures": [
+        "HDFC Bank A/c - 8050",
+        "ICICI Bank - 0026",
+        "Bank In Transit - Amex",
+        "Bank In Transit - VISA/Rupee/Master",
+        "Cash in Hand",
         "Purchase: Beverages",
         "Purchase: Raw Materials",
         "Purchase: Food & Groceries",
@@ -323,7 +328,6 @@ DEFAULT_CLIENTS = {
         "Printing & Stationery",
         "Delivery Partner Charges (Zomato/Swiggy)",
         "UPI and Cards Receipts",
-        "Cash in Hand",
         "Blinkit",
         "Miscellaneous Expenses"
     ],
@@ -345,19 +349,25 @@ DEFAULT_CLIENTS = {
     ]
 }
 
-def _get_gsheet_df():
+@st.cache_data(ttl=10, show_spinner=False)
+def _cached_read_gsheet():
+    """Reads sheet with 10-second TTL to avoid 60-requests-per-minute Google quotas."""
     if conn is None:
         return pd.DataFrame(columns=["key", "data"])
     try:
-        df = conn.read(worksheet="app_data", ttl=0)
+        df = conn.read(worksheet="app_data", ttl="10s")
         if df is None or df.empty or "key" not in df.columns:
             return pd.DataFrame(columns=["key", "data"])
         df = df.dropna(subset=["key"]).copy()
         df["key"] = df["key"].astype(str).str.strip()
         df["data"] = df["data"].astype(str)
         return df
-    except Exception:
+    except Exception as err:
+        # Rate limit or API error: fall back to local disk copy without crashing
         return pd.DataFrame(columns=["key", "data"])
+
+def _get_gsheet_df():
+    return _cached_read_gsheet()
 
 def _read_store(key: str, default_val):
     try:
@@ -376,6 +386,7 @@ def _read_store(key: str, default_val):
     except Exception:
         pass
 
+    # Safe local disk fallback
     if os.path.exists(f"{key}.json"):
         try:
             with open(f"{key}.json", "r") as f:
@@ -385,6 +396,7 @@ def _read_store(key: str, default_val):
     return default_val
 
 def _write_store(key: str, val):
+    # Always keep local file updated
     try:
         with open(f"{key}.json", "w") as f:
             json.dump(val, f, indent=4)
@@ -392,26 +404,34 @@ def _write_store(key: str, val):
         pass
 
     if conn is not None:
-        try:
-            df = _get_gsheet_df()
-            json_str = json.dumps(val)
+        for attempt in range(2):
+            try:
+                df = _get_gsheet_df()
+                json_str = json.dumps(val)
 
-            df = df[(df["key"] != key) & (~df["key"].str.startswith(f"{key}_part_"))].copy()
+                df = df[(df["key"] != key) & (~df["key"].str.startswith(f"{key}_part_"))].copy()
 
-            CHUNK_SIZE = 35000
-            if len(json_str) <= CHUNK_SIZE:
-                new_row = pd.DataFrame([{"key": key, "data": json_str}])
-                df = pd.concat([df, new_row], ignore_index=True)
-            else:
-                chunks = [json_str[i:i + CHUNK_SIZE] for i in range(0, len(json_str), CHUNK_SIZE)]
-                new_rows = []
-                for c_idx, c_text in enumerate(chunks):
-                    new_rows.append({"key": f"{key}_part_{c_idx:02d}", "data": c_text})
-                df = pd.concat([df, pd.DataFrame(new_rows)], ignore_index=True)
+                CHUNK_SIZE = 35000
+                if len(json_str) <= CHUNK_SIZE:
+                    new_row = pd.DataFrame([{"key": key, "data": json_str}])
+                    df = pd.concat([df, new_row], ignore_index=True)
+                else:
+                    chunks = [json_str[i:i + CHUNK_SIZE] for i in range(0, len(json_str), CHUNK_SIZE)]
+                    new_rows = []
+                    for c_idx, c_text in enumerate(chunks):
+                        new_rows.append({"key": f"{key}_part_{c_idx:02d}", "data": c_text})
+                    df = pd.concat([df, pd.DataFrame(new_rows)], ignore_index=True)
 
-            conn.update(worksheet="app_data", data=df)
-        except Exception as e:
-            st.error(f"Cloud update notice: {e}")
+                conn.update(worksheet="app_data", data=df)
+                # Invalidate cache so subsequent reads pick up latest edits immediately
+                _cached_read_gsheet.clear()
+                break
+            except Exception as e:
+                err_text = str(e)
+                if "429" in err_text and attempt == 0:
+                    time.sleep(2)
+                    continue
+                # Silent background pass; local write already succeeded
 
 def load_client_masters():
     res = _read_store("client_ledgers", DEFAULT_CLIENTS)
@@ -444,7 +464,6 @@ def load_bank_rules():
 def save_bank_rules(rules):
     _write_store("bank_ledger_rules", rules)
 
-# Statement cloud sync helpers for multi-PC visibility
 def load_cloud_bank_statement(client_name: str):
     return _read_store(f"active_stmt_{client_name}", [])
 
@@ -1439,7 +1458,7 @@ else:
                         st.rerun()
 
     # ========================================================
-    # MODULE 2: BANK STATEMENTS (CROSS-PC CLOUD PERSISTENCE)
+    # MODULE 2: BANK STATEMENTS
     # ========================================================
     elif st.session_state["active_main_module"] == "Bank":
         st.markdown(f"""
@@ -1454,7 +1473,7 @@ else:
         rules = load_bank_rules()
         clean_active_ledgers = [l.strip() for l in active_ledgers]
 
-        # Multi-PC sync: Check if active statement exists in Google Sheets
+        # Multi-PC sync: Fetch active cloud statement if local session is empty
         if st.session_state["bank_df_working"] is None:
             cloud_records = load_cloud_bank_statement(selected_client)
             if cloud_records:
