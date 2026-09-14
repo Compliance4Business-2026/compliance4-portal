@@ -1655,7 +1655,7 @@ else:
             st.write("")
             b_btn1, b_btn2, b_btn3, b_btn4 = st.columns([1.5, 1.2, 1.2, 1])
 
-            with b_btn1:
+           with b_btn1:
                 if st.button("🧠 Memorize & Auto-Fill Matching", type="primary", use_container_width=True, help="Learns your selected ledgers and auto-fills all identical counterparties across the statement"):
                     current_df = st.session_state["bank_df_working"].copy()
                     if selected_client not in rules:
@@ -1678,6 +1678,10 @@ else:
                                 current_df.at[j, "Assigned Ledger"] = rules[selected_client][row_key]
                                 auto_filled_count += 1
 
+                    # Update visual Status tags to reflect assignments
+                    current_df.loc[current_df["Assigned Ledger"] != BLANK_LEDGER_LABEL, "Status"] = "✅ Verified"
+                    current_df.loc[current_df["Assigned Ledger"] == BLANK_LEDGER_LABEL, "Status"] = "❓ Pending"
+
                     save_bank_rules(rules)
                     save_cloud_bank_statement(selected_client, current_df.to_dict(orient="records"))
                     st.session_state["bank_df_working"] = current_df
@@ -1686,7 +1690,7 @@ else:
 
             with b_btn2:
                 if st.button("💾 Save Verified Rules", use_container_width=True):
-                    current_df = st.session_state["bank_df_working"]
+                    current_df = st.session_state["bank_df_working"].copy()
                     if selected_client not in rules:
                         rules[selected_client] = {}
 
@@ -1697,10 +1701,15 @@ else:
                             if c_key:
                                 rules[selected_client][c_key] = l_val
 
+                    # Update visual Status tags to reflect assignments
+                    current_df.loc[current_df["Assigned Ledger"] != BLANK_LEDGER_LABEL, "Status"] = "✅ Verified"
+                    current_df.loc[current_df["Assigned Ledger"] == BLANK_LEDGER_LABEL, "Status"] = "❓ Pending"
+
                     save_bank_rules(rules)
                     save_cloud_bank_statement(selected_client, current_df.to_dict(orient="records"))
-                    st.toast("Current progress saved to Google Sheets!", icon="💾")
-
+                    st.session_state["bank_df_working"] = current_df
+                    st.toast("Saved! All assigned ledgers marked Verified.", icon="💾")
+                    st.rerun()
             with b_btn3:
                 bank_xml = generate_bank_tally_xml(st.session_state["bank_df_working"], tally_bank_name)
                 st.download_button(
