@@ -199,28 +199,6 @@ CUSTOM_CSS = """
         font-size: 0.9rem;
     }
 
-    .duplicate-alert {
-        background: #FEF2F2;
-        border: 1.5px solid #F87171;
-        border-radius: 12px;
-        padding: 14px 18px;
-        color: #991B1B;
-        margin-bottom: 16px;
-        box-shadow: 0 2px 6px rgba(239, 68, 68, 0.1);
-    }
-    .duplicate-alert-title {
-        font-weight: 800;
-        font-size: 0.95rem;
-        display: flex;
-        align-items: center;
-        gap: 6px;
-    }
-    .duplicate-alert-desc {
-        font-size: 0.85rem;
-        margin-top: 4px;
-        color: #7F1D1D;
-    }
-
     .zoom-container {
         overflow: auto;
         max-height: 700px;
@@ -300,7 +278,7 @@ if not check_password():
 
 LOGO_PATH = "logo.png"
 
-# 4. Comprehensive Master Ledgers & Cloud Persistence
+# 4. Chart of Accounts & Rate-Limit Protected Persistence
 try:
     conn = st.connection("gsheets", type=GSheetsConnection)
 except Exception:
@@ -405,14 +383,9 @@ def _write_store(key: str, val):
     if conn is not None:
         for attempt in range(2):
             try:
-                # Force fresh fetch before modifying
                 _cached_read_gsheet.clear()
                 df = _cached_read_gsheet()
                 json_str = json.dumps(val)
-
-                # Overwrite-guard: Do not truncate if read failed unexpectedly
-                if df.empty and os.path.exists("client_ledgers.json"):
-                    pass
 
                 df = df[(df["key"] != key) & (~df["key"].str.startswith(f"{key}_part_"))].copy()
 
@@ -439,7 +412,6 @@ def load_client_masters():
     res = _read_store("client_ledgers", DEFAULT_CLIENTS)
     if not res:
         return DEFAULT_CLIENTS
-    # Merge custom entries with defaults to guarantee core accounts always exist
     for c_name, d_leds in DEFAULT_CLIENTS.items():
         if c_name in res:
             existing = set(res[c_name])
@@ -483,7 +455,7 @@ def load_cloud_bank_statement(client_name: str):
 def save_cloud_bank_statement(client_name: str, records: list):
     _write_store(f"active_stmt_{client_name}", records)
 
-# 5. Normalizers
+# 5. Precision Bank Counterparty Extractor
 STOP_WORDS = {
     "1ltr", "1 ltr", "ltr", "500g", "1kg", "kg", "gm", "ml", 
     "pkt", "pcs", "box", "can", "tin", "nos", "no", "unit", 
@@ -498,15 +470,35 @@ def clean_text(text: str) -> str:
     tokens = [t for t in text.split() if t not in STOP_WORDS]
     return " ".join(tokens).strip()
 
-def clean_bank_narration(narration: str) -> str:
-    text = str(narration).lower()
-    text = re.sub(r'\b(upi|neft|rtgs|imps|pos|ach|nach|inb|mb|chq|e-pay|rev-upi|dr|cr|trf)\b', ' ', text)
-    text = re.sub(r'/[0-9a-z_-]+', ' ', text)
-    text = re.sub(r'\b[0-9]{5,}\b', ' ', text)
-    text = re.sub(r'\b[a-z]{4}[0-9]{6,}\b', ' ', text)
-    text = re.sub(r'@[a-z]+', ' ', text)
-    text = re.sub(r'[^a-z0-9\s]', ' ', text)
-    tokens = [t for t in text.split() if t not in STOP_WORDS and len(t) > 1]
+def extract_pure_counterparty(narration: str) -> str:
+    """
+    Extracts the core beneficiary/payee from bank narrations, removing
+    common prefixes (NEFT/RTGS/IMPS/UPI) and reference codes.
+    """
+    text = str(narration).strip()
+    if not text or text.lower() == "nan":
+        return ""
+
+    # Check for slash-separated formats (e.g. INF/NEFT/12345/Bank/SudipMondal)
+    if "/" in text:
+        parts = [p.strip() for p in text.split("/") if p.strip()]
+        # Filter out purely numeric or short codes
+        meaningful = [p for p in parts if not re.match(r'^[0-9]+$', p) and len(p) > 2 and not re.match(r'^[a-z]{4}[0-9]+$', p.lower())]
+        if meaningful:
+            # Candidate is typically the last meaningful text section
+            cand = meaningful[-1]
+            if len(cand) > 2 and not cand.lower().startswith("inf") and not cand.lower().startswith("neft"):
+                return clean_text(cand)
+
+    # General noise-stripping fallback
+    t = text.lower()
+    t = re.sub(r'\b(upi|neft|rtgs|imps|pos|ach|nach|inb|mb|chq|e-pay|rev-upi|dr|cr|trf)\b', ' ', t)
+    t = re.sub(r'/[0-9a-z_-]+', ' ', t)
+    t = re.sub(r'\b[0-9]{5,}\b', ' ', t)
+    t = re.sub(r'\b[a-z]{4}[0-9]{6,}\b', ' ', t)
+    t = re.sub(r'@[a-z]+', ' ', t)
+    t = re.sub(r'[^a-z0-9\s]', ' ', t)
+    tokens = [tok for tok in t.split() if tok not in STOP_WORDS and len(tok) > 2]
     return " ".join(tokens).strip()
 
 def compute_file_hash(raw_bytes: bytes) -> str:
@@ -517,47 +509,43 @@ def match_learned_ledger(client_name: str, query_string: str, rules_dict: dict, 
     if not client_rules:
         return None
 
-    cleaned_query = clean_bank_narration(query_string) if is_bank else clean_text(query_string)
+    cleaned_query = extract_pure_counterparty(query_string) if is_bank else clean_text(query_string)
     if not cleaned_query:
         return None
 
-    query_tokens = set(cleaned_query.split())
     clean_valid_map = {l.strip().lower(): l for l in valid_ledgers}
 
+    # Strict Exact Key Match
     if cleaned_query in client_rules:
         target_led = client_rules[cleaned_query].strip()
         if target_led.lower() in clean_valid_map:
             return clean_valid_map[target_led.lower()]
         return target_led
 
+    # Strict Token Subset Matching (prevents matching across different individuals)
+    query_tokens = set(cleaned_query.split())
     best_ledger = None
     best_score = 0.0
 
     for learned_name, ledger_name in client_rules.items():
-        clean_target = clean_bank_narration(learned_name) if is_bank else clean_text(learned_name)
+        clean_target = learned_name.strip().lower()
         target_tokens = set(clean_target.split())
-        
         if not target_tokens:
             continue
 
-        intersection = query_tokens.intersection(target_tokens)
-        token_score = len(intersection) / max(len(target_tokens), 1)
+        # Requires complete containment of the core name
+        if target_tokens.issubset(query_tokens) or query_tokens.issubset(target_tokens):
+            score = len(target_tokens.intersection(query_tokens)) / max(len(target_tokens), len(query_tokens))
+            if score > best_score and score >= 0.85:
+                best_score = score
+                best_ledger = ledger_name.strip()
 
-        char_score = SequenceMatcher(None, cleaned_query, clean_target).ratio()
-        sub_boost = 0.25 if (clean_target in cleaned_query or cleaned_query in clean_target) else 0.0
-        total_score = max(token_score + sub_boost, char_score)
+    if best_ledger:
+        if best_ledger.lower() in clean_valid_map:
+            return clean_valid_map[best_ledger.lower()]
+        return best_ledger
 
-        threshold = 0.45 if is_bank else 0.55
-        if total_score > best_score and total_score >= threshold:
-            matched_clean = ledger_name.strip()
-            if matched_clean.lower() in clean_valid_map:
-                best_score = total_score
-                best_ledger = clean_valid_map[matched_clean.lower()]
-            else:
-                best_score = total_score
-                best_ledger = matched_clean
-
-    return best_ledger
+    return None
 
 def record_approval_learning(bill_dict: dict):
     client_name = bill_dict.get("client_name", "Default Client")
@@ -577,7 +565,6 @@ def record_approval_learning(bill_dict: dict):
 def check_invoice_duplicate(vendor_name: str, invoice_no: str, current_idx: int, pending_list: list, approved_list: list):
     clean_v = clean_text(vendor_name)
     clean_inv = clean_text(invoice_no)
-    
     if not clean_inv or not clean_v:
         return None
 
@@ -648,6 +635,8 @@ if "active_main_module" not in st.session_state:
     st.session_state["active_main_module"] = "Bank"
 if "zoom_level" not in st.session_state:
     st.session_state["zoom_level"] = 100
+if "bank_view_filter" not in st.session_state:
+    st.session_state["bank_view_filter"] = "All Transactions"
 
 pending_bills_list = load_pending_bills()
 approved_bills_list = load_approved_bills()
@@ -1285,11 +1274,11 @@ else:
                         prepared_files.append((f.name, optimized_bytes, mime, f_hash))
 
                     if skipped_duplicates:
-                        st.info(f"🛡️ Skipped {len(skipped_duplicates)} identical file(s) already in the database (₹0.00 spent): {', '.join(skipped_duplicates)}")
+                        st.info(f"🛡️ Skipped {len(skipped_duplicates)} identical file(s) already in the database: {', '.join(skipped_duplicates)}")
 
                     if not prepared_files:
                         if skipped_duplicates:
-                            st.warning("All uploaded files were already processed previously. No new API calls were made.")
+                            st.warning("All uploaded files were already processed previously.")
                     else:
                         ledgers_str = ", ".join(active_ledgers)
                         completed_count = 0
@@ -1475,14 +1464,14 @@ else:
                         st.rerun()
 
     # ========================================================
-    # MODULE 2: BANK STATEMENTS
+    # MODULE 2: BANK STATEMENTS (WITH STRICT PRECISION MATCHING)
     # ========================================================
     elif st.session_state["active_main_module"] == "Bank":
         st.markdown(f"""
         <div class="app-panel">
             <h4 style="color: #0D2240; font-family:'Playfair Display',serif; font-weight: 700; margin-top: 0;">Bank Statement Reconciliation: {selected_client}</h4>
             <p style="color: #64748B; font-size: 0.88rem; margin-bottom: 0;">
-                Assigned counterparties update across all matching rows and sync across all computers via Google Sheets.
+                Precision mapping with audit states. Auto-suggested allocations remain in view for verification before export.
             </p>
         </div>
         """, unsafe_allow_html=True)
@@ -1490,7 +1479,6 @@ else:
         rules = load_bank_rules()
         clean_active_ledgers = [l.strip() for l in active_ledgers]
 
-        # Fetch cloud statement if working df is not initialized
         if st.session_state["bank_df_working"] is None:
             cloud_records = load_cloud_bank_statement(selected_client)
             if cloud_records:
@@ -1500,6 +1488,11 @@ else:
                         m_led = match_learned_ledger(selected_client, r.get("Narration", ""), rules, clean_active_ledgers, is_bank=True)
                         if m_led:
                             r["Assigned Ledger"] = m_led
+                            r["Status"] = "⚡ Auto-Suggested"
+                        else:
+                            r["Status"] = "❓ Pending"
+                    elif "Status" not in r:
+                        r["Status"] = "✅ Verified"
                 st.session_state["bank_df_working"] = pd.DataFrame(cloud_records)
 
         bank_col1, bank_col2 = st.columns([2, 1])
@@ -1582,13 +1575,15 @@ else:
 
                         matched_ledger = match_learned_ledger(selected_client, n_val, rules, clean_active_ledgers, is_bank=True)
                         default_ledger = matched_ledger if matched_ledger else BLANK_LEDGER_LABEL
+                        status_str = "⚡ Auto-Suggested" if matched_ledger else "❓ Pending"
 
                         parsed_rows.append({
                             "Date": d_val,
                             "Narration": n_val,
                             "Debit / Withdrawal": dr,
                             "Credit / Deposit": cr,
-                            "Assigned Ledger": default_ledger
+                            "Assigned Ledger": default_ledger,
+                            "Status": status_str
                         })
 
                     if not parsed_rows:
@@ -1602,8 +1597,12 @@ else:
                 st.error(f"Error parsing bank statement: {e}")
 
         if st.session_state["bank_df_working"] is not None:
-            # Re-verify and auto-fill any empty rows using rules
             working_df = st.session_state["bank_df_working"].copy()
+            
+            if "Status" not in working_df.columns:
+                working_df["Status"] = "❓ Pending"
+
+            # Auto-fill unassigned entries using precision rules
             updated_any = False
             for idx in range(len(working_df)):
                 val = working_df.at[idx, "Assigned Ledger"]
@@ -1611,34 +1610,69 @@ else:
                     auto_m = match_learned_ledger(selected_client, working_df.at[idx, "Narration"], rules, clean_active_ledgers, is_bank=True)
                     if auto_m:
                         working_df.at[idx, "Assigned Ledger"] = auto_m
+                        working_df.at[idx, "Status"] = "⚡ Auto-Suggested"
                         updated_any = True
             
             if updated_any:
                 st.session_state["bank_df_working"] = working_df
 
-            # Ensure all assigned values exist in dropdown options
             unique_in_df = [str(x) for x in working_df["Assigned Ledger"].unique() if x and x != BLANK_LEDGER_LABEL]
             merged_options = [BLANK_LEDGER_LABEL] + list(dict.fromkeys(clean_active_ledgers + unique_in_df))
 
-            assigned_count = (working_df["Assigned Ledger"] != BLANK_LEDGER_LABEL).sum()
             total_count = len(working_df)
+            pending_count = (working_df["Assigned Ledger"] == BLANK_LEDGER_LABEL).sum()
+            suggested_count = (working_df["Status"] == "⚡ Auto-Suggested").sum()
+            verified_count = total_count - pending_count - suggested_count
 
-            st.markdown(f"#### Verified Transactions ({total_count} Entries — {assigned_count} Categorized, {total_count - assigned_count} Pending)")
-            st.caption("⚡ Changes propagate across matching counterparties and sync to your Google Sheet.")
+            # Audit filter controls
+            f_col1, f_col2 = st.columns([2.5, 1.5])
+            with f_col1:
+                filter_choice = st.radio(
+                    "Display Filter",
+                    options=[
+                        f"All Transactions ({total_count})",
+                        f"❓ Unassigned Only ({pending_count})",
+                        f"⚡ Auto-Suggested to Audit ({suggested_count})"
+                    ],
+                    horizontal=True,
+                    key="audit_filter_radio"
+                )
+            with f_col2:
+                st.markdown(f"""
+                <div style="font-size:0.85rem; color:#475569; padding-top:14px;">
+                    <b>Status:</b> ✅ {verified_count} Verified &nbsp;|&nbsp; ⚡ {suggested_count} Suggested &nbsp;|&nbsp; ❓ {pending_count} Pending
+                </div>
+                """, unsafe_allow_html=True)
+
+            if "Unassigned Only" in filter_choice:
+                display_df = working_df[working_df["Assigned Ledger"] == BLANK_LEDGER_LABEL].copy()
+            elif "Auto-Suggested" in filter_choice:
+                display_df = working_df[working_df["Status"] == "⚡ Auto-Suggested"].copy()
+            else:
+                display_df = working_df.copy()
 
             grid_key = f"bank_grid_v_{st.session_state['bank_grid_version']}"
 
-            edited_bank_df = st.data_editor(
-                working_df,
+            # Smooth scroll anchor
+            st.markdown("""
+            <script>
+                var el = window.parent.document.querySelector('[data-testid="stDataEditor"]');
+                if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
+            </script>
+            """, unsafe_allow_html=True)
+
+            edited_visible_df = st.data_editor(
+                display_df,
                 key=grid_key,
                 column_config={
+                    "Status": st.column_config.TextColumn("Review State", width="small", disabled=True),
                     "Date": st.column_config.TextColumn("Date", width="small"),
                     "Narration": st.column_config.TextColumn("Bank Transaction Narration", width="large"),
                     "Debit / Withdrawal": st.column_config.NumberColumn("Debit (₹)", format="₹%.2f"),
                     "Credit / Deposit": st.column_config.NumberColumn("Credit (₹)", format="₹%.2f"),
                     "Assigned Ledger": st.column_config.SelectboxColumn(
                         "Assigned Tally Ledger",
-                        help="Assign ledger. When assigned, all matching counterparties update immediately.",
+                        help="Assign ledger. Updates identical counterparties immediately.",
                         width="medium",
                         options=merged_options,
                         required=True,
@@ -1648,67 +1682,68 @@ else:
                 use_container_width=True
             )
 
-            # REAL-TIME PROPAGATION WITHOUT BLANKING OUT CELLS
+            # REAL-TIME PROPAGATION: Map changes back into master dataframe
             if selected_client not in rules:
                 rules[selected_client] = {}
 
             rules_changed = False
 
-            for i in range(min(len(working_df), len(edited_bank_df))):
-                old_val = working_df.iloc[i]["Assigned Ledger"]
-                new_val = edited_bank_df.iloc[i]["Assigned Ledger"]
+            for i in range(min(len(display_df), len(edited_visible_df))):
+                old_val = display_df.iloc[i]["Assigned Ledger"]
+                new_val = edited_visible_df.iloc[i]["Assigned Ledger"]
 
                 if old_val != new_val and new_val != BLANK_LEDGER_LABEL:
-                    changed_narr = edited_bank_df.iloc[i]["Narration"]
-                    cleaned_key = clean_bank_narration(changed_narr)
+                    changed_narr = edited_visible_df.iloc[i]["Narration"]
+                    cleaned_key = extract_pure_counterparty(changed_narr)
 
                     if cleaned_key:
                         rules[selected_client][cleaned_key] = new_val
                         rules_changed = True
 
-                        target_tokens = set(cleaned_key.split())
-                        for j in range(len(edited_bank_df)):
-                            row_narr = edited_bank_df.iloc[j]["Narration"]
-                            curr_ledger = edited_bank_df.iloc[j]["Assigned Ledger"]
+                        # Update matching counterparties in master table and mark verified
+                        for j in range(len(working_df)):
+                            row_narr = working_df.iloc[j]["Narration"]
+                            row_cleaned = extract_pure_counterparty(row_narr)
 
-                            if curr_ledger == BLANK_LEDGER_LABEL:
-                                row_cleaned = clean_bank_narration(row_narr)
-                                row_tokens = set(row_cleaned.split())
-
-                                if target_tokens and row_tokens:
-                                    intersection = target_tokens.intersection(row_tokens)
-                                    score = len(intersection) / max(len(target_tokens), 1)
-                                    sub_match = (cleaned_key in row_cleaned) or (row_cleaned in cleaned_key)
-                                    char_ratio = SequenceMatcher(None, cleaned_key, row_cleaned).ratio()
-
-                                    if score >= 0.50 or sub_match or char_ratio >= 0.65:
-                                        edited_bank_df.at[j, "Assigned Ledger"] = new_val
+                            # Exact counterparty match only to prevent false positives
+                            if row_cleaned == cleaned_key:
+                                working_df.at[j, "Assigned Ledger"] = new_val
+                                working_df.at[j, "Status"] = "✅ Verified"
 
             if rules_changed:
                 save_bank_rules(rules)
-                save_cloud_bank_statement(selected_client, edited_bank_df.to_dict(orient="records"))
-                st.session_state["bank_df_working"] = edited_bank_df
+                save_cloud_bank_statement(selected_client, working_df.to_dict(orient="records"))
+                st.session_state["bank_df_working"] = working_df
                 st.session_state["bank_grid_version"] += 1
-                st.toast("Rule memorized and applied to all matching rows!", icon="✨")
+                st.toast("Updated and marked verified!", icon="✨")
                 st.rerun()
 
-            b_btn1, b_btn2, b_btn3 = st.columns([1.2, 1.2, 1])
+            b_btn1, b_btn2, b_btn3, b_btn4 = st.columns([1.2, 1.2, 1.2, 1])
             with b_btn1:
-                if st.button("💾 Save Verified Rules", use_container_width=True):
-                    for _, row in edited_bank_df.iterrows():
-                        l_val = row["Assigned Ledger"]
-                        if l_val != BLANK_LEDGER_LABEL:
-                            cleaned_narr = clean_bank_narration(row["Narration"])
-                            if cleaned_narr:
-                                rules[selected_client][cleaned_narr] = l_val
-                    save_bank_rules(rules)
-                    save_cloud_bank_statement(selected_client, edited_bank_df.to_dict(orient="records"))
-                    st.session_state["bank_df_working"] = edited_bank_df
-                    st.toast("All bank counterparties safely synced to Google Sheets!", icon="💾")
+                if st.button("✅ Confirm All Suggested", use_container_width=True, help="Promote all auto-suggested rows to verified status"):
+                    working_df.loc[working_df["Status"] == "⚡ Auto-Suggested", "Status"] = "✅ Verified"
+                    save_cloud_bank_statement(selected_client, working_df.to_dict(orient="records"))
+                    st.session_state["bank_df_working"] = working_df
+                    st.session_state["bank_grid_version"] += 1
+                    st.toast("All suggestions confirmed as verified!", icon="🎯")
                     st.rerun()
 
             with b_btn2:
-                bank_xml = generate_bank_tally_xml(edited_bank_df, tally_bank_name)
+                if st.button("💾 Save Verified Rules", use_container_width=True):
+                    for _, row in working_df.iterrows():
+                        l_val = row["Assigned Ledger"]
+                        if l_val != BLANK_LEDGER_LABEL:
+                            cleaned_narr = extract_pure_counterparty(row["Narration"])
+                            if cleaned_narr:
+                                rules[selected_client][cleaned_narr] = l_val
+                    save_bank_rules(rules)
+                    save_cloud_bank_statement(selected_client, working_df.to_dict(orient="records"))
+                    st.session_state["bank_df_working"] = working_df
+                    st.toast("Rules and statement saved to cloud!", icon="💾")
+                    st.rerun()
+
+            with b_btn3:
+                bank_xml = generate_bank_tally_xml(working_df, tally_bank_name)
                 st.download_button(
                     label="📥 Download Bank Tally XML",
                     data=bank_xml,
@@ -1717,7 +1752,7 @@ else:
                     use_container_width=True
                 )
 
-            with b_btn3:
+            with b_btn4:
                 if st.button("🗑️ Discard Statement", type="secondary", use_container_width=True):
                     st.session_state["bank_df_working"] = None
                     save_cloud_bank_statement(selected_client, [])
