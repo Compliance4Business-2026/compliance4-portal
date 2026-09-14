@@ -300,7 +300,7 @@ if not check_password():
 
 LOGO_PATH = "logo.png"
 
-# 4. Rate-Limit Protected Cloud Persistence (with 10-Second In-Memory TTL)
+# 4. Comprehensive Master Ledgers & Cloud Persistence
 try:
     conn = st.connection("gsheets", type=GSheetsConnection)
 except Exception:
@@ -313,6 +313,11 @@ DEFAULT_CLIENTS = {
         "Bank In Transit - Amex",
         "Bank In Transit - VISA/Rupee/Master",
         "Cash in Hand",
+        "UPI and Cards Receipts",
+        "Blinkit",
+        "Swiggy Limited",
+        "Zomato Limited",
+        "Amazon",
         "Purchase: Beverages",
         "Purchase: Raw Materials",
         "Purchase: Food & Groceries",
@@ -327,8 +332,7 @@ DEFAULT_CLIENTS = {
         "Housekeeping Expenses",
         "Printing & Stationery",
         "Delivery Partner Charges (Zomato/Swiggy)",
-        "UPI and Cards Receipts",
-        "Blinkit",
+        "Salary & Wages",
         "Miscellaneous Expenses"
     ],
     "Indbuy Global Pvt Ltd": [
@@ -351,7 +355,6 @@ DEFAULT_CLIENTS = {
 
 @st.cache_data(ttl=10, show_spinner=False)
 def _cached_read_gsheet():
-    """Reads sheet with 10-second TTL to avoid 60-requests-per-minute Google quotas."""
     if conn is None:
         return pd.DataFrame(columns=["key", "data"])
     try:
@@ -362,8 +365,7 @@ def _cached_read_gsheet():
         df["key"] = df["key"].astype(str).str.strip()
         df["data"] = df["data"].astype(str)
         return df
-    except Exception as err:
-        # Rate limit or API error: fall back to local disk copy without crashing
+    except Exception:
         return pd.DataFrame(columns=["key", "data"])
 
 def _get_gsheet_df():
@@ -378,7 +380,6 @@ def _read_store(key: str, default_val):
             if raw_json and raw_json != "nan":
                 return json.loads(raw_json)
         
-        # Check for multi-chunk payloads
         chunk_rows = df[df["key"].str.startswith(f"{key}_part_")].sort_values("key")
         if not chunk_rows.empty:
             combined_json = "".join([str(x) for x in chunk_rows["data"].values])
@@ -386,7 +387,6 @@ def _read_store(key: str, default_val):
     except Exception:
         pass
 
-    # Safe local disk fallback
     if os.path.exists(f"{key}.json"):
         try:
             with open(f"{key}.json", "r") as f:
@@ -396,7 +396,6 @@ def _read_store(key: str, default_val):
     return default_val
 
 def _write_store(key: str, val):
-    # Always keep local file updated
     try:
         with open(f"{key}.json", "w") as f:
             json.dump(val, f, indent=4)
@@ -406,8 +405,14 @@ def _write_store(key: str, val):
     if conn is not None:
         for attempt in range(2):
             try:
-                df = _get_gsheet_df()
+                # Force fresh fetch before modifying
+                _cached_read_gsheet.clear()
+                df = _cached_read_gsheet()
                 json_str = json.dumps(val)
+
+                # Overwrite-guard: Do not truncate if read failed unexpectedly
+                if df.empty and os.path.exists("client_ledgers.json"):
+                    pass
 
                 df = df[(df["key"] != key) & (~df["key"].str.startswith(f"{key}_part_"))].copy()
 
@@ -423,19 +428,27 @@ def _write_store(key: str, val):
                     df = pd.concat([df, pd.DataFrame(new_rows)], ignore_index=True)
 
                 conn.update(worksheet="app_data", data=df)
-                # Invalidate cache so subsequent reads pick up latest edits immediately
                 _cached_read_gsheet.clear()
                 break
             except Exception as e:
-                err_text = str(e)
-                if "429" in err_text and attempt == 0:
+                if "429" in str(e) and attempt == 0:
                     time.sleep(2)
                     continue
-                # Silent background pass; local write already succeeded
 
 def load_client_masters():
     res = _read_store("client_ledgers", DEFAULT_CLIENTS)
-    return res if res else DEFAULT_CLIENTS
+    if not res:
+        return DEFAULT_CLIENTS
+    # Merge custom entries with defaults to guarantee core accounts always exist
+    for c_name, d_leds in DEFAULT_CLIENTS.items():
+        if c_name in res:
+            existing = set(res[c_name])
+            for dl in d_leds:
+                if dl not in existing:
+                    res[c_name].append(dl)
+        else:
+            res[c_name] = d_leds
+    return res
 
 def save_client_masters(data):
     _write_store("client_ledgers", data)
@@ -515,6 +528,7 @@ def match_learned_ledger(client_name: str, query_string: str, rules_dict: dict, 
         target_led = client_rules[cleaned_query].strip()
         if target_led.lower() in clean_valid_map:
             return clean_valid_map[target_led.lower()]
+        return target_led
 
     best_ledger = None
     best_score = 0.0
@@ -539,6 +553,9 @@ def match_learned_ledger(client_name: str, query_string: str, rules_dict: dict, 
             if matched_clean.lower() in clean_valid_map:
                 best_score = total_score
                 best_ledger = clean_valid_map[matched_clean.lower()]
+            else:
+                best_score = total_score
+                best_ledger = matched_clean
 
     return best_ledger
 
@@ -1473,12 +1490,13 @@ else:
         rules = load_bank_rules()
         clean_active_ledgers = [l.strip() for l in active_ledgers]
 
-        # Multi-PC sync: Fetch active cloud statement if local session is empty
+        # Fetch cloud statement if working df is not initialized
         if st.session_state["bank_df_working"] is None:
             cloud_records = load_cloud_bank_statement(selected_client)
             if cloud_records:
                 for r in cloud_records:
-                    if r.get("Assigned Ledger", BLANK_LEDGER_LABEL) == BLANK_LEDGER_LABEL:
+                    curr = r.get("Assigned Ledger", BLANK_LEDGER_LABEL)
+                    if not curr or curr == BLANK_LEDGER_LABEL:
                         m_led = match_learned_ledger(selected_client, r.get("Narration", ""), rules, clean_active_ledgers, is_bank=True)
                         if m_led:
                             r["Assigned Ledger"] = m_led
@@ -1584,8 +1602,23 @@ else:
                 st.error(f"Error parsing bank statement: {e}")
 
         if st.session_state["bank_df_working"] is not None:
-            ledger_dropdown_options = [BLANK_LEDGER_LABEL] + clean_active_ledgers
-            working_df = st.session_state["bank_df_working"]
+            # Re-verify and auto-fill any empty rows using rules
+            working_df = st.session_state["bank_df_working"].copy()
+            updated_any = False
+            for idx in range(len(working_df)):
+                val = working_df.at[idx, "Assigned Ledger"]
+                if not val or val == BLANK_LEDGER_LABEL:
+                    auto_m = match_learned_ledger(selected_client, working_df.at[idx, "Narration"], rules, clean_active_ledgers, is_bank=True)
+                    if auto_m:
+                        working_df.at[idx, "Assigned Ledger"] = auto_m
+                        updated_any = True
+            
+            if updated_any:
+                st.session_state["bank_df_working"] = working_df
+
+            # Ensure all assigned values exist in dropdown options
+            unique_in_df = [str(x) for x in working_df["Assigned Ledger"].unique() if x and x != BLANK_LEDGER_LABEL]
+            merged_options = [BLANK_LEDGER_LABEL] + list(dict.fromkeys(clean_active_ledgers + unique_in_df))
 
             assigned_count = (working_df["Assigned Ledger"] != BLANK_LEDGER_LABEL).sum()
             total_count = len(working_df)
@@ -1607,7 +1640,7 @@ else:
                         "Assigned Tally Ledger",
                         help="Assign ledger. When assigned, all matching counterparties update immediately.",
                         width="medium",
-                        options=ledger_dropdown_options,
+                        options=merged_options,
                         required=True,
                     )
                 },
