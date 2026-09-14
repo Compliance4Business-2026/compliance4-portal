@@ -1,4 +1,5 @@
 import streamlit as st
+import streamlit.components.v1 as components
 import pandas as pd
 from google import genai
 from google.genai import types
@@ -995,25 +996,68 @@ if st.session_state["active_review_index"] is not None and len(pending_bills_lis
                 st.session_state["zoom_level"] = 100
                 st.rerun()
 
-        # Hybrid PDF and Image Preview
+        # Resilient Multi-Platform Document Preview Engine
         img_path = bill.get("saved_image_path", "")
         b64_data = ""
         mime_type = str(bill.get("mime_type", "")).lower()
 
         if img_path and os.path.exists(img_path):
-            with open(img_path, "rb") as f_img:
-                b64_data = base64.b64encode(f_img.read()).decode("utf-8")
-        elif bill.get("file_base64"):
+            try:
+                with open(img_path, "rb") as f_img:
+                    b64_data = base64.b64encode(f_img.read()).decode("utf-8")
+            except Exception:
+                pass
+        
+        if not b64_data and bill.get("file_base64"):
             b64_data = bill.get("file_base64")
 
         if b64_data:
-            if "pdf" in mime_type or bill.get("file_name", "").lower().endswith(".pdf"):
-                pdf_data_uri = f"data:application/pdf;base64,{b64_data}"
-                st.markdown(f"""
-                <div class="zoom-container" style="background:#FFFFFF; padding:0; height:620px;">
-                    <iframe src="{pdf_data_uri}" width="100%" height="620px" style="border:none; border-radius:8px;"></iframe>
-                </div>
-                """, unsafe_allow_html=True)
+            scale_ratio = st.session_state['zoom_level'] / 100.0
+            is_pdf = "pdf" in mime_type or bill.get("file_name", "").lower().endswith(".pdf")
+
+            if is_pdf:
+                # PDF.js Canvas Rendering (Bypasses Chrome blocked data URI iframe sandbox)
+                pdf_js_html = f"""
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+                    <style>
+                        body {{ margin: 0; padding: 10px; background: #525659; display: flex; flex-direction: column; align-items: center; }}
+                        canvas {{ box-shadow: 0 4px 12px rgba(0,0,0,0.4); margin-bottom: 14px; border-radius: 4px; background: #ffffff; max-width: 98%; }}
+                    </style>
+                </head>
+                <body>
+                    <div id="pdf-container"></div>
+                    <script>
+                        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+                        const rawData = atob("{b64_data}");
+                        const uint8Array = new Uint8Array(rawData.length);
+                        for (let i = 0; i < rawData.length; i++) {{
+                            uint8Array[i] = rawData.charCodeAt(i);
+                        }}
+
+                        pdfjsLib.getDocument({{ data: uint8Array }}).promise.then(pdf => {{
+                            const container = document.getElementById('pdf-container');
+                            for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {{
+                                pdf.getPage(pageNum).then(page => {{
+                                    const viewport = page.getViewport({{ scale: {scale_ratio * 1.5} }});
+                                    const canvas = document.createElement('canvas');
+                                    const ctx = canvas.getContext('2d');
+                                    canvas.height = viewport.height;
+                                    canvas.width = viewport.width;
+                                    container.appendChild(canvas);
+                                    page.render({{ canvasContext: ctx, viewport: viewport }});
+                                }});
+                            }}
+                        }}).catch(err => {{
+                            document.body.innerHTML = '<div style="color:white; font-family:sans-serif; text-align:center; padding:20px;">PDF loading error: ' + err.message + '</div>';
+                        }});
+                    </script>
+                </body>
+                </html>
+                """
+                components.html(pdf_js_html, height=650, scrolling=True)
             else:
                 img_data_uri = f"data:image/jpeg;base64,{b64_data}"
                 st.markdown(f"""
@@ -1022,7 +1066,7 @@ if st.session_state["active_review_index"] is not None and len(pending_bills_lis
                 </div>
                 """, unsafe_allow_html=True)
         else:
-            st.warning("⚠️ Source document preview unavailable in temporary cache. Fields remain editable on the right.")
+            st.warning("⚠️ Source document binary was cleared during server restart. All fields remain editable on the right.")
 
     with col_form:
         with st.form(key=f"review_form_{idx}"):
@@ -1659,7 +1703,6 @@ else:
                     if selected_client not in rules:
                         rules[selected_client] = {}
 
-                    # Learn rules strictly from assigned rows
                     for _, row in current_df.iterrows():
                         l_val = row["Assigned Ledger"]
                         if l_val != BLANK_LEDGER_LABEL:
@@ -1667,7 +1710,6 @@ else:
                             if c_key and len(c_key) >= 3:
                                 rules[selected_client][c_key] = l_val
 
-                    # Fill unassigned identical counterparties
                     auto_filled_count = 0
                     for j in range(len(current_df)):
                         if current_df.at[j, "Assigned Ledger"] == BLANK_LEDGER_LABEL:
