@@ -1472,7 +1472,7 @@ else:
         <div class="app-panel">
             <h4 style="color: #0D2240; font-family:'Playfair Display',serif; font-weight: 700; margin-top: 0;">Bank Statement Reconciliation: {selected_client}</h4>
             <p style="color: #64748B; font-size: 0.88rem; margin-bottom: 0;">
-                Edit rows continuously without page jumps. Click "Memorize & Auto-Fill Matching" or "Save Verified Rules" to sync.
+                Edit continuously without page jumping. Selected ledgers register on the first click and remain steady.
             </p>
         </div>
         """, unsafe_allow_html=True)
@@ -1593,7 +1593,7 @@ else:
         if st.session_state["bank_df_working"] is not None:
             working_df = st.session_state["bank_df_working"]
 
-            # Compute unique dropdown options
+            # Compute exhaustive dropdown options
             unique_in_df = [str(x) for x in working_df["Assigned Ledger"].unique() if x and x != BLANK_LEDGER_LABEL]
             merged_options = [BLANK_LEDGER_LABEL] + list(dict.fromkeys(clean_active_ledgers + unique_in_df))
 
@@ -1603,29 +1603,54 @@ else:
 
             st.markdown(f"#### Verified Transactions ({total_count} Entries — {assigned_count} Categorized, {pending_count} Pending)")
 
-            # Render data editor with a fixed key so scroll position remains stable
-            edited_grid_df = st.data_editor(
-                working_df,
-                key="bank_statement_grid_stable",
+            # View Filter to reduce scrolling without premature disappearance
+            v_col1, v_col2 = st.columns([2.2, 1.8])
+            with v_col1:
+                filter_view = st.selectbox(
+                    "Display Focus",
+                    options=[
+                        f"All Transactions ({total_count})",
+                        f"Unassigned Only ({pending_count})"
+                    ],
+                    index=0,
+                    key="bank_view_focus"
+                )
+            with v_col2:
+                st.caption("⚡ Direct in-place editing. Click 'Memorize & Auto-Fill' below to apply matching rules.")
+
+            if "Unassigned Only" in filter_view:
+                view_subset = working_df[working_df["Assigned Ledger"] == BLANK_LEDGER_LABEL].copy()
+            else:
+                view_subset = working_df.copy()
+
+            # Render Stable Grid (No key modification, no automatic reruns on keystroke)
+            edited_grid_output = st.data_editor(
+                view_subset,
+                key="bank_stable_editor_v1",
                 column_config={
-                    "Date": st.column_config.TextColumn("Date", width="small"),
-                    "Narration": st.column_config.TextColumn("Bank Transaction Narration", width="large"),
-                    "Debit / Withdrawal": st.column_config.NumberColumn("Debit (₹)", format="₹%.2f"),
-                    "Credit / Deposit": st.column_config.NumberColumn("Credit (₹)", format="₹%.2f"),
+                    "Date": st.column_config.TextColumn("Date", width="small", disabled=True),
+                    "Narration": st.column_config.TextColumn("Bank Transaction Narration", width="large", disabled=True),
+                    "Debit / Withdrawal": st.column_config.NumberColumn("Debit (₹)", format="₹%.2f", disabled=True),
+                    "Credit / Deposit": st.column_config.NumberColumn("Credit (₹)", format="₹%.2f", disabled=True),
                     "Assigned Ledger": st.column_config.SelectboxColumn(
                         "Assigned Tally Ledger",
-                        help="Assign ledger. Click 'Memorize & Auto-Fill' below to propagate to identical counterparties.",
+                        help="Select ledger. Click 'Memorize & Auto-Fill' to sync across identical counterparties.",
                         width="medium",
                         options=merged_options,
                         required=True,
                     )
                 },
-                num_rows="dynamic",
+                num_rows="fixed",
                 use_container_width=True
             )
 
-            # Update working state silently without triggering full-page jump
-            st.session_state["bank_df_working"] = edited_grid_df
+            # Apply in-place edits from the visible view into master working_df
+            for r_idx in range(len(edited_grid_output)):
+                orig_index = edited_grid_output.index[r_idx]
+                new_assigned = edited_grid_output.iloc[r_idx]["Assigned Ledger"]
+                working_df.at[orig_index, "Assigned Ledger"] = new_assigned
+
+            st.session_state["bank_df_working"] = working_df
 
             st.write("")
             b_btn1, b_btn2, b_btn3, b_btn4 = st.columns([1.5, 1.2, 1.2, 1])
@@ -1644,7 +1669,7 @@ else:
                             if c_key:
                                 rules[selected_client][c_key] = l_val
 
-                    # Propagate to identical counterparties
+                    # Propagate strictly to identical counterparties
                     auto_filled_count = 0
                     for j in range(len(current_df)):
                         if current_df.at[j, "Assigned Ledger"] == BLANK_LEDGER_LABEL:
