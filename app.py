@@ -27,7 +27,7 @@ st.set_page_config(
 IMAGE_STORAGE_DIR = "invoice_images"
 os.makedirs(IMAGE_STORAGE_DIR, exist_ok=True)
 
-# 2. Bespoke Styling Injection
+# 2. Bespoke Styling
 CUSTOM_CSS = """
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Playfair+Display:ital,wght@0,600;0,700;1,600&display=swap');
@@ -256,7 +256,7 @@ CUSTOM_CSS = """
 """
 st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 
-# 3. Team Passcode Gate
+# 3. Passcode Gate
 def check_password():
     def password_entered():
         correct_password = str(st.secrets.get("APP_PASSWORD", "Bhargavi@2003")).strip()
@@ -300,7 +300,7 @@ if not check_password():
 
 LOGO_PATH = "logo.png"
 
-# 4. Persistent Stores & Google Sheets Connection
+# 4. Google Sheets Storage
 try:
     conn = st.connection("gsheets", type=GSheetsConnection)
 except Exception:
@@ -370,7 +370,6 @@ def _read_store(key: str, default_val):
     except Exception:
         pass
 
-    # Local fallback
     if os.path.exists(f"{key}.json"):
         try:
             with open(f"{key}.json", "r") as f:
@@ -380,26 +379,22 @@ def _read_store(key: str, default_val):
     return default_val
 
 def _write_store(key: str, val):
-    # Always keep local file updated
     try:
         with open(f"{key}.json", "w") as f:
             json.dump(val, f, indent=4)
     except Exception:
         pass
 
-    # Push to Google Sheet
     if conn is not None:
         try:
             df = _get_gsheet_df()
             json_str = json.dumps(val)
-
-            # Clean replacement without fragile startswith logic
             df = df[df["key"] != key].copy()
             new_row = pd.DataFrame([{"key": key, "data": json_str}])
             df = pd.concat([df, new_row], ignore_index=True)
             conn.update(worksheet="app_data", data=df)
         except Exception as e:
-            st.error(f"Google Sheet sync notice: {e}")
+            st.error(f"Cloud update notice: {e}")
 
 def load_client_masters():
     res = _read_store("client_ledgers", DEFAULT_CLIENTS)
@@ -431,6 +426,13 @@ def load_bank_rules():
 
 def save_bank_rules(rules):
     _write_store("bank_ledger_rules", rules)
+
+def load_bank_statement_active(client_name: str):
+    res = _read_store(f"bank_statement_{client_name}", [])
+    return res if isinstance(res, list) else []
+
+def save_bank_statement_active(client_name: str, rows: list):
+    _write_store(f"bank_statement_{client_name}", rows)
 
 # 5. Normalizers
 STOP_WORDS = {
@@ -1418,17 +1420,23 @@ else:
                         st.rerun()
 
     # ========================================================
-    # MODULE 2: BANK STATEMENTS
+    # MODULE 2: BANK STATEMENTS (CROSS-DEVICE PERSISTENCE)
     # ========================================================
     elif st.session_state["active_main_module"] == "Bank":
         st.markdown(f"""
         <div class="app-panel">
             <h4 style="color: #0D2240; font-family:'Playfair Display',serif; font-weight: 700; margin-top: 0;">Bank Statement Reconciliation: {selected_client}</h4>
             <p style="color: #64748B; font-size: 0.88rem; margin-bottom: 0;">
-                Assign a ledger to any counterparty, and it will auto-categorize across all matching transactions and save permanently to your Google Sheet.
+                Assigned counterparties update across all matching rows and sync across all computers via Google Sheets.
             </p>
         </div>
         """, unsafe_allow_html=True)
+
+        # Cross-device cloud restore check
+        if st.session_state["bank_df_working"] is None:
+            saved_cloud_statement = load_bank_statement_active(selected_client)
+            if saved_cloud_statement:
+                st.session_state["bank_df_working"] = pd.DataFrame(saved_cloud_statement)
 
         bank_col1, bank_col2 = st.columns([2, 1])
         with bank_col1:
@@ -1526,6 +1534,9 @@ else:
                             st.warning("No transactions found in this document.")
                         else:
                             st.session_state["bank_df_working"] = pd.DataFrame(parsed_rows)
+                            # Sync initial upload state across devices via Google Sheets
+                            save_bank_statement_active(selected_client, parsed_rows)
+                            st.rerun()
                 except Exception as e:
                     st.error(f"Error parsing bank statement: {e}")
 
@@ -1533,13 +1544,21 @@ else:
             clean_active_ledgers = [l.strip() for l in active_ledgers]
             ledger_dropdown_options = [BLANK_LEDGER_LABEL] + clean_active_ledgers
 
-            working_df = st.session_state["bank_df_working"]
+            # Re-apply any learned rules loaded from cloud
+            rules = load_bank_rules()
+            working_df = st.session_state["bank_df_working"].copy()
+            for idx_r in range(len(working_df)):
+                if working_df.at[idx_r, "Assigned Ledger"] == BLANK_LEDGER_LABEL:
+                    matched = match_learned_ledger(selected_client, working_df.at[idx_r, "Narration"], rules, clean_active_ledgers, is_bank=True)
+                    if matched:
+                        working_df.at[idx_r, "Assigned Ledger"] = matched
+            st.session_state["bank_df_working"] = working_df
 
             assigned_count = (working_df["Assigned Ledger"] != BLANK_LEDGER_LABEL).sum()
             total_count = len(working_df)
 
             st.markdown(f"#### Verified Transactions ({total_count} Entries — {assigned_count} Categorized, {total_count - assigned_count} Pending)")
-            st.caption("⚡ Changes propagate across matching counterparties and save directly to your Google Sheet.")
+            st.caption("⚡ Changes propagate across matching counterparties and sync to your Google Sheet.")
 
             edited_bank_df = st.data_editor(
                 working_df,
@@ -1561,8 +1580,7 @@ else:
                 use_container_width=True
             )
 
-            # REAL-TIME PROPAGATION & GOOGLE SHEETS SAVING
-            rules = load_bank_rules()
+            # PROPAGATION & PERSISTENCE WITHOUT FLICKER
             if selected_client not in rules:
                 rules[selected_client] = {}
 
@@ -1600,8 +1618,9 @@ else:
 
             if rules_changed:
                 save_bank_rules(rules)
+                save_bank_statement_active(selected_client, edited_bank_df.to_dict(orient="records"))
                 st.session_state["bank_df_working"] = edited_bank_df
-                st.toast("Rule memorized in Google Sheets and propagated to matching rows!", icon="✨")
+                st.toast("Rule memorized and applied to all matching rows!", icon="✨")
                 st.rerun()
 
             b_btn1, b_btn2, b_btn3 = st.columns([1.2, 1.2, 1])
@@ -1614,8 +1633,9 @@ else:
                             if cleaned_narr:
                                 rules[selected_client][cleaned_narr] = l_val
                     save_bank_rules(rules)
+                    save_bank_statement_active(selected_client, edited_bank_df.to_dict(orient="records"))
                     st.session_state["bank_df_working"] = edited_bank_df
-                    st.toast("All bank counterparties safely synced to Google Sheets!", icon="💾")
+                    st.toast("Statement & rules safely saved to Google Sheets!", icon="💾")
                     st.rerun()
 
             with b_btn2:
@@ -1631,6 +1651,8 @@ else:
             with b_btn3:
                 if st.button("🗑️ Discard Statement", type="secondary", use_container_width=True):
                     st.session_state["bank_df_working"] = None
+                    save_bank_statement_active(selected_client, [])
+                    st.toast("Active statement cleared across devices.", icon="🗑️")
                     st.rerun()
 
     # ========================================================
@@ -1646,7 +1668,6 @@ else:
         </div>
         """, unsafe_allow_html=True)
         
-        # Test Connection Diagnostic
         if st.button("☁️ Test Google Sheets Connection"):
             try:
                 test_df = _get_gsheet_df()
