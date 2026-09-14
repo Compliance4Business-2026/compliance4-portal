@@ -320,6 +320,7 @@ DEFAULT_CLIENTS = {
         "The Shaka Cafe",
         "Regenta M Foods",
         "Haimi Enterprises",
+        "Redemption Consumer Goods Pvt Ltd",
         "Purchase: Beverages",
         "Purchase: Raw Materials",
         "Purchase: Food & Groceries",
@@ -531,7 +532,6 @@ def match_learned_ledger(client_name: str, query_string: str, rules_dict: dict, 
 
     clean_valid_map = {l.strip().lower(): l for l in valid_ledgers}
 
-    # Strict Exact Key Match
     if cleaned_query in client_rules:
         target_led = client_rules[cleaned_query].strip()
         if target_led.lower() in clean_valid_map:
@@ -845,6 +845,7 @@ def process_single_bill(file_name, file_bytes, mime, file_hash, client, ledgers_
                 bill_entry["mime_type"] = mime
                 bill_entry["gst_treatment"] = "Regular"
                 bill_entry["client_name"] = client_name
+                bill_entry["file_base64"] = base64.b64encode(file_bytes).decode("utf-8")
 
                 saved_rel_path = os.path.join(IMAGE_STORAGE_DIR, f"{file_hash[:12]}_{file_name}")
                 with open(saved_rel_path, "wb") as f_out:
@@ -994,25 +995,34 @@ if st.session_state["active_review_index"] is not None and len(pending_bills_lis
                 st.session_state["zoom_level"] = 100
                 st.rerun()
 
+        # Hybrid PDF and Image Preview
         img_path = bill.get("saved_image_path", "")
+        b64_data = ""
+        mime_type = str(bill.get("mime_type", "")).lower()
+
         if img_path and os.path.exists(img_path):
             with open(img_path, "rb") as f_img:
                 b64_data = base64.b64encode(f_img.read()).decode("utf-8")
-            img_data_uri = f"data:{bill.get('mime_type', 'image/jpeg')};base64,{b64_data}"
-            st.markdown(f"""
-            <div class="zoom-container">
-                <img src="{img_data_uri}" style="width: {st.session_state['zoom_level']}%; max-width: none; border-radius: 6px; box-shadow: 0 4px 10px rgba(0,0,0,0.3);" />
-            </div>
-            """, unsafe_allow_html=True)
         elif bill.get("file_base64"):
-            img_data_uri = f"data:{bill.get('mime_type', 'image/jpeg')};base64,{bill['file_base64']}"
-            st.markdown(f"""
-            <div class="zoom-container">
-                <img src="{img_data_uri}" style="width: {st.session_state['zoom_level']}%; max-width: none; border-radius: 6px; box-shadow: 0 4px 10px rgba(0,0,0,0.3);" />
-            </div>
-            """, unsafe_allow_html=True)
+            b64_data = bill.get("file_base64")
+
+        if b64_data:
+            if "pdf" in mime_type or bill.get("file_name", "").lower().endswith(".pdf"):
+                pdf_data_uri = f"data:application/pdf;base64,{b64_data}"
+                st.markdown(f"""
+                <div class="zoom-container" style="background:#FFFFFF; padding:0; height:620px;">
+                    <iframe src="{pdf_data_uri}" width="100%" height="620px" style="border:none; border-radius:8px;"></iframe>
+                </div>
+                """, unsafe_allow_html=True)
+            else:
+                img_data_uri = f"data:image/jpeg;base64,{b64_data}"
+                st.markdown(f"""
+                <div class="zoom-container">
+                    <img src="{img_data_uri}" style="width: {st.session_state['zoom_level']}%; max-width: none; border-radius: 6px; box-shadow: 0 4px 10px rgba(0,0,0,0.3);" />
+                </div>
+                """, unsafe_allow_html=True)
         else:
-            st.info("Document preview active (PDF or disk file).")
+            st.warning("⚠️ Source document preview unavailable in temporary cache. Fields remain editable on the right.")
 
     with col_form:
         with st.form(key=f"review_form_{idx}"):
