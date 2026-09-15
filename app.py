@@ -279,7 +279,7 @@ if not check_password():
 
 LOGO_PATH = "logo.png"
 
-# 4. Chart of Accounts & Cloud Persistence
+# 4. Chart of Accounts & Fast Persistence
 try:
     conn = st.connection("gsheets", type=GSheetsConnection)
 except Exception:
@@ -340,11 +340,13 @@ DEFAULT_CLIENTS = {
         "Miscellaneous Exp"
     ],
     "Indbuy Global Pvt Ltd": [
+        "Purchases",
         "Trading Goods Purchase",
         "Freight & Forwarding Charges",
+        "Delivery and Courier Expenses",
         "Warehouse Storage Expense",
         "Office Supplies Expense",
-        "Printing & Stationery",
+        "Printing and Stationery",
         "Bank Charges",
         "Professional Fees"
     ],
@@ -407,32 +409,28 @@ def _write_store(key: str, val):
         pass
 
     if conn is not None:
-        for attempt in range(2):
-            try:
-                _cached_read_gsheet.clear()
-                df = _cached_read_gsheet()
-                json_str = json.dumps(val)
+        try:
+            _cached_read_gsheet.clear()
+            df = _cached_read_gsheet()
+            json_str = json.dumps(val)
 
-                df = df[(df["key"] != key) & (~df["key"].str.startswith(f"{key}_part_"))].copy()
+            df = df[(df["key"] != key) & (~df["key"].str.startswith(f"{key}_part_"))].copy()
 
-                CHUNK_SIZE = 35000
-                if len(json_str) <= CHUNK_SIZE:
-                    new_row = pd.DataFrame([{"key": key, "data": json_str}])
-                    df = pd.concat([df, new_row], ignore_index=True)
-                else:
-                    chunks = [json_str[i:i + CHUNK_SIZE] for i in range(0, len(json_str), CHUNK_SIZE)]
-                    new_rows = []
-                    for c_idx, c_text in enumerate(chunks):
-                        new_rows.append({"key": f"{key}_part_{c_idx:02d}", "data": c_text})
-                    df = pd.concat([df, pd.DataFrame(new_rows)], ignore_index=True)
+            CHUNK_SIZE = 35000
+            if len(json_str) <= CHUNK_SIZE:
+                new_row = pd.DataFrame([{"key": key, "data": json_str}])
+                df = pd.concat([df, new_row], ignore_index=True)
+            else:
+                chunks = [json_str[i:i + CHUNK_SIZE] for i in range(0, len(json_str), CHUNK_SIZE)]
+                new_rows = []
+                for c_idx, c_text in enumerate(chunks):
+                    new_rows.append({"key": f"{key}_part_{c_idx:02d}", "data": c_text})
+                df = pd.concat([df, pd.DataFrame(new_rows)], ignore_index=True)
 
-                conn.update(worksheet="app_data", data=df)
-                _cached_read_gsheet.clear()
-                break
-            except Exception as e:
-                if "429" in str(e) and attempt == 0:
-                    time.sleep(2)
-                    continue
+            conn.update(worksheet="app_data", data=df)
+            _cached_read_gsheet.clear()
+        except Exception:
+            pass
 
 def load_client_masters():
     res = _read_store("client_ledgers", DEFAULT_CLIENTS)
@@ -454,34 +452,38 @@ def save_client_masters(data):
 def get_clean_client_key(client_name: str) -> str:
     return re.sub(r'[^a-zA-Z0-9_]', '_', str(client_name).strip())
 
-# CLIENT-SPECIFIC QUEUE RETRIEVAL
+# Strips heavy base64 strings so Google Sheets updates execute in milliseconds
+def _strip_heavy_binaries(bills_list: list) -> list:
+    stripped = []
+    for b in bills_list:
+        clean_copy = dict(b)
+        clean_copy.pop("file_base64", None)
+        stripped.append(clean_copy)
+    return stripped
+
 def load_pending_bills(client_name: str):
     c_key = get_clean_client_key(client_name)
     bills = _read_store(f"pending_bills_{c_key}", None)
     if bills is not None:
         return bills
-    # Fallback to check legacy global list for backwards compatibility
     legacy_all = _read_store("pending_bills", [])
-    filtered = [b for b in legacy_all if b.get("client_name") == client_name]
-    return filtered
+    return [b for b in legacy_all if b.get("client_name") == client_name]
 
 def save_pending_bills(bills: list, client_name: str):
     c_key = get_clean_client_key(client_name)
-    _write_store(f"pending_bills_{c_key}", bills)
+    _write_store(f"pending_bills_{c_key}", _strip_heavy_binaries(bills))
 
 def load_approved_bills(client_name: str):
     c_key = get_clean_client_key(client_name)
     bills = _read_store(f"approved_bills_{c_key}", None)
     if bills is not None:
         return bills
-    # Fallback to check legacy global list for backwards compatibility
     legacy_all = _read_store("approved_bills", [])
-    filtered = [b for b in legacy_all if b.get("client_name") == client_name]
-    return filtered
+    return [b for b in legacy_all if b.get("client_name") == client_name]
 
 def save_approved_bills(bills: list, client_name: str):
     c_key = get_clean_client_key(client_name)
-    _write_store(f"approved_bills_{c_key}", bills)
+    _write_store(f"approved_bills_{c_key}", _strip_heavy_binaries(bills))
 
 def load_item_rules():
     return _read_store("item_ledger_rules", {})
@@ -647,6 +649,8 @@ if "active_main_module" not in st.session_state:
     st.session_state["active_main_module"] = "Purchase"
 if "zoom_level" not in st.session_state:
     st.session_state["zoom_level"] = 100
+if "doc_cache_memory" not in st.session_state:
+    st.session_state["doc_cache_memory"] = {}
 
 # 7. XML Generators
 def generate_tally_xml(approved_bills):
@@ -863,8 +867,10 @@ def process_single_bill(file_name, file_bytes, mime, file_hash, client, ledgers_
                 bill_entry["mime_type"] = mime
                 bill_entry["gst_treatment"] = "Regular"
                 bill_entry["client_name"] = client_name
-                # Embed base64 persistently so image preview never disappears across server resets
-                bill_entry["file_base64"] = base64.b64encode(file_bytes).decode("utf-8")
+                
+                # Cache preview data in fast memory session
+                b64_str = base64.b64encode(file_bytes).decode("utf-8")
+                st.session_state["doc_cache_memory"][file_hash] = b64_str
 
                 saved_rel_path = os.path.join(IMAGE_STORAGE_DIR, f"{file_hash[:12]}_{file_name}")
                 with open(saved_rel_path, "wb") as f_out:
@@ -909,7 +915,6 @@ with st.sidebar:
         client_masters = DEFAULT_CLIENTS
         client_options = list(client_masters.keys())
 
-    # Detect client switch and reset active review index cleanly
     if "current_client_selected" not in st.session_state:
         st.session_state["current_client_selected"] = client_options[0]
 
@@ -923,6 +928,8 @@ with st.sidebar:
         st.session_state["current_client_selected"] = selected_client
         st.session_state["active_review_index"] = None
         st.session_state["bank_df_working"] = None
+        st.session_state.pop("pending_bills_active", None)
+        st.session_state.pop("approved_bills_active", None)
         st.rerun()
 
     active_ledgers = client_masters.get(selected_client, ["Purchase Account"])
@@ -951,9 +958,14 @@ with st.sidebar:
     </div>
     """, unsafe_allow_html=True)
 
-# LOAD SCOPED LISTS STRICTLY FOR THE ACTIVE CLIENT
-pending_bills_list = load_pending_bills(selected_client)
-approved_bills_list = load_approved_bills(selected_client)
+# Maintain in-session fast working queues
+if "pending_bills_active" not in st.session_state:
+    st.session_state["pending_bills_active"] = load_pending_bills(selected_client)
+if "approved_bills_active" not in st.session_state:
+    st.session_state["approved_bills_active"] = load_approved_bills(selected_client)
+
+pending_bills_list = st.session_state["pending_bills_active"]
+approved_bills_list = st.session_state["approved_bills_active"]
 
 # 9. Executive Hero Banner
 st.markdown(f"""
@@ -1033,18 +1045,17 @@ if st.session_state["active_review_index"] is not None and len(pending_bills_lis
                 st.rerun()
 
         img_path = bill.get("saved_image_path", "")
-        b64_data = ""
+        f_hash = bill.get("file_hash", "")
+        b64_data = st.session_state["doc_cache_memory"].get(f_hash, "")
         mime_type = str(bill.get("mime_type", "")).lower()
 
-        if img_path and os.path.exists(img_path):
+        if not b64_data and img_path and os.path.exists(img_path):
             try:
                 with open(img_path, "rb") as f_img:
                     b64_data = base64.b64encode(f_img.read()).decode("utf-8")
+                    st.session_state["doc_cache_memory"][f_hash] = b64_data
             except Exception:
                 pass
-        
-        if not b64_data and bill.get("file_base64"):
-            b64_data = bill.get("file_base64")
 
         if b64_data:
             scale_ratio = st.session_state['zoom_level'] / 100.0
@@ -1100,10 +1111,12 @@ if st.session_state["active_review_index"] is not None and len(pending_bills_lis
                 </div>
                 """, unsafe_allow_html=True)
         else:
-            st.warning("⚠️ Source document binary unavailable. Fields remain editable on the right.")
+            st.warning("⚠️ Source preview cached in memory. Form fields remain fully editable.")
 
     with col_form:
-        with st.form(key=f"review_form_{idx}"):
+        # Form key tied to file hash to prevent field retaining stale data
+        form_key = f"review_form_{bill.get('file_hash', idx)}"
+        with st.form(key=form_key):
             st.markdown("""
             <div class="app-panel" style="padding: 16px 20px; margin-bottom: 12px;">
                 <div style="font-weight: 700; color: #0D2240;">Invoice Header & GST Controls</div>
@@ -1152,7 +1165,7 @@ if st.session_state["active_review_index"] is not None and len(pending_bills_lis
 
             edited_df = st.data_editor(
                 df_items,
-                key=f"items_editor_{idx}",
+                key=f"items_editor_{bill.get('file_hash', idx)}",
                 column_config={
                     "description": "Item Description",
                     "hsn_code": "HSN",
@@ -1229,18 +1242,22 @@ if st.session_state["active_review_index"] is not None and len(pending_bills_lis
             bill["narration"] = v_narration
 
             if submit_approve:
-                pending_bills_list.pop(idx)
-                record_approval_learning(bill)
-                approved_bills_list.append(bill)
+                # Remove from pending queue
+                approved_bill = pending_bills_list.pop(idx)
+                record_approval_learning(approved_bill)
+                approved_bills_list.append(approved_bill)
+
+                # Persist instantly to Google Sheets (fast metadata write)
                 save_pending_bills(pending_bills_list, selected_client)
                 save_approved_bills(approved_bills_list, selected_client)
 
+                # Clamp index to advance smoothly to the next item
                 if len(pending_bills_list) > 0:
                     st.session_state["active_review_index"] = min(idx, len(pending_bills_list) - 1)
-                    st.toast("Approved! Staged next invoice.", icon="✨")
+                    st.toast("Approved! Loaded next invoice.", icon="✨")
                 else:
                     st.session_state["active_review_index"] = None
-                    st.toast("All pending invoices reviewed!", icon="🎉")
+                    st.toast("All invoices reviewed for this client!", icon="🎉")
                 st.rerun()
 
             elif submit_reject:
@@ -1255,7 +1272,7 @@ if st.session_state["active_review_index"] is not None and len(pending_bills_lis
                 save_pending_bills(pending_bills_list, selected_client)
                 if len(pending_bills_list) > 0:
                     st.session_state["active_review_index"] = min(idx, len(pending_bills_list) - 1)
-                    st.toast("Bill rejected. Loaded next invoice.", icon="🗑️")
+                    st.toast("Bill rejected. Staged next invoice.", icon="🗑️")
                 else:
                     st.session_state["active_review_index"] = None
                 st.rerun()
@@ -1537,6 +1554,7 @@ else:
                 with exp_c3:
                     if st.button("🧹 Clear Register", type="secondary", use_container_width=True):
                         approved_bills_list = []
+                        st.session_state["approved_bills_active"] = []
                         save_approved_bills(approved_bills_list, selected_client)
                         st.rerun()
 
