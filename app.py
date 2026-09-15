@@ -451,17 +451,37 @@ def load_client_masters():
 def save_client_masters(data):
     _write_store("client_ledgers", data)
 
-def load_pending_bills():
-    return _read_store("pending_bills", [])
+def get_clean_client_key(client_name: str) -> str:
+    return re.sub(r'[^a-zA-Z0-9_]', '_', str(client_name).strip())
 
-def save_pending_bills(bills):
-    _write_store("pending_bills", bills)
+# CLIENT-SPECIFIC QUEUE RETRIEVAL
+def load_pending_bills(client_name: str):
+    c_key = get_clean_client_key(client_name)
+    bills = _read_store(f"pending_bills_{c_key}", None)
+    if bills is not None:
+        return bills
+    # Fallback to check legacy global list for backwards compatibility
+    legacy_all = _read_store("pending_bills", [])
+    filtered = [b for b in legacy_all if b.get("client_name") == client_name]
+    return filtered
 
-def load_approved_bills():
-    return _read_store("approved_bills", [])
+def save_pending_bills(bills: list, client_name: str):
+    c_key = get_clean_client_key(client_name)
+    _write_store(f"pending_bills_{c_key}", bills)
 
-def save_approved_bills(bills):
-    _write_store("approved_bills", bills)
+def load_approved_bills(client_name: str):
+    c_key = get_clean_client_key(client_name)
+    bills = _read_store(f"approved_bills_{c_key}", None)
+    if bills is not None:
+        return bills
+    # Fallback to check legacy global list for backwards compatibility
+    legacy_all = _read_store("approved_bills", [])
+    filtered = [b for b in legacy_all if b.get("client_name") == client_name]
+    return filtered
+
+def save_approved_bills(bills: list, client_name: str):
+    c_key = get_clean_client_key(client_name)
+    _write_store(f"approved_bills_{c_key}", bills)
 
 def load_item_rules():
     return _read_store("item_ledger_rules", {})
@@ -624,12 +644,9 @@ if "active_review_index" not in st.session_state:
 if "bank_df_working" not in st.session_state:
     st.session_state["bank_df_working"] = None
 if "active_main_module" not in st.session_state:
-    st.session_state["active_main_module"] = "Bank"
+    st.session_state["active_main_module"] = "Purchase"
 if "zoom_level" not in st.session_state:
     st.session_state["zoom_level"] = 100
-
-pending_bills_list = load_pending_bills()
-approved_bills_list = load_approved_bills()
 
 # 7. XML Generators
 def generate_tally_xml(approved_bills):
@@ -846,6 +863,7 @@ def process_single_bill(file_name, file_bytes, mime, file_hash, client, ledgers_
                 bill_entry["mime_type"] = mime
                 bill_entry["gst_treatment"] = "Regular"
                 bill_entry["client_name"] = client_name
+                # Embed base64 persistently so image preview never disappears across server resets
                 bill_entry["file_base64"] = base64.b64encode(file_bytes).decode("utf-8")
 
                 saved_rel_path = os.path.join(IMAGE_STORAGE_DIR, f"{file_hash[:12]}_{file_name}")
@@ -891,7 +909,22 @@ with st.sidebar:
         client_masters = DEFAULT_CLIENTS
         client_options = list(client_masters.keys())
 
-    selected_client = st.selectbox("ACTIVE CLIENT ACCOUNT", options=client_options)
+    # Detect client switch and reset active review index cleanly
+    if "current_client_selected" not in st.session_state:
+        st.session_state["current_client_selected"] = client_options[0]
+
+    selected_client = st.selectbox(
+        "ACTIVE CLIENT ACCOUNT", 
+        options=client_options, 
+        index=client_options.index(st.session_state["current_client_selected"]) if st.session_state["current_client_selected"] in client_options else 0
+    )
+
+    if selected_client != st.session_state["current_client_selected"]:
+        st.session_state["current_client_selected"] = selected_client
+        st.session_state["active_review_index"] = None
+        st.session_state["bank_df_working"] = None
+        st.rerun()
+
     active_ledgers = client_masters.get(selected_client, ["Purchase Account"])
 
     try:
@@ -917,6 +950,10 @@ with st.sidebar:
         </div>
     </div>
     """, unsafe_allow_html=True)
+
+# LOAD SCOPED LISTS STRICTLY FOR THE ACTIVE CLIENT
+pending_bills_list = load_pending_bills(selected_client)
+approved_bills_list = load_approved_bills(selected_client)
 
 # 9. Executive Hero Banner
 st.markdown(f"""
@@ -951,7 +988,7 @@ if st.session_state["active_review_index"] is not None and len(pending_bills_lis
             st.session_state["active_review_index"] = None
             st.rerun()
     with nav_c2:
-        st.markdown(f"<div style='text-align:center; font-weight:700; color:#0D2240; padding-top:8px;'>Invoice {idx + 1} of {len(pending_bills_list)} in Queue</div>", unsafe_allow_html=True)
+        st.markdown(f"<div style='text-align:center; font-weight:700; color:#0D2240; padding-top:8px;'>Invoice {idx + 1} of {len(pending_bills_list)} ({selected_client})</div>", unsafe_allow_html=True)
     with nav_c3:
         if idx > 0:
             if st.button("⏮️ Previous", type="secondary", use_container_width=True):
@@ -970,8 +1007,7 @@ if st.session_state["active_review_index"] is not None and len(pending_bills_lis
             <div class="duplicate-alert-desc">
                 An invoice with number <b>#{dup_match['inv_no']}</b> from <b>{dup_match['vendor']}</b> 
                 (Total: <b>₹{dup_match['total']:,.2f}</b>, Date: <b>{dup_match['date']}</b>) 
-                already exists in <b>{dup_match['source']}</b> (Original file: <i>{dup_match['file']}</i>).
-                <br>Please verify this document carefully before approving to prevent double accounting.
+                already exists in <b>{dup_match['source']}</b>.
             </div>
         </div>
         """, unsafe_allow_html=True)
@@ -996,7 +1032,6 @@ if st.session_state["active_review_index"] is not None and len(pending_bills_lis
                 st.session_state["zoom_level"] = 100
                 st.rerun()
 
-        # Resilient Multi-Platform Document Preview Engine
         img_path = bill.get("saved_image_path", "")
         b64_data = ""
         mime_type = str(bill.get("mime_type", "")).lower()
@@ -1016,7 +1051,6 @@ if st.session_state["active_review_index"] is not None and len(pending_bills_lis
             is_pdf = "pdf" in mime_type or bill.get("file_name", "").lower().endswith(".pdf")
 
             if is_pdf:
-                # PDF.js Canvas Rendering (Bypasses Chrome blocked data URI iframe sandbox)
                 pdf_js_html = f"""
                 <!DOCTYPE html>
                 <html>
@@ -1066,7 +1100,7 @@ if st.session_state["active_review_index"] is not None and len(pending_bills_lis
                 </div>
                 """, unsafe_allow_html=True)
         else:
-            st.warning("⚠️ Source document binary was cleared during server restart. All fields remain editable on the right.")
+            st.warning("⚠️ Source document binary unavailable. Fields remain editable on the right.")
 
     with col_form:
         with st.form(key=f"review_form_{idx}"):
@@ -1198,8 +1232,8 @@ if st.session_state["active_review_index"] is not None and len(pending_bills_lis
                 pending_bills_list.pop(idx)
                 record_approval_learning(bill)
                 approved_bills_list.append(bill)
-                save_pending_bills(pending_bills_list)
-                save_approved_bills(approved_bills_list)
+                save_pending_bills(pending_bills_list, selected_client)
+                save_approved_bills(approved_bills_list, selected_client)
 
                 if len(pending_bills_list) > 0:
                     st.session_state["active_review_index"] = min(idx, len(pending_bills_list) - 1)
@@ -1218,7 +1252,7 @@ if st.session_state["active_review_index"] is not None and len(pending_bills_lis
                         pass
 
                 pending_bills_list.pop(idx)
-                save_pending_bills(pending_bills_list)
+                save_pending_bills(pending_bills_list, selected_client)
                 if len(pending_bills_list) > 0:
                     st.session_state["active_review_index"] = min(idx, len(pending_bills_list) - 1)
                     st.toast("Bill rejected. Loaded next invoice.", icon="🗑️")
@@ -1228,7 +1262,7 @@ if st.session_state["active_review_index"] is not None and len(pending_bills_lis
 
             elif submit_save_only:
                 pending_bills_list[idx] = bill
-                save_pending_bills(pending_bills_list)
+                save_pending_bills(pending_bills_list, selected_client)
                 st.toast("Draft saved successfully!", icon="💾")
                 st.rerun()
 
@@ -1257,7 +1291,7 @@ else:
     st.write("")
 
     # ========================================================
-    # MODULE 1: PURCHASE INVOICES
+    # MODULE 1: PURCHASE INVOICES (SCOPED BY CLIENT)
     # ========================================================
     if st.session_state["active_main_module"] == "Purchase":
         p_sub_upload, p_sub_review, p_sub_approved = st.tabs([
@@ -1277,10 +1311,10 @@ else:
             """, unsafe_allow_html=True)
 
             uploaded_files = st.file_uploader(
-                "Select Invoices",
+                f"Select Invoices for {selected_client}",
                 type=["pdf", "jpg", "jpeg", "png"],
                 accept_multiple_files=True,
-                key="bill_uploader_field"
+                key=f"bill_uploader_{get_clean_client_key(selected_client)}"
             )
 
             if not api_key:
@@ -1360,16 +1394,16 @@ else:
 
                         if newly_extracted:
                             pending_bills_list.extend(newly_extracted)
-                            save_pending_bills(pending_bills_list)
-                            status_placeholder.success(f"✅ Successfully staged {len(newly_extracted)} invoice(s) for review!")
+                            save_pending_bills(pending_bills_list, selected_client)
+                            status_placeholder.success(f"✅ Successfully staged {len(newly_extracted)} invoice(s) for {selected_client}!")
                             time.sleep(1)
                             st.rerun()
 
         with p_sub_review:
             if not pending_bills_list:
-                st.markdown("""
+                st.markdown(f"""
                 <div class="empty-state-notice">
-                    No purchase bills currently awaiting review.
+                    No purchase bills currently awaiting review for <b>{selected_client}</b>.
                 </div>
                 """, unsafe_allow_html=True)
             else:
@@ -1409,13 +1443,13 @@ else:
 
         with p_sub_approved:
             if not approved_bills_list:
-                st.markdown("""
+                st.markdown(f"""
                 <div class="empty-state-notice">
-                    No approved purchase vouchers present yet.
+                    No approved purchase vouchers present yet for <b>{selected_client}</b>.
                 </div>
                 """, unsafe_allow_html=True)
             else:
-                st.markdown("<div style='font-weight:700; color:#0D2240; margin-bottom:8px;'>Approved Purchase Invoices Register</div>", unsafe_allow_html=True)
+                st.markdown(f"<div style='font-weight:700; color:#0D2240; margin-bottom:8px;'>Approved Purchase Invoices Register: {selected_client}</div>", unsafe_allow_html=True)
                 
                 for a_idx, b in enumerate(approved_bills_list):
                     c_app_info, c_app_act = st.columns([8, 2])
@@ -1435,8 +1469,8 @@ else:
                         if st.button("✏️ Rectify / Edit", key=f"rectify_{a_idx}", use_container_width=True):
                             voucher_to_edit = approved_bills_list.pop(a_idx)
                             pending_bills_list.append(voucher_to_edit)
-                            save_approved_bills(approved_bills_list)
-                            save_pending_bills(pending_bills_list)
+                            save_approved_bills(approved_bills_list, selected_client)
+                            save_pending_bills(pending_bills_list, selected_client)
                             st.session_state["active_review_index"] = len(pending_bills_list) - 1
                             st.rerun()
 
@@ -1447,7 +1481,7 @@ else:
 
                 for b in approved_bills_list:
                     summary_rows.append({
-                        "Client": b.get("client_name", ""),
+                        "Client": b.get("client_name", selected_client),
                         "Vendor Name": b["vendor_name"],
                         "GSTIN": b.get("vendor_gstin", ""),
                         "Invoice No": b["invoice_number"],
@@ -1461,7 +1495,7 @@ else:
                     })
                     for itm in b["items"]:
                         itemized_rows.append({
-                            "Client": b.get("client_name", ""),
+                            "Client": b.get("client_name", selected_client),
                             "Invoice No": b["invoice_number"],
                             "Vendor Name": b["vendor_name"],
                             "Item": itm.get("description", ""),
@@ -1487,7 +1521,7 @@ else:
                     st.download_button(
                         label="📥 Download Excel Register",
                         data=excel_buf.getvalue(),
-                        file_name="Approved_Purchase_Register.xlsx",
+                        file_name=f"{selected_client}_Purchase_Register.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                         use_container_width=True
                     )
@@ -1496,14 +1530,14 @@ else:
                     st.download_button(
                         label="📥 Download Tally XML Import",
                         data=xml_data,
-                        file_name="Approved_Tally_Import.xml",
+                        file_name=f"{selected_client}_Purchase_Import.xml",
                         mime="application/xml",
                         use_container_width=True
                     )
                 with exp_c3:
                     if st.button("🧹 Clear Register", type="secondary", use_container_width=True):
                         approved_bills_list = []
-                        save_approved_bills(approved_bills_list)
+                        save_approved_bills(approved_bills_list, selected_client)
                         st.rerun()
 
     # ========================================================
@@ -1522,7 +1556,6 @@ else:
         rules = load_bank_rules()
         clean_active_ledgers = [l.strip() for l in active_ledgers]
 
-        # Fetch cloud statement if working dataframe is empty
         if st.session_state["bank_df_working"] is None:
             cloud_records = load_cloud_bank_statement(selected_client)
             if cloud_records:
@@ -1629,12 +1662,10 @@ else:
         if st.session_state["bank_df_working"] is not None:
             working_df = st.session_state["bank_df_working"]
 
-            # Automatically compute dynamic Status on the fly
             working_df["Status"] = working_df["Assigned Ledger"].apply(
                 lambda x: "✅ Verified" if (str(x).strip() and str(x) != BLANK_LEDGER_LABEL) else "❓ Pending"
             )
 
-            # Compute dropdown options
             unique_in_df = [str(x) for x in working_df["Assigned Ledger"].unique() if x and x != BLANK_LEDGER_LABEL]
             merged_options = [BLANK_LEDGER_LABEL] + list(dict.fromkeys(clean_active_ledgers + unique_in_df))
 
@@ -1656,14 +1687,13 @@ else:
                     key="bank_view_focus"
                 )
             with v_col2:
-                st.caption("Edit ledgers in place. The Status column updates to Verified as soon as you select a ledger.")
+                st.caption("Edit ledgers in place. Status column updates automatically.")
 
             if "Unassigned Only" in filter_view:
                 view_subset = working_df[working_df["Assigned Ledger"] == BLANK_LEDGER_LABEL].copy()
             else:
                 view_subset = working_df.copy()
 
-            # Render Stable Grid
             edited_grid_output = st.data_editor(
                 view_subset,
                 key="bank_statement_grid_clean",
@@ -1685,7 +1715,6 @@ else:
                 use_container_width=True
             )
 
-            # Apply in-place edits from visible grid back into master dataframe
             for r_idx in range(len(edited_grid_output)):
                 orig_index = edited_grid_output.index[r_idx]
                 new_assigned = edited_grid_output.iloc[r_idx]["Assigned Ledger"]
