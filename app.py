@@ -28,6 +28,10 @@ st.set_page_config(
 IMAGE_STORAGE_DIR = "invoice_images"
 os.makedirs(IMAGE_STORAGE_DIR, exist_ok=True)
 
+# Thread-safe global memory cache for document previews
+if "GLOBAL_DOC_CACHE" not in globals():
+    GLOBAL_DOC_CACHE = {}
+
 # 2. Bespoke Styling Injection
 CUSTOM_CSS = """
 <style>
@@ -452,7 +456,6 @@ def save_client_masters(data):
 def get_clean_client_key(client_name: str) -> str:
     return re.sub(r'[^a-zA-Z0-9_]', '_', str(client_name).strip())
 
-# Strips heavy base64 strings so Google Sheets updates execute in milliseconds
 def _strip_heavy_binaries(bills_list: list) -> list:
     stripped = []
     for b in bills_list:
@@ -649,8 +652,6 @@ if "active_main_module" not in st.session_state:
     st.session_state["active_main_module"] = "Purchase"
 if "zoom_level" not in st.session_state:
     st.session_state["zoom_level"] = 100
-if "doc_cache_memory" not in st.session_state:
-    st.session_state["doc_cache_memory"] = {}
 
 # 7. XML Generators
 def generate_tally_xml(approved_bills):
@@ -837,6 +838,7 @@ def optimize_file(file_name, raw_bytes):
             return "image/jpeg", raw_bytes
     return "application/pdf", raw_bytes
 
+# THREAD-SAFE INVOICE PROCESSING: Does not call st.session_state inside threads
 def process_single_bill(file_name, file_bytes, mime, file_hash, client, ledgers_str, client_name, valid_ledgers, rules_dict):
     prompt = f"""
     Extract invoice details accurately into structured format.
@@ -868,13 +870,15 @@ def process_single_bill(file_name, file_bytes, mime, file_hash, client, ledgers_
                 bill_entry["gst_treatment"] = "Regular"
                 bill_entry["client_name"] = client_name
                 
-                # Cache preview data in fast memory session
                 b64_str = base64.b64encode(file_bytes).decode("utf-8")
-                st.session_state["doc_cache_memory"][file_hash] = b64_str
+                GLOBAL_DOC_CACHE[file_hash] = b64_str
 
                 saved_rel_path = os.path.join(IMAGE_STORAGE_DIR, f"{file_hash[:12]}_{file_name}")
-                with open(saved_rel_path, "wb") as f_out:
-                    f_out.write(file_bytes)
+                try:
+                    with open(saved_rel_path, "wb") as f_out:
+                        f_out.write(file_bytes)
+                except Exception:
+                    pass
                 bill_entry["saved_image_path"] = saved_rel_path
 
                 calc_expected = bill_entry["subtotal"] + bill_entry["cgst"] + bill_entry["sgst"] + bill_entry["igst"]
@@ -892,14 +896,14 @@ def process_single_bill(file_name, file_bytes, mime, file_hash, client, ledgers_
                     if learned_ledger:
                         itm["ledger"] = learned_ledger
 
-                return True, bill_entry, None
+                return True, bill_entry, b64_str, None
         except Exception as err:
             err_str = str(err)
             if ("503" in err_str or "UNAVAILABLE" in err_str) and attempt < 3:
                 time.sleep(2)
                 continue
-            return False, None, f"{file_name}: {err_str}"
-    return False, None, f"{file_name}: Google servers busy after 3 retries."
+            return False, None, None, f"{file_name}: {err_str}"
+    return False, None, None, f"{file_name}: Google servers busy after 3 retries."
 
 # 8. Sidebar
 with st.sidebar:
@@ -1046,14 +1050,14 @@ if st.session_state["active_review_index"] is not None and len(pending_bills_lis
 
         img_path = bill.get("saved_image_path", "")
         f_hash = bill.get("file_hash", "")
-        b64_data = st.session_state["doc_cache_memory"].get(f_hash, "")
+        b64_data = GLOBAL_DOC_CACHE.get(f_hash, "")
         mime_type = str(bill.get("mime_type", "")).lower()
 
         if not b64_data and img_path and os.path.exists(img_path):
             try:
                 with open(img_path, "rb") as f_img:
                     b64_data = base64.b64encode(f_img.read()).decode("utf-8")
-                    st.session_state["doc_cache_memory"][f_hash] = b64_data
+                    GLOBAL_DOC_CACHE[f_hash] = b64_data
             except Exception:
                 pass
 
@@ -1111,10 +1115,9 @@ if st.session_state["active_review_index"] is not None and len(pending_bills_lis
                 </div>
                 """, unsafe_allow_html=True)
         else:
-            st.warning("⚠️ Source preview cached in memory. Form fields remain fully editable.")
+            st.warning("⚠️ Source document binary unavailable. Fields remain editable on the right.")
 
     with col_form:
-        # Form key tied to file hash to prevent field retaining stale data
         form_key = f"review_form_{bill.get('file_hash', idx)}"
         with st.form(key=form_key):
             st.markdown("""
@@ -1242,16 +1245,13 @@ if st.session_state["active_review_index"] is not None and len(pending_bills_lis
             bill["narration"] = v_narration
 
             if submit_approve:
-                # Remove from pending queue
                 approved_bill = pending_bills_list.pop(idx)
                 record_approval_learning(approved_bill)
                 approved_bills_list.append(approved_bill)
 
-                # Persist instantly to Google Sheets (fast metadata write)
                 save_pending_bills(pending_bills_list, selected_client)
                 save_approved_bills(approved_bills_list, selected_client)
 
-                # Clamp index to advance smoothly to the next item
                 if len(pending_bills_list) > 0:
                     st.session_state["active_review_index"] = min(idx, len(pending_bills_list) - 1)
                     st.toast("Approved! Loaded next invoice.", icon="✨")
@@ -1400,9 +1400,11 @@ else:
                             ]
 
                             for future in as_completed(futures):
-                                success, bill_data, err_msg = future.result()
+                                success, bill_data, b64_str, err_msg = future.result()
                                 if success:
                                     newly_extracted.append(bill_data)
+                                    if b64_str and bill_data.get("file_hash"):
+                                        GLOBAL_DOC_CACHE[bill_data["file_hash"]] = b64_str
                                 else:
                                     st.error(f"❌ {err_msg}")
 
