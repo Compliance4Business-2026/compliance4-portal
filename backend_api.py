@@ -109,7 +109,7 @@ async def upload_invoice(
 
         client = genai.Client(api_key=gemini_key)
         response = client.models.generate_content(
-            model='gemini-2.0-flash',
+            model='gemini-3.6-flash',
             contents=[
                 types.Part.from_bytes(data=file_bytes, mime_type=mime_type),
                 prompt
