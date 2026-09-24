@@ -1,8 +1,5 @@
 FROM python:3.11-slim
 
-ENV PYTHONUNBUFFERED=1 \
-    PORT=8080
-
 WORKDIR /app
 
 COPY requirements.txt .
@@ -10,4 +7,5 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-CMD exec uvicorn backend_api:app --host 0.0.0.0 --port ${PORT}
+# Run Uvicorn directly listening on 0.0.0.0 and port 8080 (Cloud Run default)
+CMD ["sh", "-c", "uvicorn backend_api:app --host 0.0.0.0 --port ${PORT:-8080}"]
