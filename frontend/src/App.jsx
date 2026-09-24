@@ -11,10 +11,12 @@ import {
   CheckCircle2, 
   AlertCircle,
   FileSpreadsheet,
-  Check
+  Check,
+  Edit2,
+  Trash2,
+  X
 } from "lucide-react";
 
-// Configurable backend URL (defaults to your live Cloud Run instance)
 const API_BASE_URL = 
   import.meta.env.VITE_BACKEND_URL || 
   "https://compliance4-backend-1021821620394.asia-south1.run.app";
@@ -28,6 +30,9 @@ export default function App() {
   const [isUploadingBank, setIsUploadingBank] = useState(false);
   const [notification, setNotification] = useState(null);
 
+  // Modal Editing State
+  const [editingBill, setEditingBill] = useState(null);
+
   const invoiceInputRef = useRef(null);
   const bankInputRef = useRef(null);
 
@@ -38,9 +43,7 @@ export default function App() {
     }, 6000);
   };
 
-  // ---------------------------------------------------------------------------
-  // 1. INVOICE UPLOAD & EXTRACT (With Clear Surface Error Messages)
-  // ---------------------------------------------------------------------------
+  // 1. INVOICE UPLOAD
   const handleInvoiceUpload = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -74,9 +77,23 @@ export default function App() {
     }
   };
 
-  // ---------------------------------------------------------------------------
-  // 2. BANK STATEMENT UPLOAD & RECONCILIATION
-  // ---------------------------------------------------------------------------
+  // 2. SAVE EDITED BILL
+  const handleSaveEdit = (e) => {
+    e.preventDefault();
+    setPendingBills((prev) =>
+      prev.map((b) => (b.id === editingBill.id ? editingBill : b))
+    );
+    setEditingBill(null);
+    notify("Invoice details updated successfully!", "success");
+  };
+
+  // 3. DELETE PENDING BILL
+  const handleDeleteBill = (id) => {
+    setPendingBills((prev) => prev.filter((b) => b.id !== id));
+    notify("Invoice removed from pending list.", "info");
+  };
+
+  // 4. BANK STATEMENT UPLOAD
   const handleBankUpload = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -111,9 +128,7 @@ export default function App() {
     }
   };
 
-  // ---------------------------------------------------------------------------
-  // 3. PUSH VOUCHER TO TALLY PRIME (PORT 9000)
-  // ---------------------------------------------------------------------------
+  // 5. PUSH TO TALLY PRIME (PORT 9000)
   const handlePushToTally = async (bill) => {
     try {
       const res = await fetch(`${API_BASE_URL}/api/tally/push-voucher`, {
@@ -273,7 +288,7 @@ export default function App() {
                     Pending Purchase Invoices ({pendingBills.length})
                   </h3>
                   <p className="text-sm text-slate-500">
-                    Review AI extractions, verify tax slabs, and push to Tally.
+                    Review AI extractions, verify tax slabs, edit figures, and push to Tally.
                   </p>
                 </div>
                 <div>
@@ -303,7 +318,7 @@ export default function App() {
                   </div>
                   <h4 className="font-semibold text-slate-800 text-sm mb-1">No Pending Invoices</h4>
                   <p className="text-xs text-slate-500 max-w-sm mx-auto">
-                    Click "Upload Invoices" to select a PDF or image bill. Gemini AI will automatically extract party details, items, and GST taxes.
+                    Click "Upload Invoices" to select a PDF or image bill.
                   </p>
                 </div>
               ) : (
@@ -316,7 +331,7 @@ export default function App() {
                         <th className="px-5 py-3">Taxable Value</th>
                         <th className="px-5 py-3">Taxes (GST)</th>
                         <th className="px-5 py-3">Grand Total</th>
-                        <th className="px-5 py-3 text-right">Action</th>
+                        <th className="px-5 py-3 text-right">Actions</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
@@ -334,19 +349,36 @@ export default function App() {
                             ₹{Number(b.taxable_amount || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                           </td>
                           <td className="px-5 py-4 text-xs font-mono text-slate-600">
-                            ₹{Number((b.cgst || 0) + (b.sgst || 0) + (b.igst || 0)).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                            ₹{Number((Number(b.cgst) || 0) + (Number(b.sgst) || 0) + (Number(b.igst) || 0)).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                           </td>
                           <td className="px-5 py-4 font-mono font-bold text-slate-900">
                             ₹{Number(b.grand_total || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                           </td>
                           <td className="px-5 py-4 text-right">
-                            <button
-                              onClick={() => handlePushToTally(b)}
-                              className="inline-flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold px-3 py-1.5 rounded transition shadow-sm"
-                            >
-                              <Check className="w-3.5 h-3.5" />
-                              Push to Tally
-                            </button>
+                            <div className="inline-flex items-center gap-2">
+                              <button
+                                onClick={() => setEditingBill({ ...b })}
+                                title="Edit Invoice Details"
+                                className="inline-flex items-center gap-1 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold px-2.5 py-1.5 rounded transition"
+                              >
+                                <Edit2 className="w-3.5 h-3.5" />
+                                Edit
+                              </button>
+                              <button
+                                onClick={() => handlePushToTally(b)}
+                                className="inline-flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold px-3 py-1.5 rounded transition shadow-sm"
+                              >
+                                <Check className="w-3.5 h-3.5" />
+                                Push to Tally
+                              </button>
+                              <button
+                                onClick={() => handleDeleteBill(b.id)}
+                                title="Remove"
+                                className="text-slate-400 hover:text-rose-600 p-1.5 transition"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       ))}
@@ -433,10 +465,147 @@ export default function App() {
         </div>
       </main>
 
-      {/* FLOATING ERROR / INFO TOAST */}
+      {/* EDIT MODAL DIALOG */}
+      {editingBill && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full p-6 space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <h3 className="text-base font-bold text-slate-900">Edit Extracted Invoice</h3>
+              <button
+                onClick={() => setEditingBill(null)}
+                className="text-slate-400 hover:text-slate-600"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveEdit} className="space-y-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Vendor Name</label>
+                <input
+                  type="text"
+                  value={editingBill.vendor_name || ""}
+                  onChange={(e) => setEditingBill({ ...editingBill, vendor_name: e.target.value })}
+                  className="w-full text-sm border border-slate-200 rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-slate-900"
+                  required
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">GSTIN</label>
+                  <input
+                    type="text"
+                    value={editingBill.vendor_gstin || ""}
+                    onChange={(e) => setEditingBill({ ...editingBill, vendor_gstin: e.target.value })}
+                    className="w-full text-sm border border-slate-200 rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-slate-900"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Invoice Number</label>
+                  <input
+                    type="text"
+                    value={editingBill.invoice_number || ""}
+                    onChange={(e) => setEditingBill({ ...editingBill, invoice_number: e.target.value })}
+                    className="w-full text-sm border border-slate-200 rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-slate-900"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Invoice Date</label>
+                  <input
+                    type="date"
+                    value={editingBill.invoice_date || ""}
+                    onChange={(e) => setEditingBill({ ...editingBill, invoice_date: e.target.value })}
+                    className="w-full text-sm border border-slate-200 rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-slate-900"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Taxable Amount (₹)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={editingBill.taxable_amount || 0}
+                    onChange={(e) => setEditingBill({ ...editingBill, taxable_amount: parseFloat(e.target.value) || 0 })}
+                    className="w-full text-sm border border-slate-200 rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-slate-900"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">CGST (₹)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={editingBill.cgst || 0}
+                    onChange={(e) => setEditingBill({ ...editingBill, cgst: parseFloat(e.target.value) || 0 })}
+                    className="w-full text-sm border border-slate-200 rounded-lg p-2"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">SGST (₹)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={editingBill.sgst || 0}
+                    onChange={(e) => setEditingBill({ ...editingBill, sgst: parseFloat(e.target.value) || 0 })}
+                    className="w-full text-sm border border-slate-200 rounded-lg p-2"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">IGST (₹)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={editingBill.igst || 0}
+                    onChange={(e) => setEditingBill({ ...editingBill, igst: parseFloat(e.target.value) || 0 })}
+                    className="w-full text-sm border border-slate-200 rounded-lg p-2"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Grand Total (₹)</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={editingBill.grand_total || 0}
+                  onChange={(e) => setEditingBill({ ...editingBill, grand_total: parseFloat(e.target.value) || 0 })}
+                  className="w-full text-sm font-bold border border-slate-200 rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-slate-900"
+                  required
+                />
+              </div>
+
+              <div className="pt-3 flex items-center justify-end gap-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setEditingBill(null)}
+                  className="px-4 py-2 text-sm text-slate-600 hover:bg-slate-100 rounded-lg transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 text-sm font-semibold bg-slate-900 hover:bg-slate-800 text-white rounded-lg transition"
+                >
+                  Save Changes
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* FLOATING TOAST */}
       {notification && (
         <div
-          className={`fixed bottom-6 right-6 max-w-md px-4 py-3 rounded-lg shadow-xl border text-sm flex items-start gap-3 transition-all transform duration-200 z-50 ${
+          className={`fixed bottom-6 right-6 max-w-md px-4 py-3 rounded-lg shadow-xl border text-sm flex items-start gap-3 transition-all z-50 ${
             notification.type === "error"
               ? "bg-rose-950 text-rose-100 border-rose-800"
               : "bg-slate-900 text-white border-slate-800"
