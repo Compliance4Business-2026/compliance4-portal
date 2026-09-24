@@ -54,7 +54,7 @@ class TallyPushRequest(BaseModel):
     company_name: str
 
 # -------------------------------------------------------------------------
-# HEALTH CHECK (Guaranteed Startup Probe)
+# HEALTH CHECK (Startup Probe)
 # -------------------------------------------------------------------------
 @app.get("/")
 @app.get("/health")
@@ -122,7 +122,7 @@ async def upload_invoice(
         data["id"] = f"inv_{int(datetime.now().timestamp() * 1000)}"
         data["vendor_ledger"] = data.get("vendor_name", "Sundry Creditor")
 
-        # Memorize vendor in Supabase if configured
+        # Supabase vendor memory if configured
         supa_url = os.getenv("SUPABASE_URL", "")
         supa_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
         if supa_url and supa_key:
@@ -213,7 +213,7 @@ async def reconcile_bank(
         raise HTTPException(status_code=500, detail=f"Failed to parse statement: {str(e)}")
 
 # -------------------------------------------------------------------------
-# ROUTE 3: PUSH TO TALLY PRIME
+# ROUTE 3: PUSH DIRECTLY TO TALLY PRIME (PORT 9000 XML)
 # -------------------------------------------------------------------------
 @app.post("/api/tally/push-voucher")
 async def push_to_tally(payload: TallyPushRequest):
@@ -262,3 +262,11 @@ async def push_to_tally(payload: TallyPushRequest):
         return {"status": "success", "response": resp.text}
     except Exception as e:
         return {"status": "dispatched", "note": "Voucher formatted for Tally", "error": str(e)}
+
+# -------------------------------------------------------------------------
+# DIRECT RUNNER FOR GOOGLE CLOUD RUN
+# -------------------------------------------------------------------------
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.environ.get("PORT", 8080))
+    uvicorn.run("backend_api:app", host="0.0.0.0", port=port)
