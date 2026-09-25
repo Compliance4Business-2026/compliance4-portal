@@ -9,10 +9,13 @@ import {
   Trash2
 } from "lucide-react";
 
-// Hardcoded fallback to your active Cloud Run service
-const BACKEND_URL = 
-  import.meta.env.VITE_API_URL || 
-  "https://compliance4-backend-asia-south1-364239850125.asia-south1.run.app";
+// Adapts dynamically: uses VITE_API_URL if configured, otherwise uses relative path
+const getBaseUrl = () => {
+  if (typeof import.meta !== "undefined" && import.meta.env && import.meta.env.VITE_API_URL) {
+    return import.meta.env.VITE_API_URL.replace(/\/$/, "");
+  }
+  return "";
+};
 
 export default function BankModule({ activeClient = "Panasuria Confectionery" }) {
   const [bankLedger, setBankLedger] = useState("HDFC Bank - 8050");
@@ -71,8 +74,11 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
     formData.append("company_name", activeClient);
     formData.append("bank_ledger", bankLedger);
 
+    const baseUrl = getBaseUrl();
+    const endpoint = baseUrl ? `${baseUrl}/api/bank/reconcile-file` : "/api/bank/reconcile-file";
+
     try {
-      const res = await fetch(`${BACKEND_URL}/api/bank/reconcile-file`, {
+      const res = await fetch(endpoint, {
         method: "POST",
         body: formData,
       });
@@ -114,8 +120,11 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
   };
 
   const handlePushSingle = async (txn) => {
+    const baseUrl = getBaseUrl();
+    const endpoint = baseUrl ? `${baseUrl}/api/tally/push-bank-voucher` : "/api/tally/push-bank-voucher";
+
     try {
-      const res = await fetch(`${BACKEND_URL}/api/tally/push-bank-voucher`, {
+      const res = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ txn, company_name: activeClient }),
@@ -137,10 +146,12 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
 
     setSyncing(true);
     let successCount = 0;
+    const baseUrl = getBaseUrl();
+    const endpoint = baseUrl ? `${baseUrl}/api/tally/push-bank-voucher` : "/api/tally/push-bank-voucher";
 
     for (const txn of approvedList) {
       try {
-        await fetch(`${BACKEND_URL}/api/tally/push-bank-voucher`, {
+        await fetch(endpoint, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ txn, company_name: activeClient }),
@@ -166,7 +177,7 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
     }
   };
 
-  // 4. Counts & Tab Filtering
+  // 4. Tab Counts & Filters
   const needsReviewCount = transactions.filter((t) => t.status === "needs_review").length;
   const approvedCount = transactions.filter((t) => t.status === "approved").length;
   const pushedCount = transactions.filter((t) => t.status === "pushed").length;
@@ -175,7 +186,7 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
 
   return (
     <div className="flex-1 flex flex-col h-full bg-[#F8FAFC] overflow-hidden">
-      {/* HEADER SECTION */}
+      {/* HEADER BAR */}
       <header className="bg-white border-b border-slate-200 px-8 py-4 flex items-center justify-between shadow-sm shrink-0">
         <div>
           <h2 className="text-xl font-bold text-slate-900 tracking-tight">Banking Reconciliation</h2>
@@ -311,7 +322,7 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
         </div>
       </div>
 
-      {/* TABLE DATA CONTAINER */}
+      {/* TABLE SECTION */}
       <div className="flex-1 p-8 overflow-y-auto">
         {displayedTransactions.length === 0 ? (
           <div className="bg-white rounded-xl border border-slate-200 p-16 flex flex-col items-center justify-center text-center shadow-sm">
@@ -424,7 +435,7 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
         )}
       </div>
 
-      {/* TOAST NOTIFICATION */}
+      {/* TOAST ALERTS */}
       {toast && (
         <div
           className={`fixed bottom-6 right-6 px-4 py-2.5 rounded-lg text-white text-xs font-semibold flex items-center gap-2 shadow-lg transition-all z-50 ${
