@@ -1,21 +1,40 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { 
   Upload, 
   CheckCircle, 
   Send, 
   FileSpreadsheet, 
   AlertCircle, 
-  ArrowUpDown,
-  Download
+  Download,
+  Trash2
 } from "lucide-react";
+
+// Hardcoded fallback to your active Cloud Run service
+const BACKEND_URL = 
+  import.meta.env.VITE_API_URL || 
+  "https://compliance4-backend-asia-south1-364239850125.asia-south1.run.app";
 
 export default function BankModule({ activeClient = "Panasuria Confectionery" }) {
   const [bankLedger, setBankLedger] = useState("HDFC Bank - 8050");
-  const [transactions, setTransactions] = useState([]);
+  
+  // Persistent storage across page reloads
+  const [transactions, setTransactions] = useState(() => {
+    try {
+      const saved = localStorage.getItem("c4_bank_transactions");
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
   const [activeTab, setActiveTab] = useState("needs_review"); // 'needs_review' | 'approved' | 'pushed'
   const [uploading, setUploading] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [toast, setToast] = useState(null);
+
+  useEffect(() => {
+    localStorage.setItem("c4_bank_transactions", JSON.stringify(transactions));
+  }, [transactions]);
 
   const showToast = (message, type = "success") => {
     setToast({ message, type });
@@ -53,19 +72,17 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
     formData.append("bank_ledger", bankLedger);
 
     try {
-      const apiUrl = import.meta.env.VITE_API_URL || "";
-      const res = await fetch(`${apiUrl}/api/bank/reconcile-file`, {
+      const res = await fetch(`${BACKEND_URL}/api/bank/reconcile-file`, {
         method: "POST",
         body: formData,
       });
 
       if (!res.ok) {
         const errData = await res.json().catch(() => ({}));
-        throw new Error(errData.detail || "Upload failed");
+        throw new Error(errData.detail || `Server responded with status ${res.status}`);
       }
 
       const data = await res.json();
-      // Initialize with status: 'needs_review'
       const initialized = data.map((t) => ({
         ...t,
         status: "needs_review",
@@ -98,8 +115,7 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
 
   const handlePushSingle = async (txn) => {
     try {
-      const apiUrl = import.meta.env.VITE_API_URL || "";
-      const res = await fetch(`${apiUrl}/api/tally/push-bank-voucher`, {
+      const res = await fetch(`${BACKEND_URL}/api/tally/push-bank-voucher`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ txn, company_name: activeClient }),
@@ -109,7 +125,7 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
       setTransactions((prev) =>
         prev.map((t) => (t.id === txn.id ? { ...t, status: "pushed" } : t))
       );
-      showToast(`Voucher queued for ${txn.voucher_type}!`);
+      showToast(`Voucher pushed to Tally for ${txn.voucher_type}!`);
     } catch (err) {
       showToast(`Tally push error: ${err.message}`, "error");
     }
@@ -121,11 +137,10 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
 
     setSyncing(true);
     let successCount = 0;
-    const apiUrl = import.meta.env.VITE_API_URL || "";
 
     for (const txn of approvedList) {
       try {
-        await fetch(`${apiUrl}/api/tally/push-bank-voucher`, {
+        await fetch(`${BACKEND_URL}/api/tally/push-bank-voucher`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ txn, company_name: activeClient }),
@@ -143,7 +158,15 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
     showToast(`Dispatched ${successCount} vouchers to Tally Prime!`);
   };
 
-  // 4. Counts & Filtered Display
+  const handleClearAll = () => {
+    if (window.confirm("Are you sure you want to clear all loaded transactions?")) {
+      setTransactions([]);
+      localStorage.removeItem("c4_bank_transactions");
+      showToast("Cleared transaction list.");
+    }
+  };
+
+  // 4. Counts & Tab Filtering
   const needsReviewCount = transactions.filter((t) => t.status === "needs_review").length;
   const approvedCount = transactions.filter((t) => t.status === "approved").length;
   const pushedCount = transactions.filter((t) => t.status === "pushed").length;
@@ -180,6 +203,17 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
             <Download className="w-3.5 h-3.5 text-slate-500" />
             Template
           </button>
+
+          {transactions.length > 0 && (
+            <button
+              onClick={handleClearAll}
+              className="flex items-center gap-1.5 px-3 py-2 border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-lg text-xs font-semibold transition"
+              title="Reset statement"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              Reset
+            </button>
+          )}
 
           <label className="flex items-center gap-2 px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-semibold cursor-pointer transition shadow-sm">
             <Upload className="w-3.5 h-3.5" />
@@ -253,7 +287,6 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
           </button>
         </div>
 
-        {/* Dynamic Context Actions */}
         <div>
           {activeTab === "needs_review" && needsReviewCount > 0 && (
             <button
@@ -391,7 +424,7 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
         )}
       </div>
 
-      {/* TOAST ALERTS */}
+      {/* TOAST NOTIFICATION */}
       {toast && (
         <div
           className={`fixed bottom-6 right-6 px-4 py-2.5 rounded-lg text-white text-xs font-semibold flex items-center gap-2 shadow-lg transition-all z-50 ${
