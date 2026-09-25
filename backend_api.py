@@ -103,7 +103,7 @@ async def extract_invoice(
         raise HTTPException(status_code=500, detail=f"Gemini invoice extraction failed: {str(e)}")
 
 # ==============================================================================
-# ROUTE 2: DIRECT CELL-SCAN BANK PARSER
+# ROUTE 2: RESILIENT BANK PARSER (HDFC & ICICI CELL SCANNER)
 # ==============================================================================
 def parse_date_value(val: Any) -> Optional[str]:
     if val is None or pd.isna(val):
@@ -115,7 +115,7 @@ def parse_date_value(val: Any) -> Optional[str]:
     if not s or s.startswith("*"):
         return None
 
-    # Matches DD/MM/YYYY or DD-MM-YYYY
+    # Matches DD/MM/YYYY or DD-MM-YYYY (e.g. 01/08/2026 in ICICI)
     m4 = re.search(r"\b(\d{1,2})[/-](\d{1,2})[/-](\d{4})\b", s)
     if m4:
         d, m, y = m4.group(1), m4.group(2), m4.group(3)
@@ -124,7 +124,7 @@ def parse_date_value(val: Any) -> Optional[str]:
         except Exception:
             pass
 
-    # Matches DD/MM/YY or DD-MM-YY (e.g., HDFC 01/09/26)
+    # Matches DD/MM/YY or DD-MM-YY (e.g. 01/09/26 in HDFC)
     m2 = re.search(r"\b(\d{1,2})[/-](\d{1,2})[/-](\d{2})\b", s)
     if m2:
         d, m, y = m2.group(1), m2.group(2), m2.group(3)
@@ -169,6 +169,56 @@ def auto_assign_ledger(narration: str) -> tuple[str, str]:
         return "Interest Income", "Receipt"
     return "UPI Collection", "Payment"
 
+def robust_read_table(contents: bytes, filename: str) -> List[List[Any]]:
+    """Guarantees extraction without crashing on unquoted newlines or unknown formats."""
+    # 1. Try reading with openpyxl for .xlsx
+    if filename.endswith(".xlsx"):
+        try:
+            wb = openpyxl.load_workbook(io.BytesIO(contents), data_only=True)
+            sheet = wb.active
+            return [list(r) for r in sheet.iter_rows(values_only=True)]
+        except Exception:
+            pass
+
+    # 2. Try pandas read_excel for .xls / .xlsx
+    if filename.endswith((".xls", ".xlsx")):
+        try:
+            df = pd.read_excel(io.BytesIO(contents), header=None)
+            return df.fillna("").values.tolist()
+        except Exception:
+            pass
+
+        # Many bank .xls exports are actually HTML tables
+        try:
+            tables = pd.read_html(io.BytesIO(contents))
+            if tables:
+                return tables[0].fillna("").values.tolist()
+        except Exception:
+            pass
+
+    # 3. CSV / Text with newline='' to eliminate the newline-in-unquoted-field error
+    decoded = contents.decode("utf-8", errors="ignore")
+    
+    try:
+        f = io.StringIO(decoded, newline="")
+        return list(csv.reader(f))
+    except Exception:
+        pass
+
+    try:
+        # Fallback to python engine with on_bad_lines='skip'
+        df = pd.read_csv(io.StringIO(decoded), header=None, engine="python", on_bad_lines="skip")
+        return df.fillna("").values.tolist()
+    except Exception:
+        pass
+
+    # 4. Pure string line splitter (bulletproof fallback)
+    rows = []
+    for line in decoded.splitlines():
+        if line.strip():
+            rows.append([cell.strip().strip('"') for cell in line.split(",")])
+    return rows
+
 @app.post("/api/bank/reconcile-file")
 async def reconcile_bank_file(
     file: UploadFile = File(...),
@@ -177,52 +227,27 @@ async def reconcile_bank_file(
 ):
     contents = await file.read()
     filename = file.filename.lower()
-    grid: List[List[Any]] = []
 
-    # Read worksheet preserving exact cell positions
-    try:
-        if filename.endswith((".xlsx", ".xls")):
-            try:
-                wb = openpyxl.load_workbook(io.BytesIO(contents), data_only=True)
-                sheet = wb.active
-                for row in sheet.iter_rows(values_only=True):
-                    grid.append(list(row))
-            except Exception:
-                try:
-                    tables = pd.read_html(io.BytesIO(contents))
-                    if tables:
-                        grid = tables[0].fillna("").values.tolist()
-                except Exception:
-                    decoded = contents.decode("utf-8", errors="ignore")
-                    reader = csv.reader(io.StringIO(decoded))
-                    grid = list(reader)
-        else:
-            decoded = contents.decode("utf-8", errors="ignore")
-            reader = csv.reader(io.StringIO(decoded))
-            grid = list(reader)
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Cannot read file: {str(e)}")
+    grid = robust_read_table(contents, filename)
 
     if not grid:
-        raise HTTPException(status_code=400, detail="The file is empty.")
+        raise HTTPException(status_code=400, detail="The statement file contains no readable data.")
 
     txns = []
 
-    # Directly scan every row in the file
     for r_idx, row in enumerate(grid):
         if not row or not any(row):
             continue
 
-        # Convert row to strings and check for date in Column A, B, or C
         row_list = list(row)
         
+        # 1. Detect Date in the first 4 columns
         found_date = None
         date_col_idx = -1
 
         for c_idx in range(min(4, len(row_list))):
             d_val = parse_date_value(row_list[c_idx])
             if d_val:
-                # Disregard metadata header rows like "Statement From : 01/09/2026"
                 row_text = " ".join([str(x) for x in row_list if x is not None]).lower()
                 if "statement from" in row_text or "page no" in row_text:
                     continue
@@ -233,28 +258,26 @@ async def reconcile_bank_file(
         if not found_date:
             continue
 
-        # Extract Narration:
-        # In HDFC, narration is Column B (index 1). In ICICI, Description is Column F (index 5)
+        # 2. Extract Narration
         narr = "Bank Transaction"
         for c_idx in range(len(row_list)):
             if c_idx == date_col_idx:
                 continue
             val = str(row_list[c_idx] or "").strip()
-            # If text is long, not a date, and not a pure number -> It's the narration
             if len(val) > 4 and not parse_date_value(val) and not re.match(r"^[\d\.,\s₹\-\(\)]+$", val):
                 narr = val
                 break
 
+        # 3. Extract Debit and Credit
         debit = 0.0
         credit = 0.0
 
-        # Check for ICICI format: has a cell that explicitly says 'CR' or 'DR'
+        # Check for ICICI format with explicit 'CR' or 'DR' cell
         has_cr_dr = False
         for c_idx, cell in enumerate(row_list):
             cell_str = str(cell or "").strip().upper()
             if cell_str in ["CR", "DR"]:
                 has_cr_dr = True
-                # The next column holds the transaction amount
                 if c_idx + 1 < len(row_list):
                     amt = clean_amount(row_list[c_idx + 1])
                     if cell_str == "CR":
@@ -263,14 +286,12 @@ async def reconcile_bank_file(
                         debit = amt
                 break
 
-        # If not ICICI format, apply HDFC format:
-        # Columns E (index 4) = Withdrawal, F (index 5) = Deposit
+        # Check for HDFC format: Column E (index 4) = Withdrawal, Column F (index 5) = Deposit
         if not has_cr_dr:
             if len(row_list) >= 6:
                 debit = clean_amount(row_list[4])
                 credit = clean_amount(row_list[5])
-            
-            # Universal fallback: search for valid positive amounts excluding balance
+
             if debit == 0.0 and credit == 0.0:
                 nums = []
                 for c_idx in range(len(row_list)):
@@ -279,7 +300,7 @@ async def reconcile_bank_file(
                         if n > 0:
                             nums.append(n)
                 if len(nums) >= 2:
-                    debit = nums[0]  # First amount is withdrawal or deposit
+                    debit = nums[0]
                 elif len(nums) == 1:
                     debit = nums[0]
 
