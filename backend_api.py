@@ -2,6 +2,7 @@ import os
 import io
 import csv
 import json
+import re
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 
@@ -14,7 +15,6 @@ import pandas as pd
 
 app = FastAPI(title="Compliance4 Accounting Portal API", version="2.0.0")
 
-# Enable CORS for Vercel Frontend and Local Testing
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -103,7 +103,7 @@ async def extract_invoice(
         raise HTTPException(status_code=500, detail=f"Gemini invoice extraction failed: {str(e)}")
 
 # ==============================================================================
-# ROUTE 2: BANK STATEMENT RECONCILIATION (PANDAS MULTI-ENGINE PARSER)
+# ROUTE 2: RESILIENT BANK STATEMENT RECONCILIATION
 # ==============================================================================
 @app.post("/api/bank/reconcile-file")
 async def reconcile_bank_file(
@@ -113,123 +113,180 @@ async def reconcile_bank_file(
 ):
     contents = await file.read()
     filename = file.filename.lower()
-    df = None
+    txns = []
 
-    try:
-        # 1. Try reading as standard Excel (openpyxl / xlrd)
+    # --------------------------------------------------------------------------
+    # CASE A: PDF BANK STATEMENT -> EXTRACT USING GEMINI 3.6-FLASH
+    # --------------------------------------------------------------------------
+    if filename.endswith(".pdf"):
+        gemini_key = os.getenv("GEMINI_API_KEY")
+        if not gemini_key:
+            raise HTTPException(status_code=500, detail="GEMINI_API_KEY not configured.")
+        try:
+            from google import genai
+            from google.genai import types
+            client = genai.Client(api_key=gemini_key)
+            prompt = """
+            Parse this bank statement accurately. Extract all completed transaction rows into a valid raw JSON array of objects.
+            Format:
+            [
+              {
+                "date": "YYYY-MM-DD",
+                "narration": "Full transaction description",
+                "debit": 0.0,
+                "credit": 0.0
+              }
+            ]
+            If withdrawal/debit, put value in debit (positive float) and 0 in credit.
+            If deposit/credit, put value in credit (positive float) and 0 in debit.
+            Do not return markdown or fences, return ONLY the raw JSON array.
+            """
+            resp = client.models.generate_content(
+                model='gemini-3.6-flash',
+                contents=[
+                    types.Part.from_bytes(data=contents, mime_type="application/pdf"),
+                    prompt
+                ]
+            )
+            clean = resp.text.replace("```json", "").replace("```", "").strip()
+            raw_txns = json.loads(clean)
+            for idx, r in enumerate(raw_txns):
+                d = float(r.get("debit", 0) or 0)
+                c = float(r.get("credit", 0) or 0)
+                amt = d if d > 0 else c
+                if amt > 0:
+                    txns.append({
+                        "id": f"bank_{int(datetime.now().timestamp() * 1000)}_{idx}",
+                        "date": r.get("date", datetime.now().strftime("%Y-%m-%d")),
+                        "narration": r.get("narration", "Bank Entry"),
+                        "debit": d,
+                        "credit": c,
+                        "amount": amt,
+                        "voucher_type": "Payment" if d > 0 else "Receipt",
+                        "bank_ledger": bank_ledger
+                    })
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"PDF extraction failed: {str(e)}")
+
+    # --------------------------------------------------------------------------
+    # CASE B: CSV / TEXT / EXCEL / HTML STATEMENT
+    # --------------------------------------------------------------------------
+    else:
+        # 1. Attempt reading via Excel engines
+        df = None
         if filename.endswith((".xlsx", ".xls")):
             try:
                 df = pd.read_excel(io.BytesIO(contents))
             except Exception:
-                # Fallback: Many bank exports are HTML tables saved with .xls extension
                 try:
                     tables = pd.read_html(io.BytesIO(contents))
                     if tables:
                         df = tables[0]
                 except Exception:
-                    decoded = contents.decode("utf-8", errors="ignore")
-                    df = pd.read_csv(io.StringIO(decoded))
+                    df = None
 
-        # 2. Try reading as CSV / Text
-        elif filename.endswith(".csv"):
+        # 2. Resilient CSV Text Fallback (Header Auto-Detection)
+        if df is None or df.empty:
             decoded = contents.decode("utf-8", errors="ignore")
-            df = pd.read_csv(io.StringIO(decoded))
-        else:
+            lines = [l.strip() for l in decoded.splitlines() if l.strip()]
+
+            # Find the header row containing Date/Narration/Description
+            header_idx = 0
+            for i, line in enumerate(lines[:30]):
+                low = line.lower()
+                if "date" in low and ("narration" in low or "description" in low or "particular" in low or "withdrawal" in low or "amount" in low):
+                    header_idx = i
+                    break
+
+            filtered_csv = "\n".join(lines[header_idx:])
             try:
-                decoded = contents.decode("utf-8", errors="ignore")
-                df = pd.read_csv(io.StringIO(decoded))
-            except Exception:
-                df = pd.read_excel(io.BytesIO(contents))
+                # Engine 'python' and on_bad_lines='skip' prevent tokenizer crashes
+                df = pd.read_csv(io.StringIO(filtered_csv), engine="python", on_bad_lines="skip")
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"Could not parse bank table: {str(e)}")
 
-    except Exception as e:
-        raise HTTPException(
-            status_code=500, 
-            detail=f"Statement format not readable. Please upload as CSV or standard XLSX: {str(e)}"
-        )
+        if df is None or df.empty:
+            raise HTTPException(status_code=400, detail="No readable transaction entries found in this statement.")
 
-    if df is None or df.empty:
-        raise HTTPException(status_code=400, detail="The uploaded statement contains no readable transaction rows.")
+        df = df.dropna(how="all")
 
-    df = df.dropna(how="all")
-    
-    # Locate header row if bank inserted metadata headers at the top
-    date_col = None
-    narr_col = None
-    debit_col = None
-    credit_col = None
-    amt_col = None
+        # Map column headers
+        date_col = None
+        narr_col = None
+        debit_col = None
+        credit_col = None
+        amt_col = None
 
-    for col in df.columns:
-        c = str(col).lower()
-        if "date" in c or "txn date" in c or "value date" in c:
-            date_col = col
-        elif "narration" in c or "description" in c or "particular" in c or "remarks" in c:
-            narr_col = col
-        elif "withdrawal" in c or "debit" in c or "dr" in c:
-            debit_col = col
-        elif "deposit" in c or "credit" in c or "cr" in c:
-            credit_col = col
-        elif "amount" in c:
-            amt_col = col
+        for col in df.columns:
+            c = str(col).lower()
+            if "date" in c or "txn date" in c or "value dt" in c:
+                date_col = col
+            elif "narration" in c or "description" in c or "particular" in c or "remarks" in c:
+                narr_col = col
+            elif "withdrawal" in c or "debit" in c or "dr" in c:
+                debit_col = col
+            elif "deposit" in c or "credit" in c or "cr" in c:
+                credit_col = col
+            elif "amount" in c:
+                amt_col = col
 
-    txns = []
-    for idx, row in df.iterrows():
-        try:
-            date_val = str(row[date_col]) if date_col is not None else str(row.iloc[0])
-            if date_val.lower() in ["date", "txn date", "nan", "none", ""]:
-                continue
-            date_val = date_val[:10]
+        for idx, row in df.iterrows():
+            try:
+                date_val = str(row[date_col]) if date_col is not None else str(row.iloc[0])
+                if date_val.lower() in ["date", "txn date", "nan", "none", ""]:
+                    continue
+                date_val = date_val[:10]
 
-            narr_val = str(row[narr_col]) if narr_col is not None else (str(row.iloc[1]) if len(row) > 1 else "Bank Entry")
-            if narr_val.lower() in ["narration", "description", "particulars", "nan", "none"]:
-                continue
+                narr_val = str(row[narr_col]) if narr_col is not None else (str(row.iloc[1]) if len(row) > 1 else "Bank Entry")
+                if narr_val.lower() in ["narration", "description", "particulars", "nan", "none"]:
+                    continue
 
-            def parse_num(val):
-                if pd.isna(val) or val is None:
-                    return 0.0
-                s = str(val).replace(",", "").replace("₹", "").strip()
-                try:
-                    return abs(float(s))
-                except Exception:
-                    return 0.0
+                def clean_float(val):
+                    if pd.isna(val) or val is None:
+                        return 0.0
+                    s = str(val).replace(",", "").replace("₹", "").strip()
+                    try:
+                        return abs(float(s))
+                    except Exception:
+                        return 0.0
 
-            debit_val = 0.0
-            credit_val = 0.0
+                debit_val = 0.0
+                credit_val = 0.0
 
-            if debit_col is not None and credit_col is not None:
-                debit_val = parse_num(row[debit_col])
-                credit_val = parse_num(row[credit_col])
-            elif amt_col is not None:
-                amt = parse_num(row[amt_col])
-                raw_str = str(row[amt_col]).lower()
-                if "cr" in raw_str:
-                    credit_val = amt
+                if debit_col is not None and credit_col is not None:
+                    debit_val = clean_float(row[debit_col])
+                    credit_val = clean_float(row[credit_col])
+                elif amt_col is not None:
+                    amt = clean_float(row[amt_col])
+                    raw_str = str(row[amt_col]).lower()
+                    if "cr" in raw_str:
+                        credit_val = amt
+                    else:
+                        debit_val = amt
                 else:
-                    debit_val = amt
-            else:
-                if len(row) > 2:
-                    debit_val = parse_num(row.iloc[2])
-                if len(row) > 3:
-                    credit_val = parse_num(row.iloc[3])
+                    if len(row) > 2:
+                        debit_val = clean_float(row.iloc[2])
+                    if len(row) > 3:
+                        credit_val = clean_float(row.iloc[3])
 
-            amount = debit_val if debit_val > 0 else credit_val
-            if amount == 0.0:
+                amount = debit_val if debit_val > 0 else credit_val
+                if amount == 0.0:
+                    continue
+
+                txns.append({
+                    "id": f"bank_{int(datetime.now().timestamp() * 1000)}_{idx}",
+                    "date": date_val,
+                    "narration": narr_val,
+                    "debit": debit_val,
+                    "credit": credit_val,
+                    "amount": amount,
+                    "voucher_type": "Payment" if debit_val > 0 else "Receipt",
+                    "bank_ledger": bank_ledger
+                })
+            except Exception:
                 continue
 
-            txns.append({
-                "id": f"bank_{int(datetime.now().timestamp() * 1000)}_{idx}",
-                "date": date_val,
-                "narration": narr_val,
-                "debit": debit_val,
-                "credit": credit_val,
-                "amount": amount,
-                "voucher_type": "Payment" if debit_val > 0 else "Receipt",
-                "bank_ledger": bank_ledger
-            })
-        except Exception:
-            continue
-
-    # Auto-Matching Rules
+    # Auto-Matching Rules Engine
     for t in txns:
         n = t["narration"].lower()
         if "cash" in n or "atm" in n or "self" in n:
@@ -262,7 +319,7 @@ async def reconcile_bank_file(
     return txns
 
 # ==============================================================================
-# ROUTE 3: PUSH PURCHASE INVOICE TO TALLY PRIME (PORT 9000 XML)
+# ROUTE 3: PUSH PURCHASE INVOICE TO TALLY PRIME
 # ==============================================================================
 @app.post("/api/tally/push-voucher")
 async def push_purchase_voucher(payload: TallyPushRequest):
