@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 
 // Directly target your active Cloud Run instance
-const BACKEND_BASE = "https://compliance4-backend-asia-south1-364239850125.asia-south1.run.app";
+const BACKEND_BASE = "https://compliance4-backend-1021821620394.asia-south1.run.app";
 
 export default function BankModule({ activeClient = "Panasuria Confectionery" }) {
   const [bankLedger, setBankLedger] = useState("HDFC Bank - 8050");
