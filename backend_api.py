@@ -103,144 +103,181 @@ async def extract_invoice(
         raise HTTPException(status_code=500, detail=f"Gemini invoice extraction failed: {str(e)}")
 
 # ==============================================================================
-# ROUTE 2: UNIVERSAL BANK RECONCILIATION (GEMINI 3.6-FLASH PARSER)
+# ROUTE 2: RESILIENT INSTANT BANK STATEMENT PARSER
 # ==============================================================================
+DATE_PATTERNS = [
+    r"^\d{2}[/-]\d{2}[/-]\d{4}",     # 01/06/2024 or 01-06-2024
+    r"^\d{4}[/-]\d{2}[/-]\d{2}",     # 2024-06-01 or 2024/06/01
+    r"^\d{2}\s+[A-Za-z]{3}\s+\d{4}"  # 01 Jun 2024
+]
+
+def clean_amount(val) -> float:
+    if val is None or pd.isna(val):
+        return 0.0
+    s = str(val).replace(",", "").replace("₹", "").replace("Rs.", "").replace("Dr", "").replace("Cr", "").strip()
+    try:
+        return abs(float(s))
+    except Exception:
+        return 0.0
+
+def matches_date(val) -> Optional[str]:
+    if val is None or pd.isna(val):
+        return None
+    s = str(val).strip()
+    for pat in DATE_PATTERNS:
+        match = re.search(pat, s)
+        if match:
+            raw_date = match.group(0)
+            for fmt in ("%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d", "%Y/%m/%d", "%d %b %Y"):
+                try:
+                    return datetime.strptime(raw_date, fmt).strftime("%Y-%m-%d")
+                except ValueError:
+                    pass
+            return raw_date
+    return None
+
+def auto_assign_ledger(narration: str) -> tuple[str, str]:
+    n = narration.lower()
+    if any(k in n for k in ["cash", "atm", "self", "cdm"]):
+        return "Cash in Hand", "Contra"
+    if "zomato" in n:
+        return "Zomato Payout Clearance", "Receipt"
+    if "swiggy" in n:
+        return "Swiggy Payout Clearance", "Receipt"
+    if any(k in n for k in ["elect", "power", "torrent"]):
+        return "Electricity Expense Payable", "Payment"
+    if any(k in n for k in ["salary", "wages", "staff advance"]):
+        return "Staff Advance / Salary", "Payment"
+    if "rent" in n:
+        return "Rent Expenses", "Payment"
+    if any(k in n for k in ["charge", "fee", "gst"]):
+        return "Bank Charges & Fees", "Payment"
+    if "interest" in n:
+        return "Interest Income", "Receipt"
+    return "UPI Collection", "Payment"
+
 @app.post("/api/bank/reconcile-file")
 async def reconcile_bank_file(
     file: UploadFile = File(...),
     company_name: str = Form("Panasuria Confectionery"),
     bank_ledger: str = Form("HDFC Bank - 8050")
 ):
-    gemini_key = os.getenv("GEMINI_API_KEY")
-    if not gemini_key:
-        raise HTTPException(status_code=500, detail="GEMINI_API_KEY environment variable not configured.")
-
     contents = await file.read()
     filename = file.filename.lower()
+    grid: List[List[Any]] = []
 
-    # Convert table text or bytes for Gemini extraction
-    text_content = ""
-    is_binary = False
-
-    if filename.endswith(".pdf"):
-        is_binary = True
-        mime_type = "application/pdf"
-    elif filename.endswith((".xlsx", ".xls")):
-        try:
-            df = pd.read_excel(io.BytesIO(contents))
-            text_content = df.to_csv(index=False)
-        except Exception:
-            try:
-                tables = pd.read_html(io.BytesIO(contents))
-                if tables:
-                    text_content = tables[0].to_csv(index=False)
-            except Exception:
-                text_content = contents.decode("utf-8", errors="ignore")
-    else:
-        text_content = contents.decode("utf-8", errors="ignore")
-
-    prompt = """
-    You are an expert Indian Chartered Accountant Bank Auditor. Parse this bank statement.
-    Ignore all metadata headers, account info, and footer summaries.
-    Extract every transaction row into a valid raw JSON array of objects.
-
-    Format:
-    [
-      {
-        "date": "YYYY-MM-DD",
-        "narration": "Full narration or transaction remarks",
-        "debit": 0.0,
-        "credit": 0.0
-      }
-    ]
-
-    Rules:
-    - If it's a withdrawal / debit, put the positive float amount in "debit" and 0.0 in "credit".
-    - If it's a deposit / credit, put the positive float amount in "credit" and 0.0 in "debit".
-    - Standardize date to YYYY-MM-DD format.
-    - Return ONLY valid raw JSON array without markdown or code fences.
-    """
-
+    # 1. Parse into a raw 2D grid
     try:
-        from google import genai
-        from google.genai import types
-
-        client = genai.Client(api_key=gemini_key)
-
-        if is_binary:
-            response = client.models.generate_content(
-                model='gemini-3.6-flash',
-                contents=[
-                    types.Part.from_bytes(data=contents, mime_type=mime_type),
-                    prompt
-                ]
-            )
+        if filename.endswith((".xlsx", ".xls")):
+            try:
+                wb = openpyxl.load_workbook(io.BytesIO(contents), data_only=True)
+                sheet = wb.active
+                for row in sheet.iter_rows(values_only=True):
+                    grid.append(list(row))
+            except Exception:
+                try:
+                    tables = pd.read_html(io.BytesIO(contents))
+                    if tables:
+                        grid = tables[0].fillna("").values.tolist()
+                except Exception:
+                    decoded = contents.decode("utf-8", errors="ignore")
+                    reader = csv.reader(io.StringIO(decoded))
+                    grid = list(reader)
         else:
-            response = client.models.generate_content(
-                model='gemini-3.6-flash',
-                contents=[f"Bank Statement Data:\n{text_content}\n\n{prompt}"]
-            )
-
-        clean_text = response.text.replace("```json", "").replace("```", "").strip()
-        raw_txns = json.loads(clean_text)
-
-        txns = []
-        for idx, r in enumerate(raw_txns):
-            d = float(r.get("debit", 0) or 0)
-            c = float(r.get("credit", 0) or 0)
-            amt = d if d > 0 else c
-            if amt > 0:
-                vtype = "Payment" if d > 0 else "Receipt"
-                narr = str(r.get("narration", "Bank Entry")).strip()
-
-                # Rule-based auto ledger matching
-                n_low = narr.lower()
-                if any(k in n_low for k in ["cash", "atm", "self", "cdm"]):
-                    ledger = "Cash in Hand"
-                    vtype = "Contra"
-                elif "zomato" in n_low:
-                    ledger = "Zomato Payout Clearance"
-                    vtype = "Receipt"
-                elif "swiggy" in n_low:
-                    ledger = "Swiggy Payout Clearance"
-                    vtype = "Receipt"
-                elif any(k in n_low for k in ["elect", "power", "torrent"]):
-                    ledger = "Electricity Expense Payable"
-                    vtype = "Payment"
-                elif any(k in n_low for k in ["salary", "wages", "staff advance"]):
-                    ledger = "Staff Advance / Salary"
-                    vtype = "Payment"
-                elif "rent" in n_low:
-                    ledger = "Rent Expenses"
-                    vtype = "Payment"
-                elif any(k in n_low for k in ["charge", "fee", "gst"]):
-                    ledger = "Bank Charges & Fees"
-                    vtype = "Payment"
-                elif "interest" in n_low:
-                    ledger = "Interest Income"
-                    vtype = "Receipt"
-                else:
-                    ledger = "UPI Collection"
-
-                txns.append({
-                    "id": f"bank_{int(datetime.now().timestamp() * 1000)}_{idx}",
-                    "date": r.get("date", datetime.now().strftime("%Y-%m-%d")),
-                    "narration": narr,
-                    "debit": d,
-                    "credit": c,
-                    "amount": amt,
-                    "voucher_type": vtype,
-                    "ledger": ledger,
-                    "bank_ledger": bank_ledger
-                })
-
-        return txns
-
+            decoded = contents.decode("utf-8", errors="ignore")
+            reader = csv.reader(io.StringIO(decoded))
+            grid = list(reader)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Statement extraction failed: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Cannot read file format: {str(e)}")
+
+    if not grid:
+        raise HTTPException(status_code=400, detail="The uploaded bank statement is empty.")
+
+    # 2. Extract transaction rows based on cell contents
+    txns = []
+    for r_idx, row in enumerate(grid):
+        if not row or not any(row):
+            continue
+
+        clean_row = [c for c in row if c is not None and str(c).strip() != ""]
+        if len(clean_row) < 3:
+            continue
+
+        # Check for date in the first 3 columns
+        found_date = None
+        date_pos = -1
+        for idx in range(min(3, len(clean_row))):
+            d_val = matches_date(clean_row[idx])
+            if d_val:
+                found_date = d_val
+                date_pos = idx
+                break
+
+        if not found_date:
+            continue
+
+        # Look for narration string
+        narr = "Bank Transaction"
+        for idx in range(date_pos + 1, len(clean_row)):
+            val = str(clean_row[idx]).strip()
+            if len(val) > 4 and not re.match(r"^[\d\.,\s₹\-]+$", val):
+                narr = val
+                break
+
+        # Look for numeric amounts (Debit, Credit)
+        numbers = []
+        for idx in range(date_pos + 1, len(clean_row)):
+            num = clean_amount(clean_row[idx])
+            if num > 0:
+                numbers.append((idx, num))
+
+        if not numbers:
+            continue
+
+        debit = 0.0
+        credit = 0.0
+
+        if len(numbers) >= 2:
+            debit = numbers[0][1]
+            credit = numbers[1][1]
+        elif len(numbers) == 1:
+            raw_str = " ".join([str(c).lower() for c in clean_row])
+            if "cr" in raw_str or "dep" in raw_str:
+                credit = numbers[0][1]
+            else:
+                debit = numbers[0][1]
+
+        amount = debit if debit > 0 else credit
+        if amount == 0.0:
+            continue
+
+        assigned_ledger, default_vtype = auto_assign_ledger(narr)
+        actual_vtype = "Payment" if debit > 0 else "Receipt"
+        if default_vtype == "Contra":
+            actual_vtype = "Contra"
+
+        txns.append({
+            "id": f"bank_{int(datetime.now().timestamp() * 1000)}_{r_idx}",
+            "date": found_date,
+            "narration": narr,
+            "debit": debit,
+            "credit": credit,
+            "amount": amount,
+            "voucher_type": actual_vtype,
+            "ledger": assigned_ledger,
+            "bank_ledger": bank_ledger
+        })
+
+    if not txns:
+        raise HTTPException(
+            status_code=400,
+            detail="Found date cells, but could not detect valid transaction amounts. Ensure the file contains statement rows."
+        )
+
+    return txns
 
 # ==============================================================================
-# ROUTE 3: PUSH PURCHASE INVOICE TO TALLY PRIME (PORT 9000 XML)
+# ROUTE 3: PUSH PURCHASE INVOICE TO TALLY PRIME
 # ==============================================================================
 @app.post("/api/tally/push-voucher")
 async def push_purchase_voucher(payload: TallyPushRequest):
