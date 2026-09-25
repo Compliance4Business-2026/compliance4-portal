@@ -1,10 +1,5 @@
 import React, { useState, useRef, useEffect } from "react";
 import { 
-  Building2, 
-  FileText, 
-  CreditCard, 
-  TrendingUp, 
-  Settings, 
   Upload, 
   RefreshCw, 
   CheckCircle2, 
@@ -69,12 +64,10 @@ const SUGGESTED_ITEMS = [
   "General Bakery Item"
 ];
 
-export default function App() {
-  const [activeTab, setActiveTab] = useState("purchase");
-  const [purchaseSubTab, setPurchaseSubTab] = useState("needs_review"); // "needs_review" | "approved" | "pushed"
-  const [activeClient, setActiveClient] = useState("Panasuria Confectionery");
+export default function PurchaseModule({ activeClient = "Panasuria Confectionery" }) {
+  const [purchaseSubTab, setPurchaseSubTab] = useState("needs_review");
 
-  // Persistent Stores
+  // Persistent Stores in localStorage
   const [pendingBills, setPendingBills] = useState(() => {
     try {
       const saved = localStorage.getItem("c4_pending_bills");
@@ -142,7 +135,6 @@ export default function App() {
       reader.onerror = (error) => reject(error);
     });
 
-  // Open Full-Screen Review
   const openReviewWorkspace = (bill) => {
     setActiveReviewBill(bill);
     setZoomLevel(1);
@@ -184,7 +176,6 @@ export default function App() {
     });
   };
 
-  // 1. MULTIPLE BILL UPLOAD HANDLER
   const handleMultipleInvoiceUpload = async (e) => {
     const files = Array.from(e.target.files || []);
     if (files.length === 0) return;
@@ -260,12 +251,10 @@ export default function App() {
     });
   };
 
-  // 2. APPROVE / SAVE EDITED INVOICE
   const handleApproveInvoice = () => {
     setShowAllocationModal(false);
     const approvedVoucher = { ...voucherData, isApproved: true };
 
-    // Remove from pending & replace in approved if already approved
     setPendingBills(prev => prev.filter(b => b.id !== activeReviewBill.id));
     setApprovedBills(prev => [approvedVoucher, ...prev.filter(b => b.id !== approvedVoucher.id)]);
     setActiveReviewBill(null);
@@ -273,7 +262,6 @@ export default function App() {
     notify(`Invoice #${approvedVoucher.supplier_invoice_no} saved to Approved Invoices!`, "success");
   };
 
-  // 3. PUSH TO TALLY PRIME (Moves to "Pushed Invoices")
   const handlePushToTally = async (bill) => {
     try {
       const res = await fetch(`${API_BASE_URL}/api/tally/push-voucher`, {
@@ -285,7 +273,6 @@ export default function App() {
       const data = await res.json();
       if (data.status === "success" || data.status === "dispatched") {
         notify(`Invoice #${bill.supplier_invoice_no || bill.invoice_number} synced with Tally Prime!`, "success");
-        // Move from Approved to Pushed
         setApprovedBills(prev => prev.filter(b => b.id !== bill.id));
         setPushedBills(prev => [{ ...bill, pushed_at: new Date().toLocaleString() }, ...prev]);
       } else {
@@ -296,7 +283,6 @@ export default function App() {
     }
   };
 
-  // 4. DOWNLOAD AS EXCEL (CSV Format)
   const handleDownloadExcel = () => {
     if (approvedBills.length === 0) {
       notify("No approved invoices to export.", "error");
@@ -342,17 +328,15 @@ export default function App() {
     ]);
 
     const csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows.map(e => e.join(","))].join("\n");
-    const encodedUri = encodeURI(csvContent);
     const link = document.createElement("a");
-    link.setAttribute("href", encodedUri);
-    link.setAttribute("download", `Approved_Invoices_${activeClient.replace(/\s+/g, "_")}.csv`);
+    link.href = encodeURI(csvContent);
+    link.download = `Approved_Invoices_${activeClient.replace(/\s+/g, "_")}.csv`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
     notify("Exported Approved Invoices to Excel CSV!", "success");
   };
 
-  // 4. DOWNLOAD AS TALLY-COMPLIANT XML
   const handleDownloadXML = () => {
     if (approvedBills.length === 0) {
       notify("No approved invoices to export.", "error");
@@ -377,39 +361,29 @@ export default function App() {
       <REFERENCE>${invoiceNo}</REFERENCE>
       <PARTYLEDGERNAME>${party}</PARTYLEDGERNAME>
       <NARRATION>Purchase Invoice #${invoiceNo} imported via Compliance4</NARRATION>
-      
-      <!-- Party Ledger Credit -->
       <ALLLEDGERENTRIES.LIST>
         <LEDGERNAME>${party}</LEDGERNAME>
         <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
         <AMOUNT>${total.toFixed(2)}</AMOUNT>
       </ALLLEDGERENTRIES.LIST>
-
-      <!-- Purchase Expense Ledger Debit -->
       <ALLLEDGERENTRIES.LIST>
         <LEDGERNAME>${expenseLedger}</LEDGERNAME>
         <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
         <AMOUNT>-${taxable.toFixed(2)}</AMOUNT>
       </ALLLEDGERENTRIES.LIST>
-
       ${cgst > 0 ? `
-      <!-- CGST Ledger Debit -->
       <ALLLEDGERENTRIES.LIST>
         <LEDGERNAME>${b.cgst_ledger || "Input CGST"}</LEDGERNAME>
         <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
         <AMOUNT>-${cgst.toFixed(2)}</AMOUNT>
       </ALLLEDGERENTRIES.LIST>` : ""}
-
       ${sgst > 0 ? `
-      <!-- SGST Ledger Debit -->
       <ALLLEDGERENTRIES.LIST>
         <LEDGERNAME>${b.sgst_ledger || "Input SGST"}</LEDGERNAME>
         <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
         <AMOUNT>-${sgst.toFixed(2)}</AMOUNT>
       </ALLLEDGERENTRIES.LIST>` : ""}
-
       ${igst > 0 ? `
-      <!-- IGST Ledger Debit -->
       <ALLLEDGERENTRIES.LIST>
         <LEDGERNAME>${b.igst_ledger || "Input IGST"}</LEDGERNAME>
         <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
@@ -419,21 +393,15 @@ export default function App() {
     }).join("");
 
     const fullXML = `<ENVELOPE>
-  <HEADER>
-    <TALLYREQUEST>Import Data</TALLYREQUEST>
-  </HEADER>
+  <HEADER><TALLYREQUEST>Import Data</TALLYREQUEST></HEADER>
   <BODY>
     <IMPORTDATA>
       <REQUESTDESC>
         <REPORTNAME>Vouchers</REPORTNAME>
-        <STATICVARIABLES>
-          <SVCURRENTCOMPANY>${activeClient}</SVCURRENTCOMPANY>
-        </STATICVARIABLES>
+        <STATICVARIABLES><SVCURRENTCOMPANY>${activeClient}</SVCURRENTCOMPANY></STATICVARIABLES>
       </REQUESTDESC>
       <REQUESTDATA>
-        <TALLYMESSAGE xmlns:UDF="TallyUDF">
-          ${xmlVouchers}
-        </TALLYMESSAGE>
+        <TALLYMESSAGE xmlns:UDF="TallyUDF">${xmlVouchers}</TALLYMESSAGE>
       </REQUESTDATA>
     </IMPORTDATA>
   </BODY>
@@ -449,12 +417,10 @@ export default function App() {
     notify("Downloaded Tally-compliant XML import file!", "success");
   };
 
-  // ---------------------------------------------------------------------------
   // FULL SCREEN SIDE-BY-SIDE REVIEW WORKSPACE
-  // ---------------------------------------------------------------------------
   if (activeReviewBill && voucherData) {
     return (
-      <div className="flex flex-col h-screen bg-[#F8FAFC] text-slate-800 font-sans">
+      <div className="flex flex-col h-full bg-[#F8FAFC] text-slate-800 font-sans">
         <header className="h-14 bg-white border-b border-slate-200 px-6 flex items-center justify-between shadow-sm z-10 shrink-0">
           <div className="flex items-center gap-3">
             <button
@@ -490,7 +456,7 @@ export default function App() {
         </header>
 
         <div className="flex-1 flex overflow-hidden">
-          {/* LEFT: FULL-BLEED DOCUMENT PREVIEW */}
+          {/* LEFT: PREVIEW */}
           <div className="w-1/2 bg-slate-200 border-r border-slate-300 relative overflow-hidden flex flex-col">
             <div className="absolute top-4 right-4 z-20 flex items-center gap-1 bg-white/95 backdrop-blur-sm border border-slate-300 shadow-sm rounded-lg p-1">
               <button 
@@ -532,7 +498,7 @@ export default function App() {
                 />
               ) : (
                 <div className="text-center p-12 bg-white/70 border border-dashed border-slate-400 rounded-xl mt-12">
-                  <FileText className="w-12 h-12 text-slate-400 mx-auto mb-2" />
+                  <FileSpreadsheet className="w-12 h-12 text-slate-400 mx-auto mb-2" />
                   <p className="text-sm font-semibold text-slate-600">Attached Original Invoice</p>
                   <p className="text-xs text-slate-400 font-mono mt-1">#{voucherData.supplier_invoice_no}</p>
                 </div>
@@ -849,7 +815,7 @@ export default function App() {
                 </div>
               )}
 
-              {/* GST LEDGER SELECTION & TOTALS */}
+              {/* GST ROW & TOTALS */}
               <div className="border-t border-slate-100 pt-4 space-y-3">
                 <div className="flex justify-between text-xs text-slate-600 font-medium">
                   <span>Sub Total (Taxable Value):</span>
@@ -950,9 +916,7 @@ export default function App() {
           <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
             <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full p-6 space-y-4">
               <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-                <h3 className="text-sm font-bold text-slate-900">
-                  Confirm Bill Approval
-                </h3>
+                <h3 className="text-sm font-bold text-slate-900">Confirm Bill Approval</h3>
                 <button onClick={() => setShowAllocationModal(false)} className="text-slate-400 hover:text-slate-600">
                   <X className="w-5 h-5" />
                 </button>
@@ -990,387 +954,285 @@ export default function App() {
     );
   }
 
-  // ---------------------------------------------------------------------------
-  // MAIN WORKSPACE (3 TABS: Needs Review | Approved Invoices | Pushed to Tally)
-  // ---------------------------------------------------------------------------
+  // MAIN TAB VIEW
   return (
-    <div className="flex h-screen bg-[#F8FAFC] text-slate-800 font-sans">
-      {/* SIDEBAR */}
-      <aside className="w-64 bg-white border-r border-slate-200 flex flex-col p-4 shadow-sm">
-        <div className="flex items-center gap-3 px-2 py-3 border-b border-slate-100">
-          <div className="h-10 w-10 bg-[#0F172A] text-white rounded-lg flex items-center justify-center font-bold text-lg tracking-wider">
-            C4
-          </div>
-          <div>
-            <h1 className="font-semibold text-slate-900 leading-tight">Compliance4</h1>
-            <p className="text-xs text-slate-500 uppercase tracking-wider font-medium">Operations Hub</p>
-          </div>
+    <div className="flex-1 flex flex-col overflow-hidden">
+      <header className="h-16 bg-white border-b border-slate-200 px-8 flex items-center justify-between shadow-sm">
+        <div>
+          <h2 className="text-lg font-bold text-slate-900">Purchase Invoices</h2>
+          <p className="text-xs text-slate-500">{activeClient}</p>
+        </div>
+        <div className="flex items-center gap-3">
+          {purchaseSubTab === "approved" && approvedBills.length > 0 && (
+            <>
+              <button
+                onClick={handleDownloadExcel}
+                className="flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold px-3 py-2 rounded-lg transition"
+              >
+                <Download className="w-3.5 h-3.5" /> Export Excel
+              </button>
+              <button
+                onClick={handleDownloadXML}
+                className="flex items-center gap-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 text-xs font-semibold px-3 py-2 rounded-lg transition border border-blue-200"
+              >
+                <FileCode className="w-3.5 h-3.5" /> Download Tally XML
+              </button>
+            </>
+          )}
+
+          <input
+            type="file"
+            ref={invoiceInputRef}
+            onChange={handleMultipleInvoiceUpload}
+            accept="application/pdf,image/*"
+            multiple
+            className="hidden"
+          />
+          <button
+            disabled={isUploadingBill}
+            onClick={() => invoiceInputRef.current?.click()}
+            className="flex items-center gap-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold px-4 py-2 rounded-lg transition shadow-sm disabled:opacity-50"
+          >
+            <Upload className="w-3.5 h-3.5" />
+            {isUploadingBill ? uploadProgress || "Extracting..." : "Upload Bills (Multiple)"}
+          </button>
+        </div>
+      </header>
+
+      <div className="flex-1 overflow-y-auto p-8">
+        <div className="flex items-center gap-4 border-b border-slate-200 mb-6">
+          <button
+            onClick={() => setPurchaseSubTab("needs_review")}
+            className={`pb-3 text-sm font-bold flex items-center gap-2 border-b-2 transition ${
+              purchaseSubTab === "needs_review"
+                ? "border-slate-900 text-slate-900"
+                : "border-transparent text-slate-400 hover:text-slate-600"
+            }`}
+          >
+            Needs Review
+            <span className={`text-xs px-2 py-0.5 rounded-full ${
+              purchaseSubTab === "needs_review" ? "bg-slate-900 text-white" : "bg-slate-200 text-slate-600"
+            }`}>
+              {pendingBills.length}
+            </span>
+          </button>
+
+          <button
+            onClick={() => setPurchaseSubTab("approved")}
+            className={`pb-3 text-sm font-bold flex items-center gap-2 border-b-2 transition ${
+              purchaseSubTab === "approved"
+                ? "border-emerald-600 text-emerald-700"
+                : "border-transparent text-slate-400 hover:text-slate-600"
+            }`}
+          >
+            Approved Invoices
+            <span className={`text-xs px-2 py-0.5 rounded-full ${
+              purchaseSubTab === "approved" ? "bg-emerald-600 text-white" : "bg-slate-200 text-slate-600"
+            }`}>
+              {approvedBills.length}
+            </span>
+          </button>
+
+          <button
+            onClick={() => setPurchaseSubTab("pushed")}
+            className={`pb-3 text-sm font-bold flex items-center gap-2 border-b-2 transition ${
+              purchaseSubTab === "pushed"
+                ? "border-blue-600 text-blue-700"
+                : "border-transparent text-slate-400 hover:text-slate-600"
+            }`}
+          >
+            Pushed to Tally
+            <span className={`text-xs px-2 py-0.5 rounded-full ${
+              purchaseSubTab === "pushed" ? "bg-blue-600 text-white" : "bg-slate-200 text-slate-600"
+            }`}>
+              {pushedBills.length}
+            </span>
+          </button>
         </div>
 
-        <div className="my-5 px-1">
-          <label className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 block mb-1.5">
-            Active Client
-          </label>
-          <div className="flex items-center gap-2 p-2.5 rounded-lg border border-slate-200 bg-slate-50 text-sm font-medium text-slate-700">
-            <Building2 className="w-4 h-4 text-slate-500 shrink-0" />
-            <span className="truncate">{activeClient}</span>
-          </div>
-        </div>
-
-        <nav className="space-y-1 flex-1">
-          <button
-            onClick={() => setActiveTab("dashboard")}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition ${
-              activeTab === "dashboard"
-                ? "bg-slate-900 text-white"
-                : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
-            }`}
-          >
-            <TrendingUp className="w-4 h-4" />
-            Dashboard
-          </button>
-          <button
-            onClick={() => setActiveTab("purchase")}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition ${
-              activeTab === "purchase"
-                ? "bg-slate-900 text-white"
-                : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
-            }`}
-          >
-            <FileText className="w-4 h-4" />
-            Purchases
-          </button>
-          <button
-            onClick={() => setActiveTab("sales")}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition ${
-              activeTab === "sales"
-                ? "bg-slate-900 text-white"
-                : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
-            }`}
-          >
-            <FileSpreadsheet className="w-4 h-4" />
-            Sales
-          </button>
-          <button
-            onClick={() => setActiveTab("bank")}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition ${
-              activeTab === "bank"
-                ? "bg-slate-900 text-white"
-                : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
-            }`}
-          >
-            <CreditCard className="w-4 h-4" />
-            Banking
-          </button>
-          <button
-            onClick={() => setActiveTab("settings")}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition ${
-              activeTab === "settings"
-                ? "bg-slate-900 text-white"
-                : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
-            }`}
-          >
-            <Settings className="w-4 h-4" />
-            Settings
-          </button>
-        </nav>
-
-        <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse"></span>
-            <span className="text-xs font-semibold text-emerald-800">Tally Port 9000</span>
-          </div>
-          <span className="text-[10px] bg-emerald-200 text-emerald-900 font-bold px-1.5 py-0.5 rounded uppercase tracking-wider">
-            Online
-          </span>
-        </div>
-      </aside>
-
-      {/* PURCHASES LISTING */}
-      <main className="flex-1 flex flex-col overflow-hidden">
-        <header className="h-16 bg-white border-b border-slate-200 px-8 flex items-center justify-between shadow-sm">
-          <div>
-            <h2 className="text-lg font-bold text-slate-900">Purchase Invoices</h2>
-            <p className="text-xs text-slate-500">{activeClient}</p>
-          </div>
-          <div className="flex items-center gap-3">
-            {/* Download Buttons shown in Approved Tab */}
-            {purchaseSubTab === "approved" && approvedBills.length > 0 && (
-              <>
-                <button
-                  onClick={handleDownloadExcel}
-                  className="flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold px-3 py-2 rounded-lg transition"
-                >
-                  <Download className="w-3.5 h-3.5" /> Export Excel
-                </button>
-                <button
-                  onClick={handleDownloadXML}
-                  className="flex items-center gap-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 text-xs font-semibold px-3 py-2 rounded-lg transition border border-blue-200"
-                >
-                  <FileCode className="w-3.5 h-3.5" /> Download Tally XML
-                </button>
-              </>
-            )}
-
-            <input
-              type="file"
-              ref={invoiceInputRef}
-              onChange={handleMultipleInvoiceUpload}
-              accept="application/pdf,image/*"
-              multiple
-              className="hidden"
-            />
-            <button
-              disabled={isUploadingBill}
-              onClick={() => invoiceInputRef.current?.click()}
-              className="flex items-center gap-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold px-4 py-2 rounded-lg transition shadow-sm disabled:opacity-50"
-            >
-              <Upload className="w-3.5 h-3.5" />
-              {isUploadingBill ? uploadProgress || "Extracting..." : "Upload Bills (Multiple)"}
-            </button>
-          </div>
-        </header>
-
-        <div className="flex-1 overflow-y-auto p-8">
-          {/* TAB HEADERS: Needs Review | Approved Invoices | Pushed to Tally */}
-          <div className="flex items-center gap-4 border-b border-slate-200 mb-6">
-            <button
-              onClick={() => setPurchaseSubTab("needs_review")}
-              className={`pb-3 text-sm font-bold flex items-center gap-2 border-b-2 transition ${
-                purchaseSubTab === "needs_review"
-                  ? "border-slate-900 text-slate-900"
-                  : "border-transparent text-slate-400 hover:text-slate-600"
-              }`}
-            >
-              Needs Review
-              <span className={`text-xs px-2 py-0.5 rounded-full ${
-                purchaseSubTab === "needs_review" ? "bg-slate-900 text-white" : "bg-slate-200 text-slate-600"
-              }`}>
-                {pendingBills.length}
-              </span>
-            </button>
-
-            <button
-              onClick={() => setPurchaseSubTab("approved")}
-              className={`pb-3 text-sm font-bold flex items-center gap-2 border-b-2 transition ${
-                purchaseSubTab === "approved"
-                  ? "border-emerald-600 text-emerald-700"
-                  : "border-transparent text-slate-400 hover:text-slate-600"
-              }`}
-            >
-              Approved Invoices
-              <span className={`text-xs px-2 py-0.5 rounded-full ${
-                purchaseSubTab === "approved" ? "bg-emerald-600 text-white" : "bg-slate-200 text-slate-600"
-              }`}>
-                {approvedBills.length}
-              </span>
-            </button>
-
-            <button
-              onClick={() => setPurchaseSubTab("pushed")}
-              className={`pb-3 text-sm font-bold flex items-center gap-2 border-b-2 transition ${
-                purchaseSubTab === "pushed"
-                  ? "border-blue-600 text-blue-700"
-                  : "border-transparent text-slate-400 hover:text-slate-600"
-              }`}
-            >
-              Pushed to Tally
-              <span className={`text-xs px-2 py-0.5 rounded-full ${
-                purchaseSubTab === "pushed" ? "bg-blue-600 text-white" : "bg-slate-200 text-slate-600"
-              }`}>
-                {pushedBills.length}
-              </span>
-            </button>
-          </div>
-
-          {/* TAB 1: NEEDS REVIEW */}
-          {purchaseSubTab === "needs_review" && (
-            <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
-              {pendingBills.length === 0 ? (
-                <div className="p-16 text-center">
-                  <Upload className="w-8 h-8 text-slate-300 mx-auto mb-2" />
-                  <p className="text-sm font-semibold text-slate-700">No invoices needing review</p>
-                  <p className="text-xs text-slate-400 mt-0.5">Click "Upload Bills" to select one or multiple bills to parse with Gemini AI</p>
-                </div>
-              ) : (
-                <table className="w-full text-left text-xs text-slate-600">
-                  <thead className="bg-slate-50 border-b border-slate-200 uppercase font-semibold text-slate-500">
-                    <tr>
-                      <th className="px-6 py-3.5">Vendor</th>
-                      <th className="px-6 py-3.5">Invoice No.</th>
-                      <th className="px-6 py-3.5">Date</th>
-                      <th className="px-6 py-3.5">Taxable (₹)</th>
-                      <th className="px-6 py-3.5">Total Amount (₹)</th>
-                      <th className="px-6 py-3.5 text-right">Action</th>
+        {/* TAB 1: NEEDS REVIEW */}
+        {purchaseSubTab === "needs_review" && (
+          <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+            {pendingBills.length === 0 ? (
+              <div className="p-16 text-center">
+                <Upload className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+                <p className="text-sm font-semibold text-slate-700">No invoices needing review</p>
+                <p className="text-xs text-slate-400 mt-0.5">Click "Upload Bills" to select one or multiple bills to parse with Gemini AI</p>
+              </div>
+            ) : (
+              <table className="w-full text-left text-xs text-slate-600">
+                <thead className="bg-slate-50 border-b border-slate-200 uppercase font-semibold text-slate-500">
+                  <tr>
+                    <th className="px-6 py-3.5">Vendor</th>
+                    <th className="px-6 py-3.5">Invoice No.</th>
+                    <th className="px-6 py-3.5">Date</th>
+                    <th className="px-6 py-3.5">Taxable (₹)</th>
+                    <th className="px-6 py-3.5">Total Amount (₹)</th>
+                    <th className="px-6 py-3.5 text-right">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {pendingBills.map((b) => (
+                    <tr 
+                      key={b.id} 
+                      onClick={() => openReviewWorkspace(b)}
+                      className="hover:bg-slate-50 cursor-pointer transition"
+                    >
+                      <td className="px-6 py-4">
+                        <p className="font-bold text-slate-900">{b.vendor_name || "Unknown Vendor"}</p>
+                        <p className="text-[11px] text-slate-400 font-mono">{b.vendor_gstin || "No GSTIN"}</p>
+                      </td>
+                      <td className="px-6 py-4 font-mono font-medium text-slate-800">
+                        #{b.invoice_number || b.supplier_invoice_no}
+                      </td>
+                      <td className="px-6 py-4 text-slate-500">
+                        {b.invoice_date || b.bill_date}
+                      </td>
+                      <td className="px-6 py-4 font-mono text-slate-700">
+                        ₹{(parseFloat(b.taxable_amount) || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                      </td>
+                      <td className="px-6 py-4 font-mono font-bold text-slate-900">
+                        ₹{(parseFloat(b.grand_total) || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                      </td>
+                      <td className="px-6 py-4 text-right" onClick={(e) => e.stopPropagation()}>
+                        <button
+                          onClick={() => openReviewWorkspace(b)}
+                          className="bg-slate-900 hover:bg-slate-800 text-white font-semibold text-[11px] px-3 py-1.5 rounded transition"
+                        >
+                          Review & Verify
+                        </button>
+                      </td>
                     </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {pendingBills.map((b) => (
-                      <tr 
-                        key={b.id} 
-                        onClick={() => openReviewWorkspace(b)}
-                        className="hover:bg-slate-50 cursor-pointer transition"
-                      >
-                        <td className="px-6 py-4">
-                          <p className="font-bold text-slate-900">{b.vendor_name || "Unknown Vendor"}</p>
-                          <p className="text-[11px] text-slate-400 font-mono">{b.vendor_gstin || "No GSTIN"}</p>
-                        </td>
-                        <td className="px-6 py-4 font-mono font-medium text-slate-800">
-                          #{b.invoice_number || b.supplier_invoice_no}
-                        </td>
-                        <td className="px-6 py-4 text-slate-500">
-                          {b.invoice_date || b.bill_date}
-                        </td>
-                        <td className="px-6 py-4 font-mono text-slate-700">
-                          ₹{(parseFloat(b.taxable_amount) || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                        </td>
-                        <td className="px-6 py-4 font-mono font-bold text-slate-900">
-                          ₹{(parseFloat(b.grand_total) || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                        </td>
-                        <td className="px-6 py-4 text-right" onClick={(e) => e.stopPropagation()}>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        )}
+
+        {/* TAB 2: APPROVED INVOICES */}
+        {purchaseSubTab === "approved" && (
+          <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+            {approvedBills.length === 0 ? (
+              <div className="p-16 text-center">
+                <CheckCircle2 className="w-8 h-8 text-emerald-300 mx-auto mb-2" />
+                <p className="text-sm font-semibold text-slate-700">No approved invoices waiting</p>
+                <p className="text-xs text-slate-400 mt-0.5">Approve verified invoices in "Needs Review" to prepare for Tally sync or export</p>
+              </div>
+            ) : (
+              <table className="w-full text-left text-xs text-slate-600">
+                <thead className="bg-slate-50 border-b border-slate-200 uppercase font-semibold text-slate-500">
+                  <tr>
+                    <th className="px-6 py-3.5">Vendor</th>
+                    <th className="px-6 py-3.5">Invoice No.</th>
+                    <th className="px-6 py-3.5">Ledger Allocation</th>
+                    <th className="px-6 py-3.5">Total Amount (₹)</th>
+                    <th className="px-6 py-3.5 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {approvedBills.map((b) => (
+                    <tr key={b.id} className="hover:bg-slate-50 transition">
+                      <td className="px-6 py-4">
+                        <p className="font-bold text-slate-900">{b.vendor_name}</p>
+                        <p className="text-[11px] text-slate-400 font-mono">{b.vendor_gstin}</p>
+                      </td>
+                      <td className="px-6 py-4 font-mono font-medium text-slate-800">
+                        #{b.supplier_invoice_no || b.invoice_number}
+                      </td>
+                      <td className="px-6 py-4 text-slate-600">
+                        <span className="bg-slate-100 px-2 py-1 rounded text-[11px] font-medium">
+                          {b.accounting_ledgers?.[0]?.ledger_name || "Purchase: General Goods"}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 font-mono font-bold text-emerald-700">
+                        ₹{(parseFloat(b.grand_total) || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                      </td>
+                      <td className="px-6 py-4 text-right">
+                        <div className="inline-flex items-center gap-2">
                           <button
                             onClick={() => openReviewWorkspace(b)}
-                            className="bg-slate-900 hover:bg-slate-800 text-white font-semibold text-[11px] px-3 py-1.5 rounded transition"
+                            title="Edit invoice again"
+                            className="inline-flex items-center gap-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-[11px] px-2.5 py-1.5 rounded transition"
                           >
-                            Review & Verify
+                            <Edit2 className="w-3.5 h-3.5" /> Edit
                           </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </div>
-          )}
-
-          {/* TAB 2: APPROVED INVOICES (WITH EDIT, DELETE & PUSH) */}
-          {purchaseSubTab === "approved" && (
-            <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
-              {approvedBills.length === 0 ? (
-                <div className="p-16 text-center">
-                  <CheckCircle2 className="w-8 h-8 text-emerald-300 mx-auto mb-2" />
-                  <p className="text-sm font-semibold text-slate-700">No approved invoices waiting</p>
-                  <p className="text-xs text-slate-400 mt-0.5">Approve verified invoices in "Needs Review" to prepare for Tally sync or export</p>
-                </div>
-              ) : (
-                <table className="w-full text-left text-xs text-slate-600">
-                  <thead className="bg-slate-50 border-b border-slate-200 uppercase font-semibold text-slate-500">
-                    <tr>
-                      <th className="px-6 py-3.5">Vendor</th>
-                      <th className="px-6 py-3.5">Invoice No.</th>
-                      <th className="px-6 py-3.5">Ledger Allocation</th>
-                      <th className="px-6 py-3.5">Total Amount (₹)</th>
-                      <th className="px-6 py-3.5 text-right">Actions</th>
+                          <button
+                            onClick={() => {
+                              setApprovedBills(prev => prev.filter(x => x.id !== b.id));
+                              notify("Invoice removed from Approved tab.", "info");
+                            }}
+                            title="Remove invoice"
+                            className="text-slate-400 hover:text-rose-600 p-1.5 transition"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => handlePushToTally(b)}
+                            className="inline-flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-[11px] px-3.5 py-1.5 rounded transition shadow-sm"
+                          >
+                            <Send className="w-3.5 h-3.5" /> Push
+                          </button>
+                        </div>
+                      </td>
                     </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {approvedBills.map((b) => (
-                      <tr key={b.id} className="hover:bg-slate-50 transition">
-                        <td className="px-6 py-4">
-                          <p className="font-bold text-slate-900">{b.vendor_name}</p>
-                          <p className="text-[11px] text-slate-400 font-mono">{b.vendor_gstin}</p>
-                        </td>
-                        <td className="px-6 py-4 font-mono font-medium text-slate-800">
-                          #{b.supplier_invoice_no || b.invoice_number}
-                        </td>
-                        <td className="px-6 py-4 text-slate-600">
-                          <span className="bg-slate-100 px-2 py-1 rounded text-[11px] font-medium">
-                            {b.accounting_ledgers?.[0]?.ledger_name || "Purchase: General Goods"}
-                          </span>
-                        </td>
-                        <td className="px-6 py-4 font-mono font-bold text-emerald-700">
-                          ₹{(parseFloat(b.grand_total) || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                        </td>
-                        <td className="px-6 py-4 text-right">
-                          <div className="inline-flex items-center gap-2">
-                            {/* Re-edit Button */}
-                            <button
-                              onClick={() => openReviewWorkspace(b)}
-                              title="Edit invoice again"
-                              className="inline-flex items-center gap-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-[11px] px-2.5 py-1.5 rounded transition"
-                            >
-                              <Edit2 className="w-3.5 h-3.5" /> Edit
-                            </button>
-                            {/* Delete Button */}
-                            <button
-                              onClick={() => {
-                                setApprovedBills(prev => prev.filter(x => x.id !== b.id));
-                                notify("Invoice removed from Approved tab.", "info");
-                              }}
-                              title="Remove invoice"
-                              className="text-slate-400 hover:text-rose-600 p-1.5 transition"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
-                            {/* Push to Tally Button */}
-                            <button
-                              onClick={() => handlePushToTally(b)}
-                              className="inline-flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-[11px] px-3.5 py-1.5 rounded transition shadow-sm"
-                            >
-                              <Send className="w-3.5 h-3.5" /> Push
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </div>
-          )}
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        )}
 
-          {/* TAB 3: PUSHED TO TALLY ARCHIVE */}
-          {purchaseSubTab === "pushed" && (
-            <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
-              {pushedBills.length === 0 ? (
-                <div className="p-16 text-center">
-                  <FileSpreadsheet className="w-8 h-8 text-blue-300 mx-auto mb-2" />
-                  <p className="text-sm font-semibold text-slate-700">No invoices pushed yet</p>
-                  <p className="text-xs text-slate-400 mt-0.5">Invoices successfully sent to Tally Prime will appear here</p>
-                </div>
-              ) : (
-                <table className="w-full text-left text-xs text-slate-600">
-                  <thead className="bg-slate-50 border-b border-slate-200 uppercase font-semibold text-slate-500">
-                    <tr>
-                      <th className="px-6 py-3.5">Vendor</th>
-                      <th className="px-6 py-3.5">Invoice No.</th>
-                      <th className="px-6 py-3.5">Pushed Date & Time</th>
-                      <th className="px-6 py-3.5">Amount (₹)</th>
-                      <th className="px-6 py-3.5 text-right">Status</th>
+        {/* TAB 3: PUSHED TO TALLY */}
+        {purchaseSubTab === "pushed" && (
+          <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+            {pushedBills.length === 0 ? (
+              <div className="p-16 text-center">
+                <FileSpreadsheet className="w-8 h-8 text-blue-300 mx-auto mb-2" />
+                <p className="text-sm font-semibold text-slate-700">No invoices pushed yet</p>
+                <p className="text-xs text-slate-400 mt-0.5">Invoices successfully sent to Tally Prime will appear here</p>
+              </div>
+            ) : (
+              <table className="w-full text-left text-xs text-slate-600">
+                <thead className="bg-slate-50 border-b border-slate-200 uppercase font-semibold text-slate-500">
+                  <tr>
+                    <th className="px-6 py-3.5">Vendor</th>
+                    <th className="px-6 py-3.5">Invoice No.</th>
+                    <th className="px-6 py-3.5">Pushed Date & Time</th>
+                    <th className="px-6 py-3.5">Amount (₹)</th>
+                    <th className="px-6 py-3.5 text-right">Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {pushedBills.map((b, idx) => (
+                    <tr key={b.id || idx} className="hover:bg-slate-50 transition">
+                      <td className="px-6 py-4">
+                        <p className="font-bold text-slate-900">{b.vendor_name}</p>
+                        <p className="text-[11px] text-slate-400 font-mono">{b.vendor_gstin}</p>
+                      </td>
+                      <td className="px-6 py-4 font-mono font-medium text-slate-800">
+                        #{b.supplier_invoice_no || b.invoice_number}
+                      </td>
+                      <td className="px-6 py-4 text-slate-500">
+                        {b.pushed_at || "Recent"}
+                      </td>
+                      <td className="px-6 py-4 font-mono font-bold text-slate-800">
+                        ₹{(parseFloat(b.grand_total) || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                      </td>
+                      <td className="px-6 py-4 text-right">
+                        <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded">
+                          <Check className="w-3 h-3" /> In Tally
+                        </span>
+                      </td>
                     </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {pushedBills.map((b, idx) => (
-                      <tr key={b.id || idx} className="hover:bg-slate-50 transition">
-                        <td className="px-6 py-4">
-                          <p className="font-bold text-slate-900">{b.vendor_name}</p>
-                          <p className="text-[11px] text-slate-400 font-mono">{b.vendor_gstin}</p>
-                        </td>
-                        <td className="px-6 py-4 font-mono font-medium text-slate-800">
-                          #{b.supplier_invoice_no || b.invoice_number}
-                        </td>
-                        <td className="px-6 py-4 text-slate-500">
-                          {b.pushed_at || "Recent"}
-                        </td>
-                        <td className="px-6 py-4 font-mono font-bold text-slate-800">
-                          ₹{(parseFloat(b.grand_total) || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                        </td>
-                        <td className="px-6 py-4 text-right">
-                          <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded">
-                            <Check className="w-3 h-3" /> In Tally
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </div>
-          )}
-        </div>
-      </main>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        )}
+      </div>
 
-      {/* FLOATING TOAST */}
       {notification && (
         <div
           className={`fixed bottom-6 right-6 max-w-md px-4 py-3 rounded-lg shadow-xl border text-sm flex items-start gap-3 transition-all z-50 ${
