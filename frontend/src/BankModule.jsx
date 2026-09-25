@@ -6,22 +6,51 @@ import {
   FileSpreadsheet, 
   AlertCircle, 
   Download,
-  Trash2
+  Trash2,
+  Sparkles
 } from "lucide-react";
 
-// Directly target your active Cloud Run instance
 const BACKEND_BASE = "https://compliance4-backend-1021821620394.asia-south1.run.app";
+
+// Helper to extract a distinct keyword from narration for learning
+const extractRuleKeyword = (narration) => {
+  if (!narration) return "";
+  const cleaned = narration.toUpperCase().trim();
+  // If UPI transaction, extract the UPI handle or business name
+  const upiMatch = cleaned.match(/UPI-([A-Z0-9\s]+?)(?:-[A-Z0-9]+@|$)/);
+  if (upiMatch && upiMatch[1]) {
+    return upiMatch[1].trim();
+  }
+  // If NEFT/RTGS transaction
+  const neftMatch = cleaned.match(/(?:NEFT|RTGS)\s*(?:CR|DR)?-([A-Z0-9]+)-([A-Z0-9\s]+)/);
+  if (neftMatch && neftMatch[2]) {
+    return neftMatch[2].trim();
+  }
+  // Fallback: take first 3 meaningful words
+  const words = cleaned.split(/[\s\/-]+/).filter((w) => w.length > 3 && !/^\d+$/.test(w));
+  return words.slice(0, 2).join(" ") || cleaned.slice(0, 20);
+};
 
 export default function BankModule({ activeClient = "Panasuria Confectionery" }) {
   const [bankLedger, setBankLedger] = useState("HDFC Bank - 8050");
   
-  // Persistent storage across browser sessions
+  // 1. Stored Transactions
   const [transactions, setTransactions] = useState(() => {
     try {
       const saved = localStorage.getItem("c4_bank_transactions");
       return saved ? JSON.parse(saved) : [];
     } catch {
       return [];
+    }
+  });
+
+  // 2. Learned Memory Rules: { [keyword]: { ledger, voucher_type } }
+  const [learnedRules, setLearnedRules] = useState(() => {
+    try {
+      const savedRules = localStorage.getItem("c4_bank_learned_rules");
+      return savedRules ? JSON.parse(savedRules) : {};
+    } catch {
+      return {};
     }
   });
 
@@ -34,12 +63,16 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
     localStorage.setItem("c4_bank_transactions", JSON.stringify(transactions));
   }, [transactions]);
 
+  useEffect(() => {
+    localStorage.setItem("c4_bank_learned_rules", JSON.stringify(learnedRules));
+  }, [learnedRules]);
+
   const showToast = (message, type = "success") => {
     setToast({ message, type });
     setTimeout(() => setToast(null), 4000);
   };
 
-  // 1. Download Standard 4-Column Template
+  // Download Standard Template
   const downloadTemplate = () => {
     const csvContent =
       "data:text/csv;charset=utf-8," +
@@ -58,7 +91,7 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
     document.body.removeChild(link);
   };
 
-  // 2. Upload and Parse Statement File
+  // Upload and Parse Statement File with Rule Matching
   const handleFileUpload = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -77,18 +110,50 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
 
       if (!res.ok) {
         const errData = await res.json().catch(() => ({}));
-        throw new Error(errData.detail || `Server responded with status ${res.status}`);
+        throw new Error(errData.detail || `Server error (${res.status})`);
       }
 
-      const data = await res.json();
-      const initialized = data.map((t) => ({
-        ...t,
-        status: "needs_review",
-      }));
+      const rawData = await res.json();
+      let autoMatchedCount = 0;
+
+      // Apply learned memory rules
+      const initialized = rawData.map((t) => {
+        const narrUpper = (t.narration || "").toUpperCase();
+        let matchedLedger = null;
+
+        // Check against remembered rules
+        for (const [kw, rule] of Object.entries(learnedRules)) {
+          if (narrUpper.includes(kw)) {
+            matchedLedger = rule.ledger;
+            break;
+          }
+        }
+
+        if (matchedLedger) {
+          autoMatchedCount++;
+          return {
+            ...t,
+            ledger: matchedLedger,
+            status: "approved", // Auto-approved by memory
+            autoMatched: true
+          };
+        }
+
+        return {
+          ...t,
+          status: "needs_review",
+          autoMatched: false
+        };
+      });
 
       setTransactions(initialized);
       setActiveTab("needs_review");
-      showToast(`Successfully imported ${initialized.length} transactions!`);
+
+      if (autoMatchedCount > 0) {
+        showToast(`Imported ${initialized.length} rows (${autoMatchedCount} auto-matched from memory)!`);
+      } else {
+        showToast(`Imported ${initialized.length} transactions!`);
+      }
     } catch (err) {
       showToast(`Bank parsing failed: ${err.message}`, "error");
     } finally {
@@ -97,8 +162,35 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
     }
   };
 
-  // 3. Status Action Handlers
-  const handleApprove = (id) => {
+  // Auto-Approve + Learn Rule when user manually selects a Ledger
+  const handleLedgerChange = (txnId, newLedger) => {
+    setTransactions((prev) =>
+      prev.map((item) => {
+        if (item.id === txnId) {
+          // Memorize keyword
+          const keyword = extractRuleKeyword(item.narration);
+          if (keyword) {
+            setLearnedRules((r) => ({
+              ...r,
+              [keyword]: { ledger: newLedger, voucher_type: item.voucher_type }
+            }));
+          }
+
+          // Immediately change status to approved
+          return {
+            ...item,
+            ledger: newLedger,
+            status: "approved"
+          };
+        }
+        return item;
+      })
+    );
+
+    showToast(`Saved & Approved: Moved to Approved Transactions!`);
+  };
+
+  const handleManualApprove = (id) => {
     setTransactions((prev) =>
       prev.map((t) => (t.id === id ? { ...t, status: "approved" } : t))
     );
@@ -157,14 +249,13 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
   };
 
   const handleClearAll = () => {
-    if (window.confirm("Are you sure you want to clear all loaded transactions?")) {
+    if (window.confirm("Clear all loaded transactions?")) {
       setTransactions([]);
       localStorage.removeItem("c4_bank_transactions");
       showToast("Cleared transaction list.");
     }
   };
 
-  // 4. Tab Counts & Filters
   const needsReviewCount = transactions.filter((t) => t.status === "needs_review").length;
   const approvedCount = transactions.filter((t) => t.status === "approved").length;
   const pushedCount = transactions.filter((t) => t.status === "pushed").length;
@@ -177,7 +268,15 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
       <header className="bg-white border-b border-slate-200 px-8 py-4 flex items-center justify-between shadow-sm shrink-0">
         <div>
           <h2 className="text-xl font-bold text-slate-900 tracking-tight">Banking Reconciliation</h2>
-          <p className="text-xs text-slate-500 font-medium">{activeClient}</p>
+          <div className="flex items-center gap-2 mt-0.5">
+            <p className="text-xs text-slate-500 font-medium">{activeClient}</p>
+            {Object.keys(learnedRules).length > 0 && (
+              <span className="flex items-center gap-1 text-[10px] bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-full font-semibold border border-indigo-200">
+                <Sparkles className="w-2.5 h-2.5" />
+                {Object.keys(learnedRules).length} Rules Learned
+              </span>
+            )}
+          </div>
         </div>
 
         <div className="flex items-center gap-3">
@@ -227,7 +326,7 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
         </div>
       </header>
 
-      {/* NAVIGATION TABS & BULK ACTIONS */}
+      {/* TABS & BATCH ACTIONS */}
       <div className="px-8 pt-4 pb-2 flex items-center justify-between border-b border-slate-200 bg-white shrink-0">
         <div className="flex items-center gap-6">
           <button
@@ -309,7 +408,7 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
         </div>
       </div>
 
-      {/* TABLE DATA CONTAINER */}
+      {/* TABLE SECTION */}
       <div className="flex-1 p-8 overflow-y-auto">
         {displayedTransactions.length === 0 ? (
           <div className="bg-white rounded-xl border border-slate-200 p-16 flex flex-col items-center justify-center text-center shadow-sm">
@@ -319,9 +418,9 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
             </p>
             <p className="text-xs text-slate-400 mt-1 max-w-sm">
               {activeTab === "needs_review"
-                ? "Upload an Excel or CSV statement to populate transactions."
+                ? "All transactions have been reviewed and approved!"
                 : activeTab === "approved"
-                ? "Click 'Approve' on pending items to prepare them for Tally export."
+                ? "Transactions will appear here once approved or auto-matched."
                 : "Transactions dispatched to Tally Prime appear here."}
             </p>
           </div>
@@ -364,13 +463,12 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
                     <td className="py-3 px-4 whitespace-nowrap">
                       <select
                         value={t.ledger}
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          setTransactions((prev) =>
-                            prev.map((item) => (item.id === t.id ? { ...item, ledger: val } : item))
-                          );
-                        }}
-                        className="border border-slate-200 rounded px-2 py-1 text-xs bg-slate-50 font-medium text-slate-800 focus:outline-none focus:ring-1 focus:ring-slate-900"
+                        onChange={(e) => handleLedgerChange(t.id, e.target.value)}
+                        className={`border rounded px-2.5 py-1 text-xs font-semibold focus:outline-none transition ${
+                          t.status === "approved"
+                            ? "bg-emerald-50 border-emerald-300 text-emerald-900"
+                            : "bg-slate-50 border-slate-200 text-slate-800"
+                        }`}
                       >
                         <option value="UPI Collection">UPI Collection</option>
                         <option value="Cash in Hand">Cash in Hand</option>
@@ -393,20 +491,26 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
                     <td className="py-3 px-4 text-center whitespace-nowrap">
                       {t.status === "needs_review" && (
                         <button
-                          onClick={() => handleApprove(t.id)}
+                          onClick={() => handleManualApprove(t.id)}
                           className="px-3 py-1 bg-amber-500 hover:bg-amber-600 text-white rounded font-semibold text-[11px] shadow-sm transition"
                         >
                           Approve
                         </button>
                       )}
                       {t.status === "approved" && (
-                        <button
-                          onClick={() => handlePushSingle(t)}
-                          className="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded font-semibold text-[11px] shadow-sm transition flex items-center gap-1 mx-auto"
-                        >
-                          <Send className="w-3 h-3" />
-                          Push
-                        </button>
+                        <div className="flex items-center justify-center gap-1.5">
+                          <span className="px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded font-bold text-[10px] uppercase tracking-wider flex items-center gap-1">
+                            <CheckCircle className="w-3 h-3 text-emerald-600" />
+                            Approved
+                          </span>
+                          <button
+                            onClick={() => handlePushSingle(t)}
+                            className="p-1 bg-slate-900 hover:bg-slate-800 text-white rounded shadow-sm transition"
+                            title="Push this voucher now"
+                          >
+                            <Send className="w-3 h-3" />
+                          </button>
+                        </div>
                       )}
                       {t.status === "pushed" && (
                         <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">
