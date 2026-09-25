@@ -5,12 +5,14 @@ import {
   Send, 
   FileText, 
   AlertCircle, 
-  Sparkles,
-  Building,
-  Calendar,
-  Hash,
-  Layers,
-  ArrowRight
+  Sparkles, 
+  Building, 
+  Calendar, 
+  Hash, 
+  Layers, 
+  AlertTriangle, 
+  ShieldCheck, 
+  ShieldAlert 
 } from "lucide-react";
 
 const BACKEND_BASE = "https://compliance4-backend-1021821620394.asia-south1.run.app";
@@ -27,11 +29,75 @@ const DEFAULT_PURCHASE_LEDGERS = [
   "Printing & Stationery Expenses"
 ];
 
+// Indian State Codes dictionary
+const GST_STATE_CODES = {
+  "01": "Jammu & Kashmir", "02": "Himachal Pradesh", "03": "Punjab", "04": "Chandigarh",
+  "05": "Uttarakhand", "06": "Haryana", "07": "Delhi", "08": "Rajasthan", "09": "Uttar Pradesh",
+  "10": "Bihar", "11": "Sikkim", "12": "Arunachal Pradesh", "13": "Nagaland", "14": "Manipur",
+  "15": "Mizoram", "16": "Tripura", "17": "Meghalaya", "18": "Assam", "19": "West Bengal",
+  "20": "Jharkhand", "21": "Odisha", "22": "Chhattisgarh", "23": "Madhya Pradesh",
+  "24": "Gujarat", "25": "Daman & Diu", "26": "Dadra & Nagar Haveli", "27": "Maharashtra",
+  "28": "Andhra Pradesh (Old)", "29": "Karnataka", "30": "Goa", "31": "Lakshadweep",
+  "32": "Kerala", "33": "Tamil Nadu", "34": "Puducherry", "35": "Andaman & Nicobar",
+  "36": "Telangana", "37": "Andhra Pradesh", "38": "Ladakh"
+};
+
+// Modulo-36 GSTIN Checksum Validator
+function validateGSTIN(gstin) {
+  if (!gstin) return { isValid: false, reason: "GSTIN is missing" };
+  const clean = gstin.trim().toUpperCase();
+  
+  if (clean.length !== 15) {
+    return { isValid: false, reason: "Must be exactly 15 characters" };
+  }
+
+  const regex = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/;
+  if (!regex.test(clean)) {
+    return { isValid: false, reason: "Invalid GSTIN structure or 14th character is not 'Z'" };
+  }
+
+  const stateCode = clean.substring(0, 2);
+  const stateName = GST_STATE_CODES[stateCode];
+  if (!stateName) {
+    return { isValid: false, reason: `Invalid State Code: ${stateCode}` };
+  }
+
+  // Modulo-36 Checksum verification
+  const chars = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+  let factor = 1;
+  let sum = 0;
+
+  for (let i = 0; i < 14; i++) {
+    const codePoint = chars.indexOf(clean[i]);
+    let addend = factor * codePoint;
+    factor = factor === 2 ? 1 : 2;
+    addend = Math.floor(addend / 36) + (addend % 36);
+    sum += addend;
+  }
+
+  const remainder = sum % 36;
+  const checkCodePoint = (36 - remainder) % 36;
+  const expectedCheckChar = chars[checkCodePoint];
+  const actualCheckChar = clean[14];
+
+  if (expectedCheckChar !== actualCheckChar) {
+    return { 
+      isValid: false, 
+      reason: `Checksum failed (expected ${expectedCheckChar}, found ${actualCheckChar})`,
+      stateName 
+    };
+  }
+
+  return { isValid: true, stateName, stateCode };
+}
+
 export default function PurchaseModule({ activeClient = "Panasuria Confectionery" }) {
   const [activeBill, setActiveBill] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [pushing, setPushing] = useState(false);
   const [toast, setToast] = useState(null);
+  const [duplicateWarning, setDuplicateWarning] = useState(null);
+  const [gstValidation, setGstValidation] = useState(null);
 
   // 1. Memorized Item -> Ledger Rules from localStorage
   const [itemRules, setItemRules] = useState(() => {
@@ -43,22 +109,38 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
     }
   });
 
-  // Keep localStorage synchronized
+  // 2. Previously Synced / Processed Invoices for Duplicate Detection
+  const [processedInvoices, setProcessedInvoices] = useState(() => {
+    try {
+      const saved = localStorage.getItem("c4_processed_invoices");
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
   useEffect(() => {
     localStorage.setItem("c4_purchase_item_rules", JSON.stringify(itemRules));
   }, [itemRules]);
+
+  useEffect(() => {
+    localStorage.setItem("c4_processed_invoices", JSON.stringify(processedInvoices));
+  }, [processedInvoices]);
 
   const showToast = (message, type = "success") => {
     setToast({ message, type });
     setTimeout(() => setToast(null), 4000);
   };
 
-  // 2. Upload Invoice & Extract via Gemini
+  // 3. Upload & Extract Invoice
   const handleFileUpload = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
 
     setUploading(true);
+    setDuplicateWarning(null);
+    setGstValidation(null);
+
     const formData = new FormData();
     formData.append("file", file);
     formData.append("company_name", activeClient);
@@ -75,9 +157,31 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
       }
 
       const billData = await res.json();
-      let matchedCount = 0;
+      const invoiceNo = (billData.supplier_invoice_no || billData.invoice_number || "").trim().toUpperCase();
+      const vendorGstin = (billData.vendor_gstin || "").trim().toUpperCase();
+      const vendorName = (billData.vendor_name || "").trim().toLowerCase();
 
-      // Apply memorized rules to extracted line items
+      // Check for Duplicates
+      const duplicate = processedInvoices.find(
+        (inv) =>
+          inv.invoiceNo === invoiceNo &&
+          (inv.vendorGstin === vendorGstin || inv.vendorName === vendorName)
+      );
+
+      if (duplicate) {
+        setDuplicateWarning({
+          invoiceNo,
+          vendorName: billData.vendor_name,
+          pushedAt: duplicate.date || "earlier session",
+        });
+      }
+
+      // Check GSTIN Validity
+      const validation = validateGSTIN(vendorGstin);
+      setGstValidation(validation);
+
+      // Apply Memorized Line Item Rules
+      let matchedCount = 0;
       const itemsWithMemory = (billData.items || []).map((item) => {
         const cleanName = (item.item_name || "").trim().toLowerCase();
         const savedLedger = itemRules[cleanName];
@@ -114,7 +218,7 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
       if (matchedCount > 0) {
         showToast(`Extracted bill with ${matchedCount} items auto-mapped from memory!`);
       } else {
-        showToast(`Invoice #${billData.supplier_invoice_no || billData.invoice_number} extracted!`);
+        showToast(`Invoice #${invoiceNo || "N/A"} extracted successfully!`);
       }
     } catch (err) {
       showToast(`Extraction failed: ${err.message}`, "error");
@@ -124,7 +228,7 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
     }
   };
 
-  // 3. Handle Item Ledger Change & Learn for Future
+  // 4. Handle Item Ledger Change & Memorize
   const handleItemLedgerChange = (index, newLedger, itemName) => {
     if (!activeBill) return;
 
@@ -146,7 +250,6 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
       ]
     });
 
-    // Memorize mapping
     if (itemName) {
       const cleanKey = itemName.trim().toLowerCase();
       setItemRules((prev) => ({
@@ -157,7 +260,7 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
     }
   };
 
-  // 4. Push Invoice to Tally Prime
+  // 5. Push to Tally Prime & Record for Duplicate Check
   const handlePushToTally = async () => {
     if (!activeBill) return;
 
@@ -177,7 +280,23 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
         throw new Error(errData.detail || "Failed to push to Tally Prime");
       }
 
-      showToast(`Voucher #${activeBill.supplier_invoice_no || activeBill.invoice_number} synced to Tally Prime!`);
+      // Record invoice to prevent future duplicate entry
+      const invoiceNo = (activeBill.supplier_invoice_no || activeBill.invoice_number || "").trim().toUpperCase();
+      const vendorGstin = (activeBill.vendor_gstin || "").trim().toUpperCase();
+      const vendorName = (activeBill.vendor_name || "").trim().toLowerCase();
+
+      setProcessedInvoices((prev) => [
+        {
+          invoiceNo,
+          vendorGstin,
+          vendorName,
+          date: new Date().toLocaleDateString("en-IN")
+        },
+        ...prev
+      ]);
+
+      showToast(`Voucher #${invoiceNo} synced to Tally Prime!`);
+      setDuplicateWarning(null);
     } catch (err) {
       showToast(`Tally push error: ${err.message}`, "error");
     } finally {
@@ -226,11 +345,26 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
             <FileText className="w-12 h-12 text-slate-300 mb-3" />
             <p className="text-sm font-semibold text-slate-700">No Purchase Invoice Loaded</p>
             <p className="text-xs text-slate-400 mt-1 max-w-sm">
-              Upload a vendor invoice (PDF, JPG, PNG) to extract data with Gemini AI and auto-map line item ledgers.
+              Upload a vendor invoice (PDF, JPG, PNG) to extract fields, validate GSTIN, and inspect for duplicate records.
             </p>
           </div>
         ) : (
-          <div className="max-w-5xl mx-auto space-y-6">
+          <div className="max-w-5xl mx-auto space-y-5">
+            {/* DUPLICATE INVOICE BANNER */}
+            {duplicateWarning && (
+              <div className="bg-amber-50 border-l-4 border-amber-500 p-4 rounded-r-xl shadow-sm flex items-start gap-3">
+                <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                <div className="text-xs">
+                  <p className="font-bold text-amber-900 text-sm">Potential Duplicate Invoice Detected</p>
+                  <p className="text-amber-800 mt-0.5">
+                    Invoice <span className="font-mono font-bold">#{duplicateWarning.invoiceNo}</span> from{" "}
+                    <span className="font-semibold">{duplicateWarning.vendorName}</span> was already pushed to Tally on{" "}
+                    {duplicateWarning.pushedAt}. Double-check to avoid duplicate liability and ITC claims.
+                  </p>
+                </div>
+              </div>
+            )}
+
             {/* INVOICE SUMMARY CARD */}
             <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
               <div className="flex items-center justify-between pb-4 border-b border-slate-100">
@@ -240,7 +374,26 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
                   </div>
                   <div>
                     <h3 className="text-base font-bold text-slate-900">{activeBill.vendor_name || "Vendor Unknown"}</h3>
-                    <p className="text-xs text-slate-400 font-mono">GSTIN: {activeBill.vendor_gstin || "N/A"}</p>
+                    <div className="flex items-center gap-2 mt-1">
+                      <span className="text-xs text-slate-500 font-mono font-semibold">
+                        GSTIN: {activeBill.vendor_gstin || "N/A"}
+                      </span>
+
+                      {/* GSTIN Verification Badge */}
+                      {gstValidation && (
+                        gstValidation.isValid ? (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
+                            <ShieldCheck className="w-3 h-3 text-emerald-600" />
+                            Valid GSTIN ({gstValidation.stateName})
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-rose-700 bg-rose-50 border border-rose-200 px-2 py-0.5 rounded-full" title={gstValidation.reason}>
+                            <ShieldAlert className="w-3 h-3 text-rose-600" />
+                            Invalid GSTIN ({gstValidation.reason})
+                          </span>
+                        )
+                      )}
+                    </div>
                   </div>
                 </div>
 
@@ -285,7 +438,7 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
               </div>
             </div>
 
-            {/* EXTRACTED ITEMS & LEDGER ASSIGNMENT TABLE */}
+            {/* EXTRACTED ITEMS TABLE */}
             <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
               <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
                 <div className="flex items-center gap-2">
@@ -352,15 +505,23 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
               {/* ACTION FOOTER */}
               <div className="p-4 bg-slate-50 border-t border-slate-200 flex items-center justify-between">
                 <span className="text-xs text-slate-500 font-medium">
-                  Ready to dispatch to Tally Prime Port 9000
+                  {duplicateWarning ? (
+                    <span className="text-amber-700 font-semibold">⚠️ Duplicate detected — verify before pushing</span>
+                  ) : (
+                    "Ready to dispatch to Tally Prime Port 9000"
+                  )}
                 </span>
                 <button
                   onClick={handlePushToTally}
                   disabled={pushing}
-                  className="flex items-center gap-2 px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold shadow-sm transition disabled:opacity-50"
+                  className={`flex items-center gap-2 px-5 py-2.5 rounded-lg text-xs font-semibold shadow-sm transition disabled:opacity-50 text-white ${
+                    duplicateWarning
+                      ? "bg-amber-600 hover:bg-amber-700"
+                      : "bg-emerald-600 hover:bg-emerald-700"
+                  }`}
                 >
                   <Send className="w-3.5 h-3.5" />
-                  {pushing ? "Pushing to Tally..." : "Push Voucher to Tally Prime"}
+                  {pushing ? "Pushing to Tally..." : duplicateWarning ? "Push Anyway (Override)" : "Push Voucher to Tally Prime"}
                 </button>
               </div>
             </div>
