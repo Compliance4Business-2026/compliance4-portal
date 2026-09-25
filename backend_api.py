@@ -103,38 +103,33 @@ async def extract_invoice(
         raise HTTPException(status_code=500, detail=f"Gemini invoice extraction failed: {str(e)}")
 
 # ==============================================================================
-# ROUTE 2: RESILIENT INSTANT BANK STATEMENT PARSER
+# ROUTE 2: RESILIENT BANK PARSER (HDFC 2-COLUMN & ICICI CR/DR COMPLIANT)
 # ==============================================================================
-DATE_PATTERNS = [
-    r"^\d{2}[/-]\d{2}[/-]\d{4}",     # 01/06/2024 or 01-06-2024
-    r"^\d{4}[/-]\d{2}[/-]\d{2}",     # 2024-06-01 or 2024/06/01
-    r"^\d{2}\s+[A-Za-z]{3}\s+\d{4}"  # 01 Jun 2024
-]
-
-def clean_amount(val) -> float:
-    if val is None or pd.isna(val):
-        return 0.0
-    s = str(val).replace(",", "").replace("₹", "").replace("Rs.", "").replace("Dr", "").replace("Cr", "").strip()
-    try:
-        return abs(float(s))
-    except Exception:
-        return 0.0
-
-def matches_date(val) -> Optional[str]:
+def parse_date_to_iso(val: Any) -> Optional[str]:
     if val is None or pd.isna(val):
         return None
     s = str(val).strip()
-    for pat in DATE_PATTERNS:
-        match = re.search(pat, s)
-        if match:
-            raw_date = match.group(0)
-            for fmt in ("%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d", "%Y/%m/%d", "%d %b %Y"):
-                try:
-                    return datetime.strptime(raw_date, fmt).strftime("%Y-%m-%d")
-                except ValueError:
-                    pass
-            return raw_date
+    match = re.search(r"(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})", s)
+    if match:
+        d, m, y = match.group(1), match.group(2), match.group(3)
+        if len(y) == 2:
+            y = f"20{y}"
+        try:
+            dt = datetime(int(y), int(m), int(d))
+            return dt.strftime("%Y-%m-%d")
+        except ValueError:
+            pass
     return None
+
+def clean_amount(val: Any) -> float:
+    if val is None or pd.isna(val):
+        return 0.0
+    s = str(val).replace(",", "").replace("₹", "").replace("Rs.", "").replace("Dr", "").replace("Cr", "").replace("(", "").replace(")", "").strip()
+    try:
+        f = float(s)
+        return abs(f) if f > 0 else 0.0
+    except Exception:
+        return 0.0
 
 def auto_assign_ledger(narration: str) -> tuple[str, str]:
     n = narration.lower()
@@ -144,6 +139,8 @@ def auto_assign_ledger(narration: str) -> tuple[str, str]:
         return "Zomato Payout Clearance", "Receipt"
     if "swiggy" in n:
         return "Swiggy Payout Clearance", "Receipt"
+    if "blink" in n:
+        return "Blinkit Payout Clearance", "Receipt"
     if any(k in n for k in ["elect", "power", "torrent"]):
         return "Electricity Expense Payable", "Payment"
     if any(k in n for k in ["salary", "wages", "staff advance"]):
@@ -157,22 +154,11 @@ def auto_assign_ledger(narration: str) -> tuple[str, str]:
     return "UPI Collection", "Payment"
 
 def safe_parse_csv(text_data: str) -> List[List[Any]]:
-    """Tolerates unquoted newlines and malformed CSV rows from bank exports."""
-    # Attempt 1: Standard StringIO with universal newline handling
     try:
         f = io.StringIO(text_data, newline=None)
         return list(csv.reader(f))
     except Exception:
         pass
-
-    # Attempt 2: Ignore quoting errors
-    try:
-        f = io.StringIO(text_data, newline=None)
-        return list(csv.reader(f, quoting=csv.QUOTE_NONE, escapechar='\\'))
-    except Exception:
-        pass
-
-    # Attempt 3: Line-by-line split fallback
     grid = []
     for line in text_data.splitlines():
         if line.strip():
@@ -211,60 +197,102 @@ async def reconcile_bank_file(
         raise HTTPException(status_code=400, detail=f"Cannot read file format: {str(e)}")
 
     if not grid:
-        raise HTTPException(status_code=400, detail="The uploaded bank statement is empty.")
+        raise HTTPException(status_code=400, detail="The uploaded statement is empty.")
 
+    # 1. SCAN FOR TABLE HEADER
+    date_col = -1
+    narr_col = -1
+    debit_col = -1
+    credit_col = -1
+    cr_dr_col = -1
+    amt_col = -1
+    header_idx = -1
+
+    for r_idx, row in enumerate(grid[:40]):
+        row_str = " ".join([str(c).lower() for c in row if c is not None])
+        if any(w in row_str for w in ["narration", "description", "particular"]) and \
+           any(w in row_str for w in ["date", "txn posted", "value dt"]):
+            header_idx = r_idx
+            for c_idx, cell in enumerate(row):
+                if cell is None:
+                    continue
+                c_low = str(cell).lower().strip()
+                # Prioritize posting/transaction date over value date
+                if "posted" in c_low or (c_low == "date" and date_col == -1):
+                    date_col = c_idx
+                elif "value" in c_low and date_col == -1:
+                    date_col = c_idx
+                elif any(k in c_low for k in ["narration", "description", "particular"]):
+                    narr_col = c_idx
+                elif any(k in c_low for k in ["withdrawal", "debit"]):
+                    debit_col = c_idx
+                elif any(k in c_low for k in ["deposit", "credit"]) and "cr/dr" not in c_low:
+                    credit_col = c_idx
+                elif "cr/dr" in c_low:
+                    cr_dr_col = c_idx
+                elif "amount" in c_low and "balance" not in c_low:
+                    amt_col = c_idx
+            break
+
+    start_row = header_idx + 1 if header_idx != -1 else 0
     txns = []
-    for r_idx, row in enumerate(grid):
+
+    for r_idx in range(start_row, len(grid)):
+        row = grid[r_idx]
         if not row or not any(row):
             continue
 
-        clean_row = [c for c in row if c is not None and str(c).strip() != ""]
-        if len(clean_row) < 3:
+        row_str = " ".join([str(c) for c in row if c is not None])
+        if set(row_str.replace(" ", "")).issubset({"*", "-", "_"}):
             continue
 
-        # Look for date in first 4 columns
+        clean_row = [str(c).strip() if c is not None else "" for c in row]
+
+        # Extract Date
         found_date = None
-        date_pos = -1
-        for idx in range(min(4, len(clean_row))):
-            d_val = matches_date(clean_row[idx])
-            if d_val:
-                found_date = d_val
-                date_pos = idx
-                break
+        if date_col != -1 and date_col < len(clean_row):
+            found_date = parse_date_to_iso(clean_row[date_col])
+
+        if not found_date:
+            for c_idx in range(min(5, len(clean_row))):
+                d_val = parse_date_to_iso(clean_row[c_idx])
+                if d_val:
+                    found_date = d_val
+                    break
 
         if not found_date:
             continue
 
-        # Look for narration string
+        # Extract Narration
         narr = "Bank Transaction"
-        for idx in range(date_pos + 1, len(clean_row)):
-            val = str(clean_row[idx]).strip()
-            if len(val) > 3 and not re.match(r"^[\d\.,\s₹\-]+$", val):
-                narr = val
-                break
+        if narr_col != -1 and narr_col < len(clean_row) and len(clean_row[narr_col]) > 1:
+            narr = clean_row[narr_col]
+        else:
+            for c_idx in range(len(clean_row)):
+                val = clean_row[c_idx]
+                if len(val) > 4 and not re.match(r"^[\d\.,\s₹\-\(\)]+$", val) and not parse_date_to_iso(val):
+                    narr = val
+                    break
 
-        # Look for numeric amounts (Debit, Credit)
-        numbers = []
-        for idx in range(date_pos + 1, len(clean_row)):
-            num = clean_amount(clean_row[idx])
-            if num > 0:
-                numbers.append((idx, num))
-
-        if not numbers:
-            continue
-
+        # Extract Debit & Credit
         debit = 0.0
         credit = 0.0
 
-        if len(numbers) >= 2:
-            debit = numbers[0][1]
-            credit = numbers[1][1]
-        elif len(numbers) == 1:
-            raw_str = " ".join([str(c).lower() for c in clean_row])
-            if "cr" in raw_str or "dep" in raw_str:
-                credit = numbers[0][1]
+        # FORMAT 1: ICICI Style (Single Amount + Cr/Dr column)
+        if cr_dr_col != -1 and amt_col != -1 and amt_col < len(clean_row):
+            amt = clean_amount(clean_row[amt_col])
+            cr_dr = clean_row[cr_dr_col].upper() if cr_dr_col < len(clean_row) else ""
+            if "CR" in cr_dr:
+                credit = amt
             else:
-                debit = numbers[0][1]
+                debit = amt
+
+        # FORMAT 2: HDFC Style (Withdrawal column & Deposit column)
+        else:
+            if debit_col != -1 and debit_col < len(clean_row):
+                debit = clean_amount(clean_row[debit_col])
+            if credit_col != -1 and credit_col < len(clean_row):
+                credit = clean_amount(clean_row[credit_col])
 
         amount = debit if debit > 0 else credit
         if amount == 0.0:
@@ -290,7 +318,7 @@ async def reconcile_bank_file(
     if not txns:
         raise HTTPException(
             status_code=400,
-            detail="Found date cells, but could not detect valid transaction amounts. Ensure the file contains statement rows."
+            detail="No valid transaction rows found. Verify statement formatting."
         )
 
     return txns
