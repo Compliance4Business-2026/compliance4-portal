@@ -16,7 +16,11 @@ import {
   Send,
   Edit2,
   Download,
-  FileCode
+  FileCode,
+  ShieldCheck,
+  ShieldAlert,
+  AlertTriangle,
+  Sparkles
 } from "lucide-react";
 
 const API_BASE_URL = 
@@ -64,6 +68,51 @@ const SUGGESTED_ITEMS = [
   "General Bakery Item"
 ];
 
+const GST_STATE_CODES = {
+  "01": "Jammu & Kashmir", "02": "Himachal Pradesh", "03": "Punjab", "04": "Chandigarh",
+  "05": "Uttarakhand", "06": "Haryana", "07": "Delhi", "08": "Rajasthan", "09": "Uttar Pradesh",
+  "10": "Bihar", "11": "Sikkim", "12": "Arunachal Pradesh", "13": "Nagaland", "14": "Manipur",
+  "15": "Mizoram", "16": "Tripura", "17": "Meghalaya", "18": "Assam", "19": "West Bengal",
+  "20": "Jharkhand", "21": "Odisha", "22": "Chhattisgarh", "23": "Madhya Pradesh",
+  "24": "Gujarat", "25": "Daman & Diu", "26": "Dadra & Nagar Haveli", "27": "Maharashtra",
+  "28": "Andhra Pradesh (Old)", "29": "Karnataka", "30": "Goa", "31": "Lakshadweep",
+  "32": "Kerala", "33": "Tamil Nadu", "34": "Puducherry", "35": "Andaman & Nicobar",
+  "36": "Telangana", "37": "Andhra Pradesh", "38": "Ladakh"
+};
+
+function validateGSTIN(gstin) {
+  if (!gstin) return { isValid: false, reason: "Missing GSTIN" };
+  const clean = gstin.trim().toUpperCase();
+  if (clean.length !== 15) return { isValid: false, reason: "Must be 15 characters" };
+  const regex = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/;
+  if (!regex.test(clean)) return { isValid: false, reason: "Invalid pattern or 14th character is not 'Z'" };
+
+  const stateCode = clean.substring(0, 2);
+  const stateName = GST_STATE_CODES[stateCode];
+  if (!stateName) return { isValid: false, reason: `Invalid State: ${stateCode}` };
+
+  const chars = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+  let factor = 1;
+  let sum = 0;
+  for (let i = 0; i < 14; i++) {
+    const codePoint = chars.indexOf(clean[i]);
+    let addend = factor * codePoint;
+    factor = factor === 2 ? 1 : 2;
+    addend = Math.floor(addend / 36) + (addend % 36);
+    sum += addend;
+  }
+  const remainder = sum % 36;
+  const checkCodePoint = (36 - remainder) % 36;
+  const expectedCheckChar = chars[checkCodePoint];
+  const isValid = (expectedCheckChar === clean[14]);
+
+  return { 
+    isValid, 
+    stateName, 
+    reason: isValid ? null : `Checksum failed (expected ${expectedCheckChar})` 
+  };
+}
+
 export default function PurchaseModule({ activeClient = "Panasuria Confectionery" }) {
   const [purchaseSubTab, setPurchaseSubTab] = useState("needs_review");
 
@@ -95,6 +144,16 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
     }
   });
 
+  // FEATURE 3: Memorized Item -> Ledger Store
+  const [itemRules, setItemRules] = useState(() => {
+    try {
+      const saved = localStorage.getItem("c4_purchase_item_rules");
+      return saved ? JSON.parse(saved) : {};
+    } catch {
+      return {};
+    }
+  });
+
   useEffect(() => {
     localStorage.setItem("c4_pending_bills", JSON.stringify(pendingBills));
   }, [pendingBills]);
@@ -106,6 +165,10 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
   useEffect(() => {
     localStorage.setItem("c4_pushed_bills", JSON.stringify(pushedBills));
   }, [pushedBills]);
+
+  useEffect(() => {
+    localStorage.setItem("c4_purchase_item_rules", JSON.stringify(itemRules));
+  }, [itemRules]);
 
   const [isUploadingBill, setIsUploadingBill] = useState(false);
   const [uploadProgress, setUploadProgress] = useState("");
@@ -135,6 +198,26 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
       reader.onerror = (error) => reject(error);
     });
 
+  // FEATURE 1: Check for duplicates across all queues
+  const checkDuplicateInvoice = (invoiceNo, vendorName, currentId = null) => {
+    if (!invoiceNo) return null;
+    const cleanInv = invoiceNo.trim().toUpperCase();
+    const cleanVen = (vendorName || "").trim().toLowerCase();
+
+    const allBills = [
+      ...pendingBills.map(b => ({ ...b, stage: "Needs Review" })),
+      ...approvedBills.map(b => ({ ...b, stage: "Approved Invoices" })),
+      ...pushedBills.map(b => ({ ...b, stage: "Pushed to Tally" }))
+    ];
+
+    return allBills.find(b => {
+      if (currentId && b.id === currentId) return false;
+      const bInv = (b.supplier_invoice_no || b.invoice_number || "").trim().toUpperCase();
+      const bVen = (b.vendor_name || "").trim().toLowerCase();
+      return bInv === cleanInv && (bVen === cleanVen || !cleanVen);
+    });
+  };
+
   const openReviewWorkspace = (bill) => {
     setActiveReviewBill(bill);
     setZoomLevel(1);
@@ -149,6 +232,18 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
       }
     ];
 
+    // Auto-apply memorized ledger if available
+    const mappedAccountingLedgers = bill.accounting_ledgers || items.map(it => {
+      const cleanKey = (it.item_name || it.description || "").trim().toLowerCase();
+      const memorized = itemRules[cleanKey];
+      return {
+        description: it.description || "Raw Material",
+        ledger_name: memorized || it.ledger_name || "Purchase: Beverages",
+        amount: it.amount || 0,
+        isAutoMatched: Boolean(memorized)
+      };
+    });
+
     setVoucherData({
       ...bill,
       voucher_type: bill.voucher_type || "Purchase",
@@ -161,18 +256,19 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
       sgst_ledger: bill.sgst_ledger || "Input SGST",
       igst_ledger: bill.igst_ledger || "Input IGST",
       round_off: bill.round_off || 0.00,
-      items: items.map(it => ({
-        item_name: it.item_name || it.description || "General Item",
-        description: it.description || "",
-        qty: it.qty || 1,
-        rate: it.rate || it.amount || 0,
-        amount: it.amount || 0
-      })),
-      accounting_ledgers: bill.accounting_ledgers || items.map(it => ({
-        description: it.description || "Raw Material",
-        ledger_name: it.ledger_name || "Purchase: Beverages",
-        amount: it.amount || 0
-      }))
+      items: items.map(it => {
+        const cleanKey = (it.item_name || it.description || "").trim().toLowerCase();
+        const memorized = itemRules[cleanKey];
+        return {
+          item_name: it.item_name || it.description || "General Item",
+          description: it.description || "",
+          qty: it.qty || 1,
+          rate: it.rate || it.amount || 0,
+          amount: it.amount || 0,
+          memorized_ledger: memorized || null
+        };
+      }),
+      accounting_ledgers: mappedAccountingLedgers
     });
   };
 
@@ -183,6 +279,7 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
     setIsUploadingBill(true);
     let successCount = 0;
     let newExtractedBills = [];
+    let duplicateWarningsCount = 0;
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
@@ -209,6 +306,29 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
           const extracted = await res.json();
           extracted.id = extracted.id || `inv_${Date.now()}_${i}`;
           extracted.file_preview_url = persistentPreview;
+
+          // Memorization pre-fill during upload
+          if (extracted.items && extracted.items.length > 0) {
+            extracted.accounting_ledgers = extracted.items.map(it => {
+              const cleanKey = (it.item_name || it.description || "").trim().toLowerCase();
+              const memorized = itemRules[cleanKey];
+              return {
+                description: it.description || it.item_name || "Supplies",
+                ledger_name: memorized || "Purchase: General Goods",
+                amount: it.amount || 0,
+                isAutoMatched: Boolean(memorized)
+              };
+            });
+          }
+
+          // Check duplicate
+          const invNo = extracted.supplier_invoice_no || extracted.invoice_number;
+          const duplicate = checkDuplicateInvoice(invNo, extracted.vendor_name);
+          if (duplicate) {
+            extracted.duplicateWarning = `Already present in ${duplicate.stage}`;
+            duplicateWarningsCount++;
+          }
+
           newExtractedBills.push(extracted);
           successCount++;
         }
@@ -219,7 +339,11 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
 
     if (newExtractedBills.length > 0) {
       setPendingBills(prev => [...newExtractedBills, ...prev]);
-      notify(`Successfully extracted ${successCount} out of ${files.length} bills!`, "success");
+      if (duplicateWarningsCount > 0) {
+        notify(`Parsed ${successCount} bills (${duplicateWarningsCount} duplicate warnings detected)!`, "info");
+      } else {
+        notify(`Successfully extracted ${successCount} out of ${files.length} bills!`, "success");
+      }
       setPurchaseSubTab("needs_review");
     } else {
       notify("Failed to parse the selected bills. Check file formats.", "error");
@@ -249,6 +373,23 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
       taxable_amount: subtotal,
       grand_total: parseFloat(grandTotal.toFixed(2))
     });
+  };
+
+  // FEATURE 3: Memorize Item / Description to Ledger
+  const handleLedgerSelection = (idx, newLedger, descriptionOrItemName) => {
+    const updated = [...voucherData.accounting_ledgers];
+    updated[idx].ledger_name = newLedger;
+    updated[idx].isAutoMatched = true;
+    setVoucherData({ ...voucherData, accounting_ledgers: updated });
+
+    if (descriptionOrItemName) {
+      const cleanKey = descriptionOrItemName.trim().toLowerCase();
+      setItemRules(prev => ({
+        ...prev,
+        [cleanKey]: newLedger
+      }));
+      notify(`Memorized "${descriptionOrItemName}" → ${newLedger}`, "info");
+    }
   };
 
   const handleApproveInvoice = () => {
@@ -419,6 +560,13 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
 
   // FULL SCREEN SIDE-BY-SIDE REVIEW WORKSPACE
   if (activeReviewBill && voucherData) {
+    const duplicateMatch = checkDuplicateInvoice(
+      voucherData.supplier_invoice_no, 
+      voucherData.vendor_name, 
+      activeReviewBill.id
+    );
+    const gstCheck = validateGSTIN(voucherData.vendor_gstin);
+
     return (
       <div className="flex flex-col h-full bg-[#F8FAFC] text-slate-800 font-sans">
         <header className="h-14 bg-white border-b border-slate-200 px-6 flex items-center justify-between shadow-sm z-10 shrink-0">
@@ -433,6 +581,12 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
               {voucherData.vendor_name || "Invoice Review"}
             </h2>
             <span className="text-xs text-slate-400">| #{voucherData.supplier_invoice_no}</span>
+            {duplicateMatch && (
+              <span className="flex items-center gap-1 text-[11px] font-bold text-amber-800 bg-amber-100 px-2 py-0.5 rounded border border-amber-300">
+                <AlertTriangle className="w-3 h-3 text-amber-700" />
+                Duplicate: In {duplicateMatch.stage}
+              </span>
+            )}
           </div>
 
           <div className="flex items-center gap-3">
@@ -454,6 +608,19 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
             </button>
           </div>
         </header>
+
+        {/* DUPLICATE WARNING BAR */}
+        {duplicateMatch && (
+          <div className="bg-amber-50 border-b border-amber-200 px-6 py-2 flex items-center justify-between text-xs text-amber-900">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+              <span>
+                <strong>Warning:</strong> An invoice with number <strong>#{voucherData.supplier_invoice_no}</strong> for <strong>{voucherData.vendor_name}</strong> already exists in <strong>{duplicateMatch.stage}</strong>.
+              </span>
+            </div>
+            <span className="text-[11px] font-semibold text-amber-700">Verify to avoid double booking</span>
+          </div>
+        )}
 
         <div className="flex-1 flex overflow-hidden">
           {/* LEFT: PREVIEW */}
@@ -531,9 +698,16 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
                   Accounting Mode
                 </button>
               </div>
-              <span className="text-[11px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded mb-2">
-                AI Parsed
-              </span>
+              <div className="flex items-center gap-2 mb-2">
+                {Object.keys(itemRules).length > 0 && (
+                  <span className="flex items-center gap-1 text-[10px] font-semibold text-indigo-700 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded">
+                    <Sparkles className="w-3 h-3" /> Auto-Learning Active
+                  </span>
+                )}
+                <span className="text-[11px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded">
+                  AI Parsed
+                </span>
+              </div>
             </div>
 
             <div className="p-8 space-y-6">
@@ -590,12 +764,32 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
                     />
                   </div>
                   <div>
-                    <label className="block text-xs font-bold text-slate-600 mb-1">GSTIN</label>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-xs font-bold text-slate-600">GSTIN</label>
+                      {/* FEATURE 2: GSTIN Verification Indicator */}
+                      {voucherData.vendor_gstin && (
+                        gstCheck.isValid ? (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded">
+                            <ShieldCheck className="w-3 h-3 text-emerald-600" />
+                            {gstCheck.stateName}
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-rose-700 bg-rose-50 px-2 py-0.5 rounded" title={gstCheck.reason}>
+                            <ShieldAlert className="w-3 h-3 text-rose-600" />
+                            Invalid GSTIN
+                          </span>
+                        )
+                      )}
+                    </div>
                     <input
                       type="text"
                       value={voucherData.vendor_gstin || ""}
                       onChange={(e) => setVoucherData({ ...voucherData, vendor_gstin: e.target.value })}
-                      className="w-full text-xs font-mono border border-slate-300 rounded-lg p-2"
+                      className={`w-full text-xs font-mono border rounded-lg p-2 ${
+                        gstCheck.isValid 
+                          ? "border-slate-300 bg-white" 
+                          : "border-rose-300 bg-rose-50/50"
+                      }`}
                     />
                   </div>
                   <div>
@@ -757,26 +951,33 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
                         {(voucherData.accounting_ledgers || []).map((it, idx) => (
                           <tr key={idx} className="hover:bg-slate-50/50">
                             <td className="p-2">
-                              <input
-                                type="text"
-                                value={it.description}
-                                onChange={(e) => {
-                                  const updated = [...voucherData.accounting_ledgers];
-                                  updated[idx].description = e.target.value;
-                                  setVoucherData({ ...voucherData, accounting_ledgers: updated });
-                                }}
-                                className="w-full text-xs p-1 border border-slate-200 rounded"
-                              />
+                              <div className="flex items-center gap-1">
+                                <input
+                                  type="text"
+                                  value={it.description}
+                                  onChange={(e) => {
+                                    const updated = [...voucherData.accounting_ledgers];
+                                    updated[idx].description = e.target.value;
+                                    setVoucherData({ ...voucherData, accounting_ledgers: updated });
+                                  }}
+                                  className="w-full text-xs p-1 border border-slate-200 rounded"
+                                />
+                                {it.isAutoMatched && (
+                                  <span title="Auto-mapped from memorized rules" className="text-indigo-600 shrink-0">
+                                    <Sparkles className="w-3.5 h-3.5" />
+                                  </span>
+                                )}
+                              </div>
                             </td>
                             <td className="p-2">
                               <select
                                 value={it.ledger_name}
-                                onChange={(e) => {
-                                  const updated = [...voucherData.accounting_ledgers];
-                                  updated[idx].ledger_name = e.target.value;
-                                  setVoucherData({ ...voucherData, accounting_ledgers: updated });
-                                }}
-                                className="w-full text-xs p-1 bg-white border border-slate-200 rounded font-medium"
+                                onChange={(e) => handleLedgerSelection(idx, e.target.value, it.description)}
+                                className={`w-full text-xs p-1 rounded font-medium border transition ${
+                                  it.isAutoMatched
+                                    ? "bg-indigo-50 border-indigo-200 text-indigo-900 font-semibold"
+                                    : "bg-white border-slate-200 text-slate-700"
+                                }`}
                               >
                                 {SUGGESTED_EXPENSE_LEDGERS.map((led) => (
                                   <option key={led} value={led}>{led}</option>
@@ -926,6 +1127,16 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
                 <p className="text-slate-600">
                   Save and approve invoice <strong>#{voucherData.supplier_invoice_no}</strong> from <strong>{voucherData.vendor_name}</strong> for <strong>₹{voucherData.grand_total}</strong>?
                 </p>
+                {duplicateMatch && (
+                  <div className="bg-amber-50 p-3 rounded-lg border border-amber-200 text-amber-800">
+                    <p className="font-semibold flex items-center gap-1">
+                      <AlertTriangle className="w-4 h-4 text-amber-600" /> Duplicate Detected
+                    </p>
+                    <p className="text-[11px] mt-0.5">
+                      This bill already exists in {duplicateMatch.stage}. Confirming will record an additional entry.
+                    </p>
+                  </div>
+                )}
                 <div className="bg-slate-50 p-3 rounded-lg border border-slate-200">
                   <p className="text-[11px] text-slate-500">
                     This bill will be stored in <strong>Approved Invoices</strong> where it can be batch exported to Excel/XML or pushed directly to Tally Prime.
@@ -960,7 +1171,15 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
       <header className="h-16 bg-white border-b border-slate-200 px-8 flex items-center justify-between shadow-sm">
         <div>
           <h2 className="text-lg font-bold text-slate-900">Purchase Invoices</h2>
-          <p className="text-xs text-slate-500">{activeClient}</p>
+          <div className="flex items-center gap-2">
+            <p className="text-xs text-slate-500">{activeClient}</p>
+            {Object.keys(itemRules).length > 0 && (
+              <span className="flex items-center gap-1 text-[10px] bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-full font-semibold border border-indigo-200">
+                <Sparkles className="w-2.5 h-2.5" />
+                {Object.keys(itemRules).length} Rules Learned
+              </span>
+            )}
+          </div>
         </div>
         <div className="flex items-center gap-3">
           {purchaseSubTab === "approved" && approvedBills.length > 0 && (
@@ -1072,38 +1291,61 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {pendingBills.map((b) => (
-                    <tr 
-                      key={b.id} 
-                      onClick={() => openReviewWorkspace(b)}
-                      className="hover:bg-slate-50 cursor-pointer transition"
-                    >
-                      <td className="px-6 py-4">
-                        <p className="font-bold text-slate-900">{b.vendor_name || "Unknown Vendor"}</p>
-                        <p className="text-[11px] text-slate-400 font-mono">{b.vendor_gstin || "No GSTIN"}</p>
-                      </td>
-                      <td className="px-6 py-4 font-mono font-medium text-slate-800">
-                        #{b.invoice_number || b.supplier_invoice_no}
-                      </td>
-                      <td className="px-6 py-4 text-slate-500">
-                        {b.invoice_date || b.bill_date}
-                      </td>
-                      <td className="px-6 py-4 font-mono text-slate-700">
-                        ₹{(parseFloat(b.taxable_amount) || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                      </td>
-                      <td className="px-6 py-4 font-mono font-bold text-slate-900">
-                        ₹{(parseFloat(b.grand_total) || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                      </td>
-                      <td className="px-6 py-4 text-right" onClick={(e) => e.stopPropagation()}>
-                        <button
-                          onClick={() => openReviewWorkspace(b)}
-                          className="bg-slate-900 hover:bg-slate-800 text-white font-semibold text-[11px] px-3 py-1.5 rounded transition"
-                        >
-                          Review & Verify
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
+                  {pendingBills.map((b) => {
+                    const duplicate = checkDuplicateInvoice(b.supplier_invoice_no || b.invoice_number, b.vendor_name, b.id);
+                    const gstCheck = validateGSTIN(b.vendor_gstin);
+
+                    return (
+                      <tr 
+                        key={b.id} 
+                        onClick={() => openReviewWorkspace(b)}
+                        className={`hover:bg-slate-50 cursor-pointer transition ${duplicate ? "bg-amber-50/40" : ""}`}
+                      >
+                        <td className="px-6 py-4">
+                          <p className="font-bold text-slate-900">{b.vendor_name || "Unknown Vendor"}</p>
+                          <div className="flex items-center gap-1.5 mt-0.5">
+                            <span className="text-[11px] text-slate-400 font-mono">{b.vendor_gstin || "No GSTIN"}</span>
+                            {b.vendor_gstin && (
+                              gstCheck.isValid ? (
+                                <span className="inline-flex items-center gap-0.5 text-[9px] font-bold text-emerald-700 bg-emerald-50 px-1 py-0.5 rounded">
+                                  <ShieldCheck className="w-2.5 h-2.5 text-emerald-600" /> {gstCheck.stateName}
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-0.5 text-[9px] font-bold text-rose-700 bg-rose-50 px-1 py-0.5 rounded">
+                                  <ShieldAlert className="w-2.5 h-2.5 text-rose-600" /> Invalid
+                                </span>
+                              )
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 font-mono font-medium text-slate-800">
+                          #{b.invoice_number || b.supplier_invoice_no}
+                          {duplicate && (
+                            <span className="ml-1.5 inline-flex items-center gap-0.5 text-[10px] font-bold bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded border border-amber-300">
+                              <AlertTriangle className="w-2.5 h-2.5 text-amber-700" /> Duplicate
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-6 py-4 text-slate-500">
+                          {b.invoice_date || b.bill_date}
+                        </td>
+                        <td className="px-6 py-4 font-mono text-slate-700">
+                          ₹{(parseFloat(b.taxable_amount) || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                        </td>
+                        <td className="px-6 py-4 font-mono font-bold text-slate-900">
+                          ₹{(parseFloat(b.grand_total) || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                        </td>
+                        <td className="px-6 py-4 text-right" onClick={(e) => e.stopPropagation()}>
+                          <button
+                            onClick={() => openReviewWorkspace(b)}
+                            className="bg-slate-900 hover:bg-slate-800 text-white font-semibold text-[11px] px-3 py-1.5 rounded transition"
+                          >
+                            Review & Verify
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             )}
