@@ -7,4 +7,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-CMD ["python", "backend_api.py"]
+CMD exec uvicorn backend_api:app --host 0.0.0.0 --port ${PORT:-8080}
