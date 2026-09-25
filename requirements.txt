@@ -7,5 +7,5 @@ supabase
 pandas
 openpyxl
 requests
-openpyxl
 httpx
+xlrd
