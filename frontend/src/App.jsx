@@ -4,7 +4,6 @@ import {
   FileText, 
   CreditCard, 
   TrendingUp, 
-  Archive, 
   Settings, 
   Upload, 
   RefreshCw, 
@@ -13,23 +12,20 @@ import {
   FileSpreadsheet,
   Check,
   ChevronLeft,
-  ChevronRight,
   ZoomIn,
   ZoomOut,
   RotateCcw,
   Plus,
   Trash2,
   X,
-  Search,
-  ChevronDown
+  Send
 } from "lucide-react";
 
 const API_BASE_URL = 
   import.meta.env.VITE_BACKEND_URL || 
   "https://compliance4-backend-1021821620394.asia-south1.run.app";
 
-// Pre-configured ledger presets for Cafe / Restaurant Accounting
-const SUGGESTED_LEDGERS = [
+const SUGGESTED_EXPENSE_LEDGERS = [
   "Purchase: Beverages",
   "Purchase: Dairy Products",
   "Purchase: Dessert / Bakery",
@@ -38,27 +34,78 @@ const SUGGESTED_LEDGERS = [
   "Purchase: Sauces",
   "Purchase: Vegetables",
   "Purchase: General Goods",
-  "Rent Expenses",
-  "Staff Salary & Wages",
   "Packaging Materials",
-  "Electricity Expenses",
-  "Printing & Stationery"
+  "Kitchen Consumables",
+  "Printing & Stationery",
+  "Repair & Maintenance"
+];
+
+const SUGGESTED_GST_LEDGERS = [
+  "Input CGST",
+  "Input SGST",
+  "Input IGST",
+  "CGST Input Tax",
+  "SGST Input Tax",
+  "IGST Input Tax",
+  "GST Input 2.5%",
+  "GST Input 6%",
+  "GST Input 9%",
+  "GST Input 14%"
+];
+
+const SUGGESTED_ITEMS = [
+  "Vanilla Flavoring Extract",
+  "Chocolate Compound 35.4%",
+  "Dairy Whipping Cream",
+  "Whole Milk 1L",
+  "Baking Flour / Maida",
+  "Granulated Sugar",
+  "Cocoa Powder Dark",
+  "Monin Flavored Syrups",
+  "Paper Coffee Cups 250ml",
+  "General Bakery Item"
 ];
 
 export default function App() {
   const [activeTab, setActiveTab] = useState("purchase");
+  const [purchaseSubTab, setPurchaseSubTab] = useState("needs_review"); // "needs_review" | "approved"
   const [activeClient, setActiveClient] = useState("Panasuria Confectionery");
-  const [pendingBills, setPendingBills] = useState([]);
+
+  // Persistent Invoices Store in localStorage
+  const [pendingBills, setPendingBills] = useState(() => {
+    try {
+      const saved = localStorage.getItem("c4_pending_bills");
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const [approvedBills, setApprovedBills] = useState(() => {
+    try {
+      const saved = localStorage.getItem("c4_approved_bills");
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  useEffect(() => {
+    localStorage.setItem("c4_pending_bills", JSON.stringify(pendingBills));
+  }, [pendingBills]);
+
+  useEffect(() => {
+    localStorage.setItem("c4_approved_bills", JSON.stringify(approvedBills));
+  }, [approvedBills]);
+
   const [isUploadingBill, setIsUploadingBill] = useState(false);
   const [notification, setNotification] = useState(null);
 
-  // Split-screen Review & Voucher Form State
+  // Review & Form State
   const [activeReviewBill, setActiveReviewBill] = useState(null);
-  const [voucherMode, setVoucherMode] = useState("accounting"); // "item" or "accounting"
+  const [voucherMode, setVoucherMode] = useState("accounting"); // "item" | "accounting"
   const [zoomLevel, setZoomLevel] = useState(1);
   const [showAllocationModal, setShowAllocationModal] = useState(false);
-
-  // Form Fields for Active Voucher
   const [voucherData, setVoucherData] = useState(null);
 
   const invoiceInputRef = useRef(null);
@@ -70,44 +117,58 @@ export default function App() {
     }, 5000);
   };
 
-  // Open Full-Page Review Workspace
+  // Convert File to Base64 for Persistent Offline Image Viewing
+  const fileToBase64 = (file) =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = (error) => reject(error);
+    });
+
+  // Open Full-Screen Review
   const openReviewWorkspace = (bill) => {
     setActiveReviewBill(bill);
     setZoomLevel(1);
-    
-    // Ensure item and accounting ledger lists exist
+
     const items = bill.items && bill.items.length > 0 ? bill.items : [
       {
-        description: "General Supplies",
+        item_name: bill.vendor_name ? "General Purchase" : "Bakery Raw Material",
+        description: bill.vendor_name || "General Supplies",
         qty: 1,
         rate: bill.taxable_amount || 0,
-        discount: 0,
-        amount: bill.taxable_amount || 0,
-        ledger: "Purchase: General Goods"
+        amount: bill.taxable_amount || 0
       }
     ];
 
     setVoucherData({
       ...bill,
-      voucher_type: "Purchase",
-      voucher_date: bill.invoice_date || new Date().toISOString().split("T")[0],
-      supplier_invoice_no: bill.invoice_number || "",
-      bill_date: bill.invoice_date || new Date().toISOString().split("T")[0],
-      source_of_supply: bill.place_of_supply || "Gujarat",
-      destination_of_supply: "Gujarat",
-      purchase_ledger: "Purchase: General Goods",
-      narration: `Purchase from ${bill.vendor_name || "Vendor"}`,
-      items: items,
-      accounting_ledgers: items.map(it => ({
-        description: it.description,
-        ledger_name: it.ledger || "Purchase: General Goods",
+      voucher_type: bill.voucher_type || "Purchase",
+      voucher_date: bill.voucher_date || bill.invoice_date || new Date().toISOString().split("T")[0],
+      supplier_invoice_no: bill.supplier_invoice_no || bill.invoice_number || "",
+      bill_date: bill.bill_date || bill.invoice_date || new Date().toISOString().split("T")[0],
+      source_of_supply: bill.source_of_supply || bill.place_of_supply || "Gujarat",
+      destination_of_supply: bill.destination_of_supply || "Gujarat",
+      cgst_ledger: bill.cgst_ledger || "Input CGST",
+      sgst_ledger: bill.sgst_ledger || "Input SGST",
+      igst_ledger: bill.igst_ledger || "Input IGST",
+      round_off: bill.round_off || 0.00,
+      items: items.map(it => ({
+        item_name: it.item_name || it.description || "General Item",
+        description: it.description || "",
+        qty: it.qty || 1,
+        rate: it.rate || it.amount || 0,
         amount: it.amount || 0
       })),
-      round_off: 0.00
+      accounting_ledgers: bill.accounting_ledgers || items.map(it => ({
+        description: it.description || "Raw Material",
+        ledger_name: it.ledger_name || "Purchase: Beverages",
+        amount: it.amount || 0
+      }))
     });
   };
 
-  // Upload Invoice and Auto-Open Review
+  // Upload Invoice
   const handleInvoiceUpload = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -117,7 +178,12 @@ export default function App() {
     formData.append("file", file);
     formData.append("company_name", activeClient);
 
-    const localPreviewUrl = URL.createObjectURL(file);
+    let persistentPreview = "";
+    try {
+      persistentPreview = await fileToBase64(file);
+    } catch {
+      persistentPreview = "";
+    }
 
     try {
       const res = await fetch(`${API_BASE_URL}/api/invoices/upload`, {
@@ -131,9 +197,11 @@ export default function App() {
       }
 
       const extracted = await res.json();
-      extracted.file_preview_url = localPreviewUrl;
+      extracted.id = extracted.id || `inv_${Date.now()}`;
+      extracted.file_preview_url = persistentPreview;
 
       setPendingBills(prev => [extracted, ...prev]);
+      setPurchaseSubTab("needs_review");
       notify(`Extracted #${extracted.invoice_number || "Bill"} successfully!`, "success");
       openReviewWorkspace(extracted);
     } catch (err) {
@@ -145,43 +213,53 @@ export default function App() {
     }
   };
 
-  // Update Calculations
-  const updateTotals = (updatedVoucher) => {
+  // Recalculate Totals
+  const updateTotals = (updated) => {
     let subtotal = 0;
     if (voucherMode === "item") {
-      subtotal = (updatedVoucher.items || []).reduce((acc, it) => acc + (parseFloat(it.amount) || 0), 0);
+      subtotal = (updated.items || []).reduce((acc, it) => acc + (parseFloat(it.amount) || 0), 0);
     } else {
-      subtotal = (updatedVoucher.accounting_ledgers || []).reduce((acc, it) => acc + (parseFloat(it.amount) || 0), 0);
+      subtotal = (updated.accounting_ledgers || []).reduce((acc, it) => acc + (parseFloat(it.amount) || 0), 0);
     }
 
-    const cgst = parseFloat(updatedVoucher.cgst) || 0;
-    const sgst = parseFloat(updatedVoucher.sgst) || 0;
-    const igst = parseFloat(updatedVoucher.igst) || 0;
-    const roundOff = parseFloat(updatedVoucher.round_off) || 0;
+    const cgst = parseFloat(updated.cgst) || 0;
+    const sgst = parseFloat(updated.sgst) || 0;
+    const igst = parseFloat(updated.igst) || 0;
+    const roundOff = parseFloat(updated.round_off) || 0;
     const grandTotal = subtotal + cgst + sgst + igst + roundOff;
 
     setVoucherData({
-      ...updatedVoucher,
+      ...updated,
       taxable_amount: subtotal,
       grand_total: parseFloat(grandTotal.toFixed(2))
     });
   };
 
-  // Submit to Tally
-  const executeTallyPush = async () => {
+  // Move from "Needs Review" to "Approved"
+  const handleApproveInvoice = () => {
     setShowAllocationModal(false);
+    const approvedVoucher = { ...voucherData, isApproved: true };
+
+    setPendingBills(prev => prev.filter(b => b.id !== activeReviewBill.id));
+    setApprovedBills(prev => [approvedVoucher, ...prev.filter(b => b.id !== approvedVoucher.id)]);
+    setActiveReviewBill(null);
+    setPurchaseSubTab("approved");
+    notify(`Invoice #${approvedVoucher.supplier_invoice_no} approved! Ready to push to Tally.`, "success");
+  };
+
+  // Push to Tally Prime from Approved Tab
+  const handlePushToTally = async (bill) => {
     try {
       const res = await fetch(`${API_BASE_URL}/api/tally/push-voucher`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ bill: voucherData, company_name: activeClient }),
+        body: JSON.stringify({ bill, company_name: activeClient }),
       });
 
       const data = await res.json();
       if (data.status === "success" || data.status === "dispatched") {
-        notify(`Invoice #${voucherData.supplier_invoice_no} pushed to Tally Prime!`, "success");
-        setPendingBills(prev => prev.filter(b => b.id !== activeReviewBill.id));
-        setActiveReviewBill(null);
+        notify(`Invoice #${bill.supplier_invoice_no || bill.invoice_number} synced with Tally Prime!`, "success");
+        setApprovedBills(prev => prev.filter(b => b.id !== bill.id));
       } else {
         throw new Error(data.error || "Tally transmission failed");
       }
@@ -191,7 +269,7 @@ export default function App() {
   };
 
   // ---------------------------------------------------------------------------
-  // FULL PAGE REVIEW WORKSPACE (Side-by-Side)
+  // FULL SCREEN SIDE-BY-SIDE REVIEW WORKSPACE
   // ---------------------------------------------------------------------------
   if (activeReviewBill && voucherData) {
     return (
@@ -215,6 +293,7 @@ export default function App() {
             <button
               onClick={() => {
                 setPendingBills(prev => prev.filter(b => b.id !== activeReviewBill.id));
+                setApprovedBills(prev => prev.filter(b => b.id !== activeReviewBill.id));
                 setActiveReviewBill(null);
               }}
               className="text-xs font-medium text-rose-600 hover:bg-rose-50 px-3 py-1.5 rounded-lg transition"
@@ -225,19 +304,19 @@ export default function App() {
               onClick={() => setShowAllocationModal(true)}
               className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold px-4 py-2 rounded-lg transition shadow-sm"
             >
-              <Check className="w-3.5 h-3.5" /> Approve & Push Tally
+              <Check className="w-3.5 h-3.5" /> Approve Bill
             </button>
           </div>
         </header>
 
         {/* SPLIT SCREEN BODY */}
         <div className="flex-1 flex overflow-hidden">
-          {/* LEFT PANE: INVOICE PREVIEW & ZOOM */}
-          <div className="w-1/2 bg-slate-200/80 border-r border-slate-300 flex flex-col relative overflow-hidden">
+          {/* LEFT: FULL-BLEED DOCUMENT PREVIEW (Header Uncropped) */}
+          <div className="w-1/2 bg-slate-200 border-r border-slate-300 relative overflow-hidden flex flex-col">
             {/* Zoom Controls */}
             <div className="absolute top-4 right-4 z-20 flex items-center gap-1 bg-white/95 backdrop-blur-sm border border-slate-300 shadow-sm rounded-lg p-1">
               <button 
-                onClick={() => setZoomLevel(prev => Math.min(prev + 0.25, 2.5))}
+                onClick={() => setZoomLevel(prev => Math.min(prev + 0.2, 2.5))}
                 className="p-1.5 hover:bg-slate-100 rounded text-slate-600"
                 title="Zoom In"
               >
@@ -245,7 +324,7 @@ export default function App() {
               </button>
               <span className="text-[11px] font-mono px-2 text-slate-600">{Math.round(zoomLevel * 100)}%</span>
               <button 
-                onClick={() => setZoomLevel(prev => Math.max(prev - 0.25, 0.5))}
+                onClick={() => setZoomLevel(prev => Math.max(prev - 0.2, 0.4))}
                 className="p-1.5 hover:bg-slate-100 rounded text-slate-600"
                 title="Zoom Out"
               >
@@ -260,17 +339,22 @@ export default function App() {
               </button>
             </div>
 
-            {/* Document Viewer Container */}
-            <div className="flex-1 overflow-auto p-8 flex items-center justify-center">
-              {activeReviewBill.file_preview_url ? (
+            {/* Scrollable image starting directly at 0,0 top margin */}
+            <div className="flex-1 overflow-auto p-4 flex justify-center items-start">
+              {voucherData.file_preview_url ? (
                 <img
-                  src={activeReviewBill.file_preview_url}
-                  alt="Invoice Document"
-                  style={{ transform: `scale(${zoomLevel})`, transformOrigin: "top center" }}
-                  className="max-w-full bg-white shadow-xl rounded border border-slate-300 transition-transform duration-150"
+                  src={voucherData.file_preview_url}
+                  alt="Original Document"
+                  style={{
+                    transform: `scale(${zoomLevel})`,
+                    transformOrigin: "top center",
+                    maxWidth: "96%",
+                    marginTop: "8px"
+                  }}
+                  className="bg-white shadow-xl rounded border border-slate-300 transition-transform duration-100"
                 />
               ) : (
-                <div className="text-center p-8 bg-white/60 border border-dashed border-slate-400 rounded-xl">
+                <div className="text-center p-12 bg-white/70 border border-dashed border-slate-400 rounded-xl mt-12">
                   <FileText className="w-12 h-12 text-slate-400 mx-auto mb-2" />
                   <p className="text-sm font-semibold text-slate-600">Attached Original Invoice</p>
                   <p className="text-xs text-slate-400 font-mono mt-1">#{voucherData.supplier_invoice_no}</p>
@@ -279,9 +363,9 @@ export default function App() {
             </div>
           </div>
 
-          {/* RIGHT PANE: ACCOUNTING VOUCHER FORM */}
+          {/* RIGHT: ACCOUNTING VOUCHER FORM */}
           <div className="w-1/2 bg-white flex flex-col overflow-y-auto">
-            {/* Mode Switcher Tabs */}
+            {/* Mode Toggle */}
             <div className="border-b border-slate-200 px-8 pt-4 pb-0 flex items-center justify-between">
               <div className="flex items-center gap-6">
                 <button
@@ -311,7 +395,7 @@ export default function App() {
             </div>
 
             <div className="p-8 space-y-6">
-              {/* SECTION: VOUCHER & INVOICE DETAILS */}
+              {/* VOUCHER HEADER FIELDS */}
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-bold text-slate-600 mb-1">Voucher Type</label>
@@ -328,7 +412,7 @@ export default function App() {
                     type="date"
                     value={voucherData.voucher_date}
                     onChange={(e) => setVoucherData({ ...voucherData, voucher_date: e.target.value })}
-                    className="w-full text-xs border border-slate-300 rounded-lg p-2 focus:ring-1 focus:ring-slate-900"
+                    className="w-full text-xs border border-slate-300 rounded-lg p-2"
                   />
                 </div>
                 <div>
@@ -337,7 +421,7 @@ export default function App() {
                     type="text"
                     value={voucherData.supplier_invoice_no}
                     onChange={(e) => setVoucherData({ ...voucherData, supplier_invoice_no: e.target.value })}
-                    className="w-full text-xs border border-slate-300 rounded-lg p-2 focus:ring-1 focus:ring-slate-900"
+                    className="w-full text-xs border border-slate-300 rounded-lg p-2 font-mono"
                   />
                 </div>
                 <div>
@@ -346,13 +430,13 @@ export default function App() {
                     type="date"
                     value={voucherData.bill_date}
                     onChange={(e) => setVoucherData({ ...voucherData, bill_date: e.target.value })}
-                    className="w-full text-xs border border-slate-300 rounded-lg p-2 focus:ring-1 focus:ring-slate-900"
+                    className="w-full text-xs border border-slate-300 rounded-lg p-2"
                   />
                 </div>
               </div>
 
-              {/* SECTION: VENDOR DETAILS */}
-              <div className="border-t border-slate-100 pt-4 space-y-4">
+              {/* VENDOR DETAILS */}
+              <div className="border-t border-slate-100 pt-4 space-y-3">
                 <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400">Vendor Details</h4>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="col-span-2">
@@ -361,7 +445,7 @@ export default function App() {
                       type="text"
                       value={voucherData.vendor_name || ""}
                       onChange={(e) => setVoucherData({ ...voucherData, vendor_name: e.target.value })}
-                      className="w-full text-xs border border-slate-300 rounded-lg p-2 font-semibold focus:ring-1 focus:ring-slate-900"
+                      className="w-full text-xs border border-slate-300 rounded-lg p-2 font-semibold"
                     />
                   </div>
                   <div>
@@ -370,7 +454,7 @@ export default function App() {
                       type="text"
                       value={voucherData.vendor_gstin || ""}
                       onChange={(e) => setVoucherData({ ...voucherData, vendor_gstin: e.target.value })}
-                      className="w-full text-xs font-mono border border-slate-300 rounded-lg p-2 focus:ring-1 focus:ring-slate-900"
+                      className="w-full text-xs font-mono border border-slate-300 rounded-lg p-2"
                     />
                   </div>
                   <div>
@@ -379,26 +463,25 @@ export default function App() {
                       type="text"
                       value={voucherData.source_of_supply || ""}
                       onChange={(e) => setVoucherData({ ...voucherData, source_of_supply: e.target.value })}
-                      className="w-full text-xs border border-slate-300 rounded-lg p-2 focus:ring-1 focus:ring-slate-900"
+                      className="w-full text-xs border border-slate-300 rounded-lg p-2"
                     />
                   </div>
                 </div>
               </div>
 
-              {/* SECTION: ITEM MODE GRID */}
+              {/* ITEM MODE: INCLUDES SELECTABLE ITEM DROPDOWN */}
               {voucherMode === "item" && (
                 <div className="border-t border-slate-100 pt-4 space-y-3">
                   <div className="flex items-center justify-between">
-                    <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400">Item Details</h4>
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400">Inventory Items</h4>
                     <button
                       onClick={() => {
                         const newItems = [...(voucherData.items || []), {
+                          item_name: "General Bakery Item",
                           description: "",
                           qty: 1,
                           rate: 0,
-                          discount: 0,
-                          amount: 0,
-                          ledger: voucherData.purchase_ledger
+                          amount: 0
                         }];
                         updateTotals({ ...voucherData, items: newItems });
                       }}
@@ -412,9 +495,10 @@ export default function App() {
                     <table className="w-full text-left text-xs">
                       <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-semibold">
                         <tr>
+                          <th className="p-2.5 w-48">Select Item</th>
                           <th className="p-2.5">Description</th>
                           <th className="p-2.5 w-16">Qty</th>
-                          <th className="p-2.5 w-24">Rate (₹)</th>
+                          <th className="p-2.5 w-20">Rate (₹)</th>
                           <th className="p-2.5 w-24">Amount (₹)</th>
                           <th className="p-2.5 w-8"></th>
                         </tr>
@@ -422,6 +506,21 @@ export default function App() {
                       <tbody className="divide-y divide-slate-100">
                         {(voucherData.items || []).map((it, idx) => (
                           <tr key={idx} className="hover:bg-slate-50/50">
+                            <td className="p-2">
+                              <select
+                                value={it.item_name}
+                                onChange={(e) => {
+                                  const updated = [...voucherData.items];
+                                  updated[idx].item_name = e.target.value;
+                                  setVoucherData({ ...voucherData, items: updated });
+                                }}
+                                className="w-full text-xs p-1 bg-white border border-slate-200 rounded font-medium"
+                              >
+                                {SUGGESTED_ITEMS.map((item) => (
+                                  <option key={item} value={item}>{item}</option>
+                                ))}
+                              </select>
+                            </td>
                             <td className="p-2">
                               <input
                                 type="text"
@@ -431,7 +530,7 @@ export default function App() {
                                   updated[idx].description = e.target.value;
                                   setVoucherData({ ...voucherData, items: updated });
                                 }}
-                                className="w-full text-xs p-1 border border-transparent hover:border-slate-200 rounded focus:border-slate-400 focus:outline-none"
+                                className="w-full text-xs p-1 border border-slate-200 rounded"
                               />
                             </td>
                             <td className="p-2">
@@ -441,10 +540,10 @@ export default function App() {
                                 onChange={(e) => {
                                   const updated = [...voucherData.items];
                                   updated[idx].qty = parseFloat(e.target.value) || 0;
-                                  updated[idx].amount = (updated[idx].qty * updated[idx].rate) - (updated[idx].discount || 0);
+                                  updated[idx].amount = (updated[idx].qty * updated[idx].rate);
                                   updateTotals({ ...voucherData, items: updated });
                                 }}
-                                className="w-full text-xs p-1 border border-transparent hover:border-slate-200 rounded focus:border-slate-400 focus:outline-none"
+                                className="w-full text-xs p-1 border border-slate-200 rounded"
                               />
                             </td>
                             <td className="p-2">
@@ -455,10 +554,10 @@ export default function App() {
                                 onChange={(e) => {
                                   const updated = [...voucherData.items];
                                   updated[idx].rate = parseFloat(e.target.value) || 0;
-                                  updated[idx].amount = (updated[idx].qty * updated[idx].rate) - (updated[idx].discount || 0);
+                                  updated[idx].amount = (updated[idx].qty * updated[idx].rate);
                                   updateTotals({ ...voucherData, items: updated });
                                 }}
-                                className="w-full text-xs font-mono p-1 border border-transparent hover:border-slate-200 rounded focus:border-slate-400 focus:outline-none"
+                                className="w-full text-xs font-mono p-1 border border-slate-200 rounded"
                               />
                             </td>
                             <td className="p-2 font-mono font-medium text-slate-800">
@@ -483,7 +582,7 @@ export default function App() {
                 </div>
               )}
 
-              {/* SECTION: ACCOUNTING MODE GRID */}
+              {/* ACCOUNTING MODE */}
               {voucherMode === "accounting" && (
                 <div className="border-t border-slate-100 pt-4 space-y-3">
                   <div className="flex items-center justify-between">
@@ -507,7 +606,7 @@ export default function App() {
                     <table className="w-full text-left text-xs">
                       <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-semibold">
                         <tr>
-                          <th className="p-2.5">Item Narration</th>
+                          <th className="p-2.5">Item Description</th>
                           <th className="p-2.5">Ledger Name</th>
                           <th className="p-2.5 w-28">Amount (₹)</th>
                           <th className="p-2.5 w-8"></th>
@@ -525,7 +624,7 @@ export default function App() {
                                   updated[idx].description = e.target.value;
                                   setVoucherData({ ...voucherData, accounting_ledgers: updated });
                                 }}
-                                className="w-full text-xs p-1 border border-transparent hover:border-slate-200 rounded focus:border-slate-400 focus:outline-none"
+                                className="w-full text-xs p-1 border border-slate-200 rounded"
                               />
                             </td>
                             <td className="p-2">
@@ -536,9 +635,9 @@ export default function App() {
                                   updated[idx].ledger_name = e.target.value;
                                   setVoucherData({ ...voucherData, accounting_ledgers: updated });
                                 }}
-                                className="w-full text-xs p-1 bg-white border border-slate-200 rounded focus:border-slate-400 focus:outline-none font-medium"
+                                className="w-full text-xs p-1 bg-white border border-slate-200 rounded font-medium"
                               >
-                                {SUGGESTED_LEDGERS.map((led) => (
+                                {SUGGESTED_EXPENSE_LEDGERS.map((led) => (
                                   <option key={led} value={led}>{led}</option>
                                 ))}
                               </select>
@@ -553,7 +652,7 @@ export default function App() {
                                   updated[idx].amount = parseFloat(e.target.value) || 0;
                                   updateTotals({ ...voucherData, accounting_ledgers: updated });
                                 }}
-                                className="w-full text-xs font-mono p-1 border border-transparent hover:border-slate-200 rounded focus:border-slate-400 focus:outline-none font-medium"
+                                className="w-full text-xs font-mono p-1 border border-slate-200 rounded font-medium"
                               />
                             </td>
                             <td className="p-2 text-right">
@@ -575,16 +674,27 @@ export default function App() {
                 </div>
               )}
 
-              {/* SECTION: SUMMARY & GST BREAKDOWN */}
-              <div className="border-t border-slate-100 pt-4 space-y-2">
+              {/* GST LEDGER SELECTION & TOTALS */}
+              <div className="border-t border-slate-100 pt-4 space-y-3">
                 <div className="flex justify-between text-xs text-slate-600 font-medium">
                   <span>Sub Total (Taxable Value):</span>
                   <span className="font-mono">₹{(voucherData.taxable_amount || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span>
                 </div>
 
-                <div className="grid grid-cols-3 gap-3 pt-2">
+                {/* CGST Row */}
+                <div className="grid grid-cols-3 gap-3 items-center">
                   <div>
-                    <label className="block text-[11px] font-semibold text-slate-500 mb-1">CGST (₹)</label>
+                    <label className="block text-[11px] font-semibold text-slate-500 mb-1">CGST Ledger</label>
+                    <select
+                      value={voucherData.cgst_ledger}
+                      onChange={(e) => setVoucherData({ ...voucherData, cgst_ledger: e.target.value })}
+                      className="w-full text-xs p-1.5 border border-slate-300 rounded font-medium"
+                    >
+                      {SUGGESTED_GST_LEDGERS.map(g => <option key={g} value={g}>{g}</option>)}
+                    </select>
+                  </div>
+                  <div className="col-span-2">
+                    <label className="block text-[11px] font-semibold text-slate-500 mb-1">CGST Amount (₹)</label>
                     <input
                       type="number"
                       step="0.01"
@@ -593,8 +703,22 @@ export default function App() {
                       className="w-full text-xs font-mono border border-slate-300 rounded p-1.5"
                     />
                   </div>
+                </div>
+
+                {/* SGST Row */}
+                <div className="grid grid-cols-3 gap-3 items-center">
                   <div>
-                    <label className="block text-[11px] font-semibold text-slate-500 mb-1">SGST (₹)</label>
+                    <label className="block text-[11px] font-semibold text-slate-500 mb-1">SGST Ledger</label>
+                    <select
+                      value={voucherData.sgst_ledger}
+                      onChange={(e) => setVoucherData({ ...voucherData, sgst_ledger: e.target.value })}
+                      className="w-full text-xs p-1.5 border border-slate-300 rounded font-medium"
+                    >
+                      {SUGGESTED_GST_LEDGERS.map(g => <option key={g} value={g}>{g}</option>)}
+                    </select>
+                  </div>
+                  <div className="col-span-2">
+                    <label className="block text-[11px] font-semibold text-slate-500 mb-1">SGST Amount (₹)</label>
                     <input
                       type="number"
                       step="0.01"
@@ -603,8 +727,22 @@ export default function App() {
                       className="w-full text-xs font-mono border border-slate-300 rounded p-1.5"
                     />
                   </div>
+                </div>
+
+                {/* IGST Row */}
+                <div className="grid grid-cols-3 gap-3 items-center">
                   <div>
-                    <label className="block text-[11px] font-semibold text-slate-500 mb-1">IGST (₹)</label>
+                    <label className="block text-[11px] font-semibold text-slate-500 mb-1">IGST Ledger</label>
+                    <select
+                      value={voucherData.igst_ledger}
+                      onChange={(e) => setVoucherData({ ...voucherData, igst_ledger: e.target.value })}
+                      className="w-full text-xs p-1.5 border border-slate-300 rounded font-medium"
+                    >
+                      {SUGGESTED_GST_LEDGERS.map(g => <option key={g} value={g}>{g}</option>)}
+                    </select>
+                  </div>
+                  <div className="col-span-2">
+                    <label className="block text-[11px] font-semibold text-slate-500 mb-1">IGST Amount (₹)</label>
                     <input
                       type="number"
                       step="0.01"
@@ -635,13 +773,13 @@ export default function App() {
           </div>
         </div>
 
-        {/* BILL ALLOCATION MODAL (Tally Reference Tracking) */}
+        {/* APPROVE BILL CONFIRMATION MODAL */}
         {showAllocationModal && (
           <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
             <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full p-6 space-y-4">
               <div className="flex items-center justify-between border-b border-slate-100 pb-3">
                 <h3 className="text-sm font-bold text-slate-900">
-                  Bill Allocation for {voucherData.vendor_name}
+                  Confirm Bill Approval
                 </h3>
                 <button onClick={() => setShowAllocationModal(false)} className="text-slate-400 hover:text-slate-600">
                   <X className="w-5 h-5" />
@@ -649,64 +787,29 @@ export default function App() {
               </div>
 
               <div className="space-y-3 text-xs">
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-slate-500 font-semibold mb-1">Type of Ref</label>
-                    <select className="w-full border border-slate-300 rounded p-2 bg-slate-50 font-medium">
-                      <option>New Reference</option>
-                      <option>Against Reference</option>
-                      <option>Advance</option>
-                      <option>On Account</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-slate-500 font-semibold mb-1">Name / Ref No.</label>
-                    <input
-                      type="text"
-                      readOnly
-                      value={voucherData.supplier_invoice_no}
-                      className="w-full border border-slate-200 rounded p-2 bg-slate-50 font-mono"
-                    />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-slate-500 font-semibold mb-1">Due Date</label>
-                    <input
-                      type="date"
-                      defaultValue={voucherData.voucher_date}
-                      className="w-full border border-slate-300 rounded p-2"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-slate-500 font-semibold mb-1">Allocated Amount (₹)</label>
-                    <input
-                      type="number"
-                      readOnly
-                      value={voucherData.grand_total}
-                      className="w-full border border-slate-200 rounded p-2 bg-slate-50 font-mono font-bold"
-                    />
-                  </div>
+                <p className="text-slate-600">
+                  Are you ready to approve invoice <strong>#{voucherData.supplier_invoice_no}</strong> from <strong>{voucherData.vendor_name}</strong> for <strong>₹{voucherData.grand_total}</strong>?
+                </p>
+                <div className="bg-slate-50 p-3 rounded-lg border border-slate-200">
+                  <p className="text-[11px] text-slate-500">
+                    Once approved, this voucher moves into the <strong>Approved Invoices</strong> tab where it can be directly transmitted into Tally Prime.
+                  </p>
                 </div>
               </div>
 
-              <div className="pt-3 flex items-center justify-between border-t border-slate-100 text-xs">
-                <span className="text-slate-500">Net Bill Amount: ₹{voucherData.grand_total}</span>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => setShowAllocationModal(false)}
-                    className="px-3 py-1.5 rounded text-slate-600 hover:bg-slate-100"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={executeTallyPush}
-                    className="px-4 py-1.5 rounded font-semibold bg-slate-900 hover:bg-slate-800 text-white"
-                  >
-                    Confirm & Allocate
-                  </button>
-                </div>
+              <div className="pt-3 flex items-center justify-end gap-2 border-t border-slate-100 text-xs">
+                <button
+                  onClick={() => setShowAllocationModal(false)}
+                  className="px-3 py-1.5 rounded text-slate-600 hover:bg-slate-100"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleApproveInvoice}
+                  className="px-4 py-1.5 rounded font-semibold bg-emerald-600 hover:bg-emerald-700 text-white"
+                >
+                  Approve & Move to Sync
+                </button>
               </div>
             </div>
           </div>
@@ -716,7 +819,7 @@ export default function App() {
   }
 
   // ---------------------------------------------------------------------------
-  // MAIN LISTING VIEW
+  // MAIN WORKSPACE (2 TABS: Needs Review & Approved)
   // ---------------------------------------------------------------------------
   return (
     <div className="flex h-screen bg-[#F8FAFC] text-slate-800 font-sans">
@@ -811,21 +914,14 @@ export default function App() {
         </div>
       </aside>
 
-      {/* MAIN LISTING WORKSPACE */}
+      {/* PURCHASES LISTING */}
       <main className="flex-1 flex flex-col overflow-hidden">
-        {/* TOP BAR */}
         <header className="h-16 bg-white border-b border-slate-200 px-8 flex items-center justify-between shadow-sm">
           <div>
-            <h2 className="text-lg font-bold text-slate-900 capitalize">Purchases</h2>
+            <h2 className="text-lg font-bold text-slate-900">Purchase Invoices</h2>
             <p className="text-xs text-slate-500">{activeClient}</p>
           </div>
           <div className="flex items-center gap-3">
-            <button
-              onClick={() => notify("Connecting to Tally Prime XML server on port 9000...", "info")}
-              className="flex items-center gap-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold px-3 py-2 rounded-lg transition"
-            >
-              <RefreshCw className="w-3.5 h-3.5" /> Sync
-            </button>
             <input
               type="file"
               ref={invoiceInputRef}
@@ -839,80 +935,164 @@ export default function App() {
               className="flex items-center gap-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold px-4 py-2 rounded-lg transition shadow-sm disabled:opacity-50"
             >
               <Upload className="w-3.5 h-3.5" />
-              {isUploadingBill ? "Extracting..." : "Upload Bills"}
+              {isUploadingBill ? "Extracting with Gemini..." : "Upload Bills"}
             </button>
           </div>
         </header>
 
-        {/* WORKSPACE CONTENT */}
         <div className="flex-1 overflow-y-auto p-8">
-          <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
-            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
-              <h3 className="text-sm font-bold text-slate-900">
-                Pending Verification ({pendingBills.length})
-              </h3>
-              <p className="text-xs text-slate-400">Click any row to open the side-by-side review workspace</p>
-            </div>
+          {/* TAB HEADERS: Needs Review vs Approved */}
+          <div className="flex items-center gap-4 border-b border-slate-200 mb-6">
+            <button
+              onClick={() => setPurchaseSubTab("needs_review")}
+              className={`pb-3 text-sm font-bold flex items-center gap-2 border-b-2 transition ${
+                purchaseSubTab === "needs_review"
+                  ? "border-slate-900 text-slate-900"
+                  : "border-transparent text-slate-400 hover:text-slate-600"
+              }`}
+            >
+              Needs Review
+              <span className={`text-xs px-2 py-0.5 rounded-full ${
+                purchaseSubTab === "needs_review" ? "bg-slate-900 text-white" : "bg-slate-200 text-slate-600"
+              }`}>
+                {pendingBills.length}
+              </span>
+            </button>
 
-            {pendingBills.length === 0 ? (
-              <div className="p-16 text-center">
-                <Upload className="w-8 h-8 text-slate-300 mx-auto mb-2" />
-                <p className="text-sm font-semibold text-slate-700">No pending bills</p>
-                <p className="text-xs text-slate-400 mt-0.5">Click "Upload Bills" to start parsing invoices with Gemini AI</p>
-              </div>
-            ) : (
-              <table className="w-full text-left text-xs text-slate-600">
-                <thead className="bg-slate-50 border-b border-slate-200 uppercase font-semibold text-slate-500">
-                  <tr>
-                    <th className="px-6 py-3.5">Vendor</th>
-                    <th className="px-6 py-3.5">Invoice No.</th>
-                    <th className="px-6 py-3.5">Date</th>
-                    <th className="px-6 py-3.5">Taxable (₹)</th>
-                    <th className="px-6 py-3.5">Total Amount (₹)</th>
-                    <th className="px-6 py-3.5 text-right">Action</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {pendingBills.map((b, idx) => (
-                    <tr 
-                      key={b.id || idx} 
-                      onClick={() => openReviewWorkspace(b)}
-                      className="hover:bg-slate-50 cursor-pointer transition"
-                    >
-                      <td className="px-6 py-4">
-                        <p className="font-bold text-slate-900">{b.vendor_name || "Unknown Party"}</p>
-                        <p className="text-[11px] text-slate-400 font-mono">{b.vendor_gstin || "No GSTIN"}</p>
-                      </td>
-                      <td className="px-6 py-4 font-medium text-slate-700 font-mono">
-                        #{b.invoice_number}
-                      </td>
-                      <td className="px-6 py-4 text-slate-500">
-                        {b.invoice_date}
-                      </td>
-                      <td className="px-6 py-4 font-mono font-medium text-slate-800">
-                        ₹{(parseFloat(b.taxable_amount) || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                      </td>
-                      <td className="px-6 py-4 font-mono font-bold text-slate-900">
-                        ₹{(parseFloat(b.grand_total) || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                      </td>
-                      <td className="px-6 py-4 text-right" onClick={(e) => e.stopPropagation()}>
-                        <button
-                          onClick={() => openReviewWorkspace(b)}
-                          className="bg-slate-900 hover:bg-slate-800 text-white font-semibold text-[11px] px-3 py-1.5 rounded transition"
-                        >
-                          Review & Push
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
+            <button
+              onClick={() => setPurchaseSubTab("approved")}
+              className={`pb-3 text-sm font-bold flex items-center gap-2 border-b-2 transition ${
+                purchaseSubTab === "approved"
+                  ? "border-emerald-600 text-emerald-700"
+                  : "border-transparent text-slate-400 hover:text-slate-600"
+              }`}
+            >
+              Approved Invoices
+              <span className={`text-xs px-2 py-0.5 rounded-full ${
+                purchaseSubTab === "approved" ? "bg-emerald-600 text-white" : "bg-slate-200 text-slate-600"
+              }`}>
+                {approvedBills.length}
+              </span>
+            </button>
           </div>
+
+          {/* TAB 1: NEEDS REVIEW */}
+          {purchaseSubTab === "needs_review" && (
+            <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+              {pendingBills.length === 0 ? (
+                <div className="p-16 text-center">
+                  <Upload className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+                  <p className="text-sm font-semibold text-slate-700">No invoices needing review</p>
+                  <p className="text-xs text-slate-400 mt-0.5">Upload a bill to extract details using Gemini AI</p>
+                </div>
+              ) : (
+                <table className="w-full text-left text-xs text-slate-600">
+                  <thead className="bg-slate-50 border-b border-slate-200 uppercase font-semibold text-slate-500">
+                    <tr>
+                      <th className="px-6 py-3.5">Vendor</th>
+                      <th className="px-6 py-3.5">Invoice No.</th>
+                      <th className="px-6 py-3.5">Date</th>
+                      <th className="px-6 py-3.5">Taxable (₹)</th>
+                      <th className="px-6 py-3.5">Total Amount (₹)</th>
+                      <th className="px-6 py-3.5 text-right">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {pendingBills.map((b) => (
+                      <tr 
+                        key={b.id} 
+                        onClick={() => openReviewWorkspace(b)}
+                        className="hover:bg-slate-50 cursor-pointer transition"
+                      >
+                        <td className="px-6 py-4">
+                          <p className="font-bold text-slate-900">{b.vendor_name || "Unknown Vendor"}</p>
+                          <p className="text-[11px] text-slate-400 font-mono">{b.vendor_gstin || "No GSTIN"}</p>
+                        </td>
+                        <td className="px-6 py-4 font-mono font-medium text-slate-800">
+                          #{b.invoice_number || b.supplier_invoice_no}
+                        </td>
+                        <td className="px-6 py-4 text-slate-500">
+                          {b.invoice_date || b.bill_date}
+                        </td>
+                        <td className="px-6 py-4 font-mono text-slate-700">
+                          ₹{(parseFloat(b.taxable_amount) || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                        </td>
+                        <td className="px-6 py-4 font-mono font-bold text-slate-900">
+                          ₹{(parseFloat(b.grand_total) || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                        </td>
+                        <td className="px-6 py-4 text-right" onClick={(e) => e.stopPropagation()}>
+                          <button
+                            onClick={() => openReviewWorkspace(b)}
+                            className="bg-slate-900 hover:bg-slate-800 text-white font-semibold text-[11px] px-3 py-1.5 rounded transition"
+                          >
+                            Review & Verify
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          )}
+
+          {/* TAB 2: APPROVED INVOICES (PUSHABLE TO TALLY) */}
+          {purchaseSubTab === "approved" && (
+            <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+              {approvedBills.length === 0 ? (
+                <div className="p-16 text-center">
+                  <CheckCircle2 className="w-8 h-8 text-emerald-300 mx-auto mb-2" />
+                  <p className="text-sm font-semibold text-slate-700">No approved invoices</p>
+                  <p className="text-xs text-slate-400 mt-0.5">Approve verified invoices in "Needs Review" to sync them to Tally Prime</p>
+                </div>
+              ) : (
+                <table className="w-full text-left text-xs text-slate-600">
+                  <thead className="bg-slate-50 border-b border-slate-200 uppercase font-semibold text-slate-500">
+                    <tr>
+                      <th className="px-6 py-3.5">Vendor</th>
+                      <th className="px-6 py-3.5">Invoice No.</th>
+                      <th className="px-6 py-3.5">Ledger Allocation</th>
+                      <th className="px-6 py-3.5">Total Amount (₹)</th>
+                      <th className="px-6 py-3.5 text-right">Tally Sync</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {approvedBills.map((b) => (
+                      <tr key={b.id} className="hover:bg-slate-50 transition">
+                        <td className="px-6 py-4">
+                          <p className="font-bold text-slate-900">{b.vendor_name}</p>
+                          <p className="text-[11px] text-slate-400 font-mono">{b.vendor_gstin}</p>
+                        </td>
+                        <td className="px-6 py-4 font-mono font-medium text-slate-800">
+                          #{b.supplier_invoice_no || b.invoice_number}
+                        </td>
+                        <td className="px-6 py-4 text-slate-600">
+                          <span className="bg-slate-100 px-2 py-1 rounded text-[11px] font-medium">
+                            {b.accounting_ledgers?.[0]?.ledger_name || "Purchase"}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 font-mono font-bold text-emerald-700">
+                          ₹{(parseFloat(b.grand_total) || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                        </td>
+                        <td className="px-6 py-4 text-right">
+                          <button
+                            onClick={() => handlePushToTally(b)}
+                            className="inline-flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-[11px] px-3.5 py-1.5 rounded transition shadow-sm"
+                          >
+                            <Send className="w-3.5 h-3.5" /> Push to Tally
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          )}
         </div>
       </main>
 
-      {/* FLOATING ERROR/SUCCESS BANNER */}
+      {/* FLOATING TOAST */}
       {notification && (
         <div
           className={`fixed bottom-6 right-6 max-w-md px-4 py-3 rounded-lg shadow-xl border text-sm flex items-start gap-3 transition-all z-50 ${
