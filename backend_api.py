@@ -156,6 +156,29 @@ def auto_assign_ledger(narration: str) -> tuple[str, str]:
         return "Interest Income", "Receipt"
     return "UPI Collection", "Payment"
 
+def safe_parse_csv(text_data: str) -> List[List[Any]]:
+    """Tolerates unquoted newlines and malformed CSV rows from bank exports."""
+    # Attempt 1: Standard StringIO with universal newline handling
+    try:
+        f = io.StringIO(text_data, newline=None)
+        return list(csv.reader(f))
+    except Exception:
+        pass
+
+    # Attempt 2: Ignore quoting errors
+    try:
+        f = io.StringIO(text_data, newline=None)
+        return list(csv.reader(f, quoting=csv.QUOTE_NONE, escapechar='\\'))
+    except Exception:
+        pass
+
+    # Attempt 3: Line-by-line split fallback
+    grid = []
+    for line in text_data.splitlines():
+        if line.strip():
+            grid.append([col.strip().strip('"').strip("'") for col in line.split(",")])
+    return grid
+
 @app.post("/api/bank/reconcile-file")
 async def reconcile_bank_file(
     file: UploadFile = File(...),
@@ -166,7 +189,6 @@ async def reconcile_bank_file(
     filename = file.filename.lower()
     grid: List[List[Any]] = []
 
-    # 1. Parse into a raw 2D grid
     try:
         if filename.endswith((".xlsx", ".xls")):
             try:
@@ -181,19 +203,16 @@ async def reconcile_bank_file(
                         grid = tables[0].fillna("").values.tolist()
                 except Exception:
                     decoded = contents.decode("utf-8", errors="ignore")
-                    reader = csv.reader(io.StringIO(decoded))
-                    grid = list(reader)
+                    grid = safe_parse_csv(decoded)
         else:
             decoded = contents.decode("utf-8", errors="ignore")
-            reader = csv.reader(io.StringIO(decoded))
-            grid = list(reader)
+            grid = safe_parse_csv(decoded)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Cannot read file format: {str(e)}")
 
     if not grid:
         raise HTTPException(status_code=400, detail="The uploaded bank statement is empty.")
 
-    # 2. Extract transaction rows based on cell contents
     txns = []
     for r_idx, row in enumerate(grid):
         if not row or not any(row):
@@ -203,10 +222,10 @@ async def reconcile_bank_file(
         if len(clean_row) < 3:
             continue
 
-        # Check for date in the first 3 columns
+        # Look for date in first 4 columns
         found_date = None
         date_pos = -1
-        for idx in range(min(3, len(clean_row))):
+        for idx in range(min(4, len(clean_row))):
             d_val = matches_date(clean_row[idx])
             if d_val:
                 found_date = d_val
@@ -220,7 +239,7 @@ async def reconcile_bank_file(
         narr = "Bank Transaction"
         for idx in range(date_pos + 1, len(clean_row)):
             val = str(clean_row[idx]).strip()
-            if len(val) > 4 and not re.match(r"^[\d\.,\s₹\-]+$", val):
+            if len(val) > 3 and not re.match(r"^[\d\.,\s₹\-]+$", val):
                 narr = val
                 break
 
