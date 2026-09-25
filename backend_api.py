@@ -103,7 +103,7 @@ async def extract_invoice(
         raise HTTPException(status_code=500, detail=f"Gemini invoice extraction failed: {str(e)}")
 
 # ==============================================================================
-# ROUTE 2: RESILIENT BANK STATEMENT RECONCILIATION
+# ROUTE 2: UNIVERSAL BANK RECONCILIATION (GEMINI 3.6-FLASH PARSER)
 # ==============================================================================
 @app.post("/api/bank/reconcile-file")
 async def reconcile_bank_file(
@@ -111,215 +111,136 @@ async def reconcile_bank_file(
     company_name: str = Form("Panasuria Confectionery"),
     bank_ledger: str = Form("HDFC Bank - 8050")
 ):
+    gemini_key = os.getenv("GEMINI_API_KEY")
+    if not gemini_key:
+        raise HTTPException(status_code=500, detail="GEMINI_API_KEY environment variable not configured.")
+
     contents = await file.read()
     filename = file.filename.lower()
-    txns = []
 
-    # --------------------------------------------------------------------------
-    # CASE A: PDF BANK STATEMENT -> EXTRACT USING GEMINI 3.6-FLASH
-    # --------------------------------------------------------------------------
+    # Convert table text or bytes for Gemini extraction
+    text_content = ""
+    is_binary = False
+
     if filename.endswith(".pdf"):
-        gemini_key = os.getenv("GEMINI_API_KEY")
-        if not gemini_key:
-            raise HTTPException(status_code=500, detail="GEMINI_API_KEY not configured.")
+        is_binary = True
+        mime_type = "application/pdf"
+    elif filename.endswith((".xlsx", ".xls")):
         try:
-            from google import genai
-            from google.genai import types
-            client = genai.Client(api_key=gemini_key)
-            prompt = """
-            Parse this bank statement accurately. Extract all completed transaction rows into a valid raw JSON array of objects.
-            Format:
-            [
-              {
-                "date": "YYYY-MM-DD",
-                "narration": "Full transaction description",
-                "debit": 0.0,
-                "credit": 0.0
-              }
-            ]
-            If withdrawal/debit, put value in debit (positive float) and 0 in credit.
-            If deposit/credit, put value in credit (positive float) and 0 in debit.
-            Do not return markdown or fences, return ONLY the raw JSON array.
-            """
-            resp = client.models.generate_content(
+            df = pd.read_excel(io.BytesIO(contents))
+            text_content = df.to_csv(index=False)
+        except Exception:
+            try:
+                tables = pd.read_html(io.BytesIO(contents))
+                if tables:
+                    text_content = tables[0].to_csv(index=False)
+            except Exception:
+                text_content = contents.decode("utf-8", errors="ignore")
+    else:
+        text_content = contents.decode("utf-8", errors="ignore")
+
+    prompt = """
+    You are an expert Indian Chartered Accountant Bank Auditor. Parse this bank statement.
+    Ignore all metadata headers, account info, and footer summaries.
+    Extract every transaction row into a valid raw JSON array of objects.
+
+    Format:
+    [
+      {
+        "date": "YYYY-MM-DD",
+        "narration": "Full narration or transaction remarks",
+        "debit": 0.0,
+        "credit": 0.0
+      }
+    ]
+
+    Rules:
+    - If it's a withdrawal / debit, put the positive float amount in "debit" and 0.0 in "credit".
+    - If it's a deposit / credit, put the positive float amount in "credit" and 0.0 in "debit".
+    - Standardize date to YYYY-MM-DD format.
+    - Return ONLY valid raw JSON array without markdown or code fences.
+    """
+
+    try:
+        from google import genai
+        from google.genai import types
+
+        client = genai.Client(api_key=gemini_key)
+
+        if is_binary:
+            response = client.models.generate_content(
                 model='gemini-3.6-flash',
                 contents=[
-                    types.Part.from_bytes(data=contents, mime_type="application/pdf"),
+                    types.Part.from_bytes(data=contents, mime_type=mime_type),
                     prompt
                 ]
             )
-            clean = resp.text.replace("```json", "").replace("```", "").strip()
-            raw_txns = json.loads(clean)
-            for idx, r in enumerate(raw_txns):
-                d = float(r.get("debit", 0) or 0)
-                c = float(r.get("credit", 0) or 0)
-                amt = d if d > 0 else c
-                if amt > 0:
-                    txns.append({
-                        "id": f"bank_{int(datetime.now().timestamp() * 1000)}_{idx}",
-                        "date": r.get("date", datetime.now().strftime("%Y-%m-%d")),
-                        "narration": r.get("narration", "Bank Entry"),
-                        "debit": d,
-                        "credit": c,
-                        "amount": amt,
-                        "voucher_type": "Payment" if d > 0 else "Receipt",
-                        "bank_ledger": bank_ledger
-                    })
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"PDF extraction failed: {str(e)}")
+        else:
+            response = client.models.generate_content(
+                model='gemini-3.6-flash',
+                contents=[f"Bank Statement Data:\n{text_content}\n\n{prompt}"]
+            )
 
-    # --------------------------------------------------------------------------
-    # CASE B: CSV / TEXT / EXCEL / HTML STATEMENT
-    # --------------------------------------------------------------------------
-    else:
-        # 1. Attempt reading via Excel engines
-        df = None
-        if filename.endswith((".xlsx", ".xls")):
-            try:
-                df = pd.read_excel(io.BytesIO(contents))
-            except Exception:
-                try:
-                    tables = pd.read_html(io.BytesIO(contents))
-                    if tables:
-                        df = tables[0]
-                except Exception:
-                    df = None
+        clean_text = response.text.replace("```json", "").replace("```", "").strip()
+        raw_txns = json.loads(clean_text)
 
-        # 2. Resilient CSV Text Fallback (Header Auto-Detection)
-        if df is None or df.empty:
-            decoded = contents.decode("utf-8", errors="ignore")
-            lines = [l.strip() for l in decoded.splitlines() if l.strip()]
+        txns = []
+        for idx, r in enumerate(raw_txns):
+            d = float(r.get("debit", 0) or 0)
+            c = float(r.get("credit", 0) or 0)
+            amt = d if d > 0 else c
+            if amt > 0:
+                vtype = "Payment" if d > 0 else "Receipt"
+                narr = str(r.get("narration", "Bank Entry")).strip()
 
-            # Find the header row containing Date/Narration/Description
-            header_idx = 0
-            for i, line in enumerate(lines[:30]):
-                low = line.lower()
-                if "date" in low and ("narration" in low or "description" in low or "particular" in low or "withdrawal" in low or "amount" in low):
-                    header_idx = i
-                    break
-
-            filtered_csv = "\n".join(lines[header_idx:])
-            try:
-                # Engine 'python' and on_bad_lines='skip' prevent tokenizer crashes
-                df = pd.read_csv(io.StringIO(filtered_csv), engine="python", on_bad_lines="skip")
-            except Exception as e:
-                raise HTTPException(status_code=500, detail=f"Could not parse bank table: {str(e)}")
-
-        if df is None or df.empty:
-            raise HTTPException(status_code=400, detail="No readable transaction entries found in this statement.")
-
-        df = df.dropna(how="all")
-
-        # Map column headers
-        date_col = None
-        narr_col = None
-        debit_col = None
-        credit_col = None
-        amt_col = None
-
-        for col in df.columns:
-            c = str(col).lower()
-            if "date" in c or "txn date" in c or "value dt" in c:
-                date_col = col
-            elif "narration" in c or "description" in c or "particular" in c or "remarks" in c:
-                narr_col = col
-            elif "withdrawal" in c or "debit" in c or "dr" in c:
-                debit_col = col
-            elif "deposit" in c or "credit" in c or "cr" in c:
-                credit_col = col
-            elif "amount" in c:
-                amt_col = col
-
-        for idx, row in df.iterrows():
-            try:
-                date_val = str(row[date_col]) if date_col is not None else str(row.iloc[0])
-                if date_val.lower() in ["date", "txn date", "nan", "none", ""]:
-                    continue
-                date_val = date_val[:10]
-
-                narr_val = str(row[narr_col]) if narr_col is not None else (str(row.iloc[1]) if len(row) > 1 else "Bank Entry")
-                if narr_val.lower() in ["narration", "description", "particulars", "nan", "none"]:
-                    continue
-
-                def clean_float(val):
-                    if pd.isna(val) or val is None:
-                        return 0.0
-                    s = str(val).replace(",", "").replace("₹", "").strip()
-                    try:
-                        return abs(float(s))
-                    except Exception:
-                        return 0.0
-
-                debit_val = 0.0
-                credit_val = 0.0
-
-                if debit_col is not None and credit_col is not None:
-                    debit_val = clean_float(row[debit_col])
-                    credit_val = clean_float(row[credit_col])
-                elif amt_col is not None:
-                    amt = clean_float(row[amt_col])
-                    raw_str = str(row[amt_col]).lower()
-                    if "cr" in raw_str:
-                        credit_val = amt
-                    else:
-                        debit_val = amt
+                # Rule-based auto ledger matching
+                n_low = narr.lower()
+                if any(k in n_low for k in ["cash", "atm", "self", "cdm"]):
+                    ledger = "Cash in Hand"
+                    vtype = "Contra"
+                elif "zomato" in n_low:
+                    ledger = "Zomato Payout Clearance"
+                    vtype = "Receipt"
+                elif "swiggy" in n_low:
+                    ledger = "Swiggy Payout Clearance"
+                    vtype = "Receipt"
+                elif any(k in n_low for k in ["elect", "power", "torrent"]):
+                    ledger = "Electricity Expense Payable"
+                    vtype = "Payment"
+                elif any(k in n_low for k in ["salary", "wages", "staff advance"]):
+                    ledger = "Staff Advance / Salary"
+                    vtype = "Payment"
+                elif "rent" in n_low:
+                    ledger = "Rent Expenses"
+                    vtype = "Payment"
+                elif any(k in n_low for k in ["charge", "fee", "gst"]):
+                    ledger = "Bank Charges & Fees"
+                    vtype = "Payment"
+                elif "interest" in n_low:
+                    ledger = "Interest Income"
+                    vtype = "Receipt"
                 else:
-                    if len(row) > 2:
-                        debit_val = clean_float(row.iloc[2])
-                    if len(row) > 3:
-                        credit_val = clean_float(row.iloc[3])
-
-                amount = debit_val if debit_val > 0 else credit_val
-                if amount == 0.0:
-                    continue
+                    ledger = "UPI Collection"
 
                 txns.append({
                     "id": f"bank_{int(datetime.now().timestamp() * 1000)}_{idx}",
-                    "date": date_val,
-                    "narration": narr_val,
-                    "debit": debit_val,
-                    "credit": credit_val,
-                    "amount": amount,
-                    "voucher_type": "Payment" if debit_val > 0 else "Receipt",
+                    "date": r.get("date", datetime.now().strftime("%Y-%m-%d")),
+                    "narration": narr,
+                    "debit": d,
+                    "credit": c,
+                    "amount": amt,
+                    "voucher_type": vtype,
+                    "ledger": ledger,
                     "bank_ledger": bank_ledger
                 })
-            except Exception:
-                continue
 
-    # Auto-Matching Rules Engine
-    for t in txns:
-        n = t["narration"].lower()
-        if "cash" in n or "atm" in n or "self" in n:
-            t["ledger"] = "Cash in Hand"
-            t["voucher_type"] = "Contra"
-        elif "zomato" in n:
-            t["ledger"] = "Zomato Payout Clearance"
-            t["voucher_type"] = "Receipt"
-        elif "swiggy" in n:
-            t["ledger"] = "Swiggy Payout Clearance"
-            t["voucher_type"] = "Receipt"
-        elif "elect" in n or "torrent" in n or "power" in n:
-            t["ledger"] = "Electricity Expense Payable"
-            t["voucher_type"] = "Payment"
-        elif "salary" in n or "wages" in n or "staff" in n:
-            t["ledger"] = "Staff Advance / Salary"
-            t["voucher_type"] = "Payment"
-        elif "rent" in n:
-            t["ledger"] = "Rent Expenses"
-            t["voucher_type"] = "Payment"
-        elif "charge" in n or "fee" in n:
-            t["ledger"] = "Bank Charges & Fees"
-            t["voucher_type"] = "Payment"
-        elif "interest" in n:
-            t["ledger"] = "Interest Income"
-            t["voucher_type"] = "Receipt"
-        else:
-            t["ledger"] = "UPI Collection"
+        return txns
 
-    return txns
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Statement extraction failed: {str(e)}")
 
 # ==============================================================================
-# ROUTE 3: PUSH PURCHASE INVOICE TO TALLY PRIME
+# ROUTE 3: PUSH PURCHASE INVOICE TO TALLY PRIME (PORT 9000 XML)
 # ==============================================================================
 @app.post("/api/tally/push-voucher")
 async def push_purchase_voucher(payload: TallyPushRequest):
