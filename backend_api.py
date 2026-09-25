@@ -103,20 +103,15 @@ async def extract_invoice(
         raise HTTPException(status_code=500, detail=f"Gemini invoice extraction failed: {str(e)}")
 
 # ==============================================================================
-# ROUTE 2: RESILIENT BANK PARSER (HDFC & ICICI CERTIFIED)
+# ROUTE 2: STANDARD EXCEL / CSV BANK STATEMENT PARSER
 # ==============================================================================
-def parse_date_value(val: Any) -> Optional[str]:
+def parse_date_value(val: Any) -> str:
     if val is None or pd.isna(val):
-        return None
+        return datetime.now().strftime("%Y-%m-%d")
     if isinstance(val, (datetime, date)):
         return val.strftime("%Y-%m-%d")
 
-    # Clean leading apostrophes, spaces, or quotes often found in bank exports
     s = str(val).strip().strip("'").strip('"')
-    if not s or s.startswith("*"):
-        return None
-
-    # Matches DD/MM/YYYY or DD-MM-YYYY (e.g. 01/08/2026 or 01/08/2026 09:44:09 AM)
     m4 = re.search(r"(\d{1,2})[/-](\d{1,2})[/-](\d{4})", s)
     if m4:
         d, m, y = m4.group(1), m4.group(2), m4.group(3)
@@ -125,7 +120,6 @@ def parse_date_value(val: Any) -> Optional[str]:
         except Exception:
             pass
 
-    # Matches DD/MM/YY or DD-MM-YY (e.g. 01/09/26 in HDFC)
     m2 = re.search(r"(\d{1,2})[/-](\d{1,2})[/-](\d{2})", s)
     if m2:
         d, m, y = m2.group(1), m2.group(2), m2.group(3)
@@ -134,15 +128,14 @@ def parse_date_value(val: Any) -> Optional[str]:
         except Exception:
             pass
 
-    return None
+    return datetime.now().strftime("%Y-%m-%d")
 
-def clean_amount(val: Any) -> float:
+def clean_num(val: Any) -> float:
     if val is None or pd.isna(val):
         return 0.0
     if isinstance(val, (int, float)):
         return abs(float(val))
-    s = str(val).strip().strip("'").strip('"')
-    s = s.replace(",", "").replace("₹", "").replace("Rs.", "").replace("Dr", "").replace("Cr", "").strip()
+    s = str(val).strip().replace(",", "").replace("₹", "").replace("Rs.", "").replace("Dr", "").replace("Cr", "")
     try:
         f = float(s)
         return abs(f) if f > 0 else 0.0
@@ -171,48 +164,6 @@ def auto_assign_ledger(narration: str) -> tuple[str, str]:
         return "Interest Income", "Receipt"
     return "UPI Collection", "Payment"
 
-def robust_read_table(contents: bytes, filename: str) -> List[List[Any]]:
-    if filename.endswith(".xlsx"):
-        try:
-            wb = openpyxl.load_workbook(io.BytesIO(contents), data_only=True)
-            sheet = wb.active
-            return [list(r) for r in sheet.iter_rows(values_only=True)]
-        except Exception:
-            pass
-
-    if filename.endswith((".xls", ".xlsx")):
-        try:
-            df = pd.read_excel(io.BytesIO(contents), header=None)
-            return df.fillna("").values.tolist()
-        except Exception:
-            pass
-
-        try:
-            tables = pd.read_html(io.BytesIO(contents))
-            if tables:
-                return tables[0].fillna("").values.tolist()
-        except Exception:
-            pass
-
-    decoded = contents.decode("utf-8", errors="ignore")
-    try:
-        f = io.StringIO(decoded, newline="")
-        return list(csv.reader(f))
-    except Exception:
-        pass
-
-    try:
-        df = pd.read_csv(io.StringIO(decoded), header=None, engine="python", on_bad_lines="skip")
-        return df.fillna("").values.tolist()
-    except Exception:
-        pass
-
-    rows = []
-    for line in decoded.splitlines():
-        if line.strip():
-            rows.append([cell.strip().strip('"') for cell in line.split(",")])
-    return rows
-
 @app.post("/api/bank/reconcile-file")
 async def reconcile_bank_file(
     file: UploadFile = File(...),
@@ -221,130 +172,65 @@ async def reconcile_bank_file(
 ):
     contents = await file.read()
     filename = file.filename.lower()
+    df = None
 
-    grid = robust_read_table(contents, filename)
+    try:
+        if filename.endswith((".xlsx", ".xls")):
+            df = pd.read_excel(io.BytesIO(contents))
+        else:
+            decoded = contents.decode("utf-8", errors="ignore")
+            df = pd.read_csv(io.StringIO(decoded, newline=""), on_bad_lines="skip")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Cannot read spreadsheet: {str(e)}")
 
-    if not grid:
-        raise HTTPException(status_code=400, detail="The statement file contains no readable data.")
+    if df is None or df.empty:
+        raise HTTPException(status_code=400, detail="The file is empty.")
 
-    # 1. SCAN FOR STATEMENT TABLE HEADER
-    header_idx = -1
-    is_icici_format = False
-    is_hdfc_format = False
+    # Match standardized columns (case-insensitive)
+    cols = {str(c).strip().lower(): c for c in df.columns}
+    
+    date_col = next((cols[k] for k in cols if "date" in k), None)
+    narr_col = next((cols[k] for k in cols if any(x in k for x in ["narr", "desc", "partic"])), None)
+    debit_col = next((cols[k] for k in cols if any(x in k for x in ["debit", "withdrawal", "dr"])), None)
+    credit_col = next((cols[k] for k in cols if any(x in k for x in ["credit", "deposit", "cr"])), None)
 
-    for r_idx, row in enumerate(grid[:40]):
-        row_str = " ".join([str(c or "").lower() for c in row])
-        if "cr/dr" in row_str or "transaction amount(inr)" in row_str:
-            header_idx = r_idx
-            is_icici_format = True
-            break
-        elif ("withdrawal amt" in row_str or "deposit amt" in row_str) and "narration" in row_str:
-            header_idx = r_idx
-            is_hdfc_format = True
-            break
+    # Fallback by column position if headers are unnamed or slightly different
+    if date_col is None and len(df.columns) >= 1:
+        date_col = df.columns[0]
+    if narr_col is None and len(df.columns) >= 2:
+        narr_col = df.columns[1]
+    if debit_col is None and len(df.columns) >= 3:
+        debit_col = df.columns[2]
+    if credit_col is None and len(df.columns) >= 4:
+        credit_col = df.columns[3]
 
-    start_row = header_idx + 1 if header_idx != -1 else 0
     txns = []
-
-    for r_idx in range(start_row, len(grid)):
-        row = grid[r_idx]
-        if not row or not any(row):
+    for idx, row in df.iterrows():
+        # Skip empty rows
+        if pd.isna(row.get(date_col)) and pd.isna(row.get(narr_col)):
             continue
 
-        row_str = "".join([str(c or "") for c in row]).replace(" ", "")
-        if set(row_str).issubset({"*", "-", "_"}):
-            continue
+        raw_narr = str(row.get(narr_col, "Bank Transaction")).strip()
+        if raw_narr.lower() in ["nan", "none", ""]:
+            raw_narr = "Bank Transaction"
 
-        # Ignore metadata rows at top
-        row_text_full = " ".join([str(x or "") for x in row]).lower()
-        if "statement from" in row_text_full or "page no" in row_text_full or "account branch" in row_text_full:
-            continue
-
-        found_date = None
-        date_pos = -1
-
-        # Look for date in the first 5 columns
-        for c_idx in range(min(5, len(row))):
-            d_val = parse_date_value(row[c_idx])
-            if d_val:
-                found_date = d_val
-                date_pos = c_idx
-                break
-
-        if not found_date:
-            continue
-
-        debit = 0.0
-        credit = 0.0
-        narr = "Bank Transaction"
-
-        # ----------------------------------------------------
-        # CASE 1: ICICI FORMAT (CR/DR column + Amount column)
-        # ----------------------------------------------------
-        if is_icici_format or any(str(c or "").strip().upper() in ["CR", "DR"] for c in row):
-            # Description is column index 5
-            if len(row) > 5 and str(row[5] or "").strip():
-                narr = str(row[5]).strip()
-            
-            # Find the CR/DR cell and amount cell
-            for c_idx, cell in enumerate(row):
-                val_upper = str(cell or "").strip().upper()
-                if val_upper in ["CR", "DR"]:
-                    if c_idx + 1 < len(row):
-                        amt = clean_amount(row[c_idx + 1])
-                        if val_upper == "CR":
-                            credit = amt
-                        else:
-                            debit = amt
-                    break
-
-        # ----------------------------------------------------
-        # CASE 2: HDFC FORMAT (Col E = Withdrawal, Col F = Deposit)
-        # ----------------------------------------------------
-        elif is_hdfc_format or (len(row) >= 6 and (row[4] is not None or row[5] is not None)):
-            # Narration is Column B (index 1)
-            if len(row) > 1 and str(row[1] or "").strip():
-                narr = str(row[1]).strip()
-
-            # Column 4 = Withdrawal, Column 5 = Deposit
-            if len(row) > 4:
-                debit = clean_amount(row[4])
-            if len(row) > 5:
-                credit = clean_amount(row[5])
-
-        # ----------------------------------------------------
-        # CASE 3: GENERAL FALLBACK
-        # ----------------------------------------------------
-        if debit == 0.0 and credit == 0.0:
-            for c_idx in range(len(row)):
-                if c_idx != date_pos:
-                    s_val = str(row[c_idx] or "").strip()
-                    if len(s_val) > 4 and not parse_date_value(s_val) and not re.match(r"^[\d\.,\s₹\-\(\)]+$", s_val):
-                        narr = s_val
-                        break
-            
-            # Grab the first non-zero number before the final running balance
-            nums = []
-            for c_idx in range(date_pos + 1, len(row)):
-                num = clean_amount(row[c_idx])
-                if num > 0:
-                    nums.append(num)
-            if nums:
-                debit = nums[0]
+        parsed_date = parse_date_value(row.get(date_col))
+        debit = clean_num(row.get(debit_col, 0.0))
+        credit = clean_num(row.get(credit_col, 0.0))
 
         amount = debit if debit > 0 else credit
         if amount == 0.0:
             continue
 
-        assigned_ledger, default_vtype = auto_assign_ledger(narr)
+        assigned_ledger, default_vtype = auto_assign_ledger(raw_narr)
         actual_vtype = "Payment" if debit > 0 else "Receipt"
         if default_vtype == "Contra":
             actual_vtype = "Contra"
 
         txns.append({
-            "id": f"bank_{int(datetime.now().timestamp() * 1000)}_{r_idx}",
-            "date": found_date,
-            "narration": narr,
+            "id": f"bank_{int(datetime.now().timestamp() * 1000)}_{idx}",
+            "date": parsed_date,
+            "narration": raw_narr,
             "debit": debit,
             "credit": credit,
             "amount": amount,
@@ -356,7 +242,7 @@ async def reconcile_bank_file(
     if not txns:
         raise HTTPException(
             status_code=400,
-            detail="Could not detect transaction rows. Please confirm the file has dates and amounts."
+            detail="No valid transactions found. Ensure headers are: Date, Narration, Debit, Credit."
         )
 
     return txns
