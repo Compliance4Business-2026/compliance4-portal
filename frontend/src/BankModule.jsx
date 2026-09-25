@@ -9,18 +9,13 @@ import {
   Trash2
 } from "lucide-react";
 
-// Adapts dynamically: uses VITE_API_URL if configured, otherwise uses relative path
-const getBaseUrl = () => {
-  if (typeof import.meta !== "undefined" && import.meta.env && import.meta.env.VITE_API_URL) {
-    return import.meta.env.VITE_API_URL.replace(/\/$/, "");
-  }
-  return "";
-};
+// Directly target your active Cloud Run instance
+const BACKEND_BASE = "https://compliance4-backend-asia-south1-364239850125.asia-south1.run.app";
 
 export default function BankModule({ activeClient = "Panasuria Confectionery" }) {
   const [bankLedger, setBankLedger] = useState("HDFC Bank - 8050");
   
-  // Persistent storage across page reloads
+  // Persistent storage across browser sessions
   const [transactions, setTransactions] = useState(() => {
     try {
       const saved = localStorage.getItem("c4_bank_transactions");
@@ -74,11 +69,8 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
     formData.append("company_name", activeClient);
     formData.append("bank_ledger", bankLedger);
 
-    const baseUrl = getBaseUrl();
-    const endpoint = baseUrl ? `${baseUrl}/api/bank/reconcile-file` : "/api/bank/reconcile-file";
-
     try {
-      const res = await fetch(endpoint, {
+      const res = await fetch(`${BACKEND_BASE}/api/bank/reconcile-file`, {
         method: "POST",
         body: formData,
       });
@@ -120,11 +112,8 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
   };
 
   const handlePushSingle = async (txn) => {
-    const baseUrl = getBaseUrl();
-    const endpoint = baseUrl ? `${baseUrl}/api/tally/push-bank-voucher` : "/api/tally/push-bank-voucher";
-
     try {
-      const res = await fetch(endpoint, {
+      const res = await fetch(`${BACKEND_BASE}/api/tally/push-bank-voucher`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ txn, company_name: activeClient }),
@@ -146,12 +135,10 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
 
     setSyncing(true);
     let successCount = 0;
-    const baseUrl = getBaseUrl();
-    const endpoint = baseUrl ? `${baseUrl}/api/tally/push-bank-voucher` : "/api/tally/push-bank-voucher";
 
     for (const txn of approvedList) {
       try {
-        await fetch(endpoint, {
+        await fetch(`${BACKEND_BASE}/api/tally/push-bank-voucher`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ txn, company_name: activeClient }),
@@ -186,7 +173,7 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
 
   return (
     <div className="flex-1 flex flex-col h-full bg-[#F8FAFC] overflow-hidden">
-      {/* HEADER BAR */}
+      {/* HEADER SECTION */}
       <header className="bg-white border-b border-slate-200 px-8 py-4 flex items-center justify-between shadow-sm shrink-0">
         <div>
           <h2 className="text-xl font-bold text-slate-900 tracking-tight">Banking Reconciliation</h2>
@@ -322,7 +309,7 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
         </div>
       </div>
 
-      {/* TABLE SECTION */}
+      {/* TABLE DATA CONTAINER */}
       <div className="flex-1 p-8 overflow-y-auto">
         {displayedTransactions.length === 0 ? (
           <div className="bg-white rounded-xl border border-slate-200 p-16 flex flex-col items-center justify-center text-center shadow-sm">
