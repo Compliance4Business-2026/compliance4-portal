@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import httpx
 import openpyxl
+import pandas as pd
 
 app = FastAPI(title="Compliance4 Accounting Portal API", version="2.0.0")
 
@@ -102,7 +103,7 @@ async def extract_invoice(
         raise HTTPException(status_code=500, detail=f"Gemini invoice extraction failed: {str(e)}")
 
 # ==============================================================================
-# ROUTE 2: BANK STATEMENT RECONCILIATION (.CSV, .XLSX, .XLS)
+# ROUTE 2: BANK STATEMENT RECONCILIATION (PANDAS MULTI-ENGINE PARSER)
 # ==============================================================================
 @app.post("/api/bank/reconcile-file")
 async def reconcile_bank_file(
@@ -112,120 +113,153 @@ async def reconcile_bank_file(
 ):
     contents = await file.read()
     filename = file.filename.lower()
-    txns = []
+    df = None
 
     try:
-        if filename.endswith(".csv"):
+        # 1. Try reading as standard Excel (openpyxl / xlrd)
+        if filename.endswith((".xlsx", ".xls")):
+            try:
+                df = pd.read_excel(io.BytesIO(contents))
+            except Exception:
+                # Fallback: Many bank exports are HTML tables saved with .xls extension
+                try:
+                    tables = pd.read_html(io.BytesIO(contents))
+                    if tables:
+                        df = tables[0]
+                except Exception:
+                    decoded = contents.decode("utf-8", errors="ignore")
+                    df = pd.read_csv(io.StringIO(decoded))
+
+        # 2. Try reading as CSV / Text
+        elif filename.endswith(".csv"):
             decoded = contents.decode("utf-8", errors="ignore")
-            reader = csv.reader(io.StringIO(decoded))
-            rows = [r for r in reader if any(r)]
-
-            # Detect Header offset
-            start_row = 1 if len(rows) > 1 and ("date" in rows[0][0].lower() or "narration" in "".join(rows[0]).lower()) else 0
-
-            for idx, row in enumerate(rows[start_row:]):
-                if len(row) >= 3:
-                    date_val = row[0].strip()
-                    narr_val = row[1].strip() if len(row) > 1 else "Bank Entry"
-                    
-                    debit_val = 0.0
-                    credit_val = 0.0
-                    
-                    # Handles separate debit/credit columns or signed amount column
-                    if len(row) >= 4:
-                        d_str = row[2].replace(",", "").strip()
-                        c_str = row[3].replace(",", "").strip()
-                        debit_val = float(d_str) if d_str and d_str != "-" else 0.0
-                        credit_val = float(c_str) if c_str and c_str != "-" else 0.0
-                    elif len(row) == 3:
-                        amt_str = row[2].replace(",", "").strip()
-                        val = float(amt_str) if amt_str else 0.0
-                        if val < 0:
-                            debit_val = abs(val)
-                        else:
-                            credit_val = val
-
-                    txns.append({
-                        "id": f"bank_{int(datetime.now().timestamp() * 1000)}_{idx}",
-                        "date": date_val,
-                        "narration": narr_val,
-                        "debit": debit_val,
-                        "credit": credit_val,
-                        "amount": debit_val if debit_val > 0 else credit_val,
-                        "voucher_type": "Payment" if debit_val > 0 else "Receipt",
-                        "bank_ledger": bank_ledger
-                    })
-
-        elif filename.endswith((".xlsx", ".xls")):
-            wb = openpyxl.load_workbook(io.BytesIO(contents), data_only=True)
-            sheet = wb.active
-            rows = list(sheet.iter_rows(values_only=True))
-
-            start_row = 1 if len(rows) > 1 and ("date" in str(rows[0][0]).lower()) else 0
-
-            for idx, row in enumerate(rows[start_row:]):
-                if any(row) and len(row) >= 3:
-                    date_val = str(row[0])[:10] if row[0] else datetime.now().strftime("%Y-%m-%d")
-                    narr_val = str(row[1]) if len(row) > 1 and row[1] else "Bank Entry"
-                    
-                    debit_val = 0.0
-                    credit_val = 0.0
-                    
-                    if len(row) >= 4:
-                        debit_val = float(row[2]) if row[2] and isinstance(row[2], (int, float)) else 0.0
-                        credit_val = float(row[3]) if len(row) > 3 and row[3] and isinstance(row[3], (int, float)) else 0.0
-                    elif len(row) == 3:
-                        amt = float(row[2]) if isinstance(row[2], (int, float)) else 0.0
-                        if amt < 0:
-                            debit_val = abs(amt)
-                        else:
-                            credit_val = amt
-
-                    txns.append({
-                        "id": f"bank_{int(datetime.now().timestamp() * 1000)}_{idx}",
-                        "date": date_val,
-                        "narration": narr_val,
-                        "debit": debit_val,
-                        "credit": credit_val,
-                        "amount": debit_val if debit_val > 0 else credit_val,
-                        "voucher_type": "Payment" if debit_val > 0 else "Receipt",
-                        "bank_ledger": bank_ledger
-                    })
-
-        # Pattern Rule Engine for Auto-Matching Ledgers
-        for t in txns:
-            n = t["narration"].lower()
-            if "cash" in n or "atm" in n or "self" in n:
-                t["ledger"] = "Cash in Hand"
-                t["voucher_type"] = "Contra"
-            elif "zomato" in n:
-                t["ledger"] = "Zomato Payout Clearance"
-                t["voucher_type"] = "Receipt"
-            elif "swiggy" in n:
-                t["ledger"] = "Swiggy Payout Clearance"
-                t["voucher_type"] = "Receipt"
-            elif "elect" in n or "torrent" in n or "power" in n:
-                t["ledger"] = "Electricity Expense Payable"
-                t["voucher_type"] = "Payment"
-            elif "salary" in n or "wages" in n or "staff" in n:
-                t["ledger"] = "Staff Advance / Salary"
-                t["voucher_type"] = "Payment"
-            elif "rent" in n:
-                t["ledger"] = "Rent Expenses"
-                t["voucher_type"] = "Payment"
-            elif "charge" in n or "fee" in n or "gst" in n:
-                t["ledger"] = "Bank Charges & Fees"
-                t["voucher_type"] = "Payment"
-            elif "interest" in n:
-                t["ledger"] = "Interest Income"
-                t["voucher_type"] = "Receipt"
-            else:
-                t["ledger"] = "UPI Collection"
-
-        return txns
+            df = pd.read_csv(io.StringIO(decoded))
+        else:
+            try:
+                decoded = contents.decode("utf-8", errors="ignore")
+                df = pd.read_csv(io.StringIO(decoded))
+            except Exception:
+                df = pd.read_excel(io.BytesIO(contents))
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to parse statement: {str(e)}")
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Statement format not readable. Please upload as CSV or standard XLSX: {str(e)}"
+        )
+
+    if df is None or df.empty:
+        raise HTTPException(status_code=400, detail="The uploaded statement contains no readable transaction rows.")
+
+    df = df.dropna(how="all")
+    
+    # Locate header row if bank inserted metadata headers at the top
+    date_col = None
+    narr_col = None
+    debit_col = None
+    credit_col = None
+    amt_col = None
+
+    for col in df.columns:
+        c = str(col).lower()
+        if "date" in c or "txn date" in c or "value date" in c:
+            date_col = col
+        elif "narration" in c or "description" in c or "particular" in c or "remarks" in c:
+            narr_col = col
+        elif "withdrawal" in c or "debit" in c or "dr" in c:
+            debit_col = col
+        elif "deposit" in c or "credit" in c or "cr" in c:
+            credit_col = col
+        elif "amount" in c:
+            amt_col = col
+
+    txns = []
+    for idx, row in df.iterrows():
+        try:
+            date_val = str(row[date_col]) if date_col is not None else str(row.iloc[0])
+            if date_val.lower() in ["date", "txn date", "nan", "none", ""]:
+                continue
+            date_val = date_val[:10]
+
+            narr_val = str(row[narr_col]) if narr_col is not None else (str(row.iloc[1]) if len(row) > 1 else "Bank Entry")
+            if narr_val.lower() in ["narration", "description", "particulars", "nan", "none"]:
+                continue
+
+            def parse_num(val):
+                if pd.isna(val) or val is None:
+                    return 0.0
+                s = str(val).replace(",", "").replace("₹", "").strip()
+                try:
+                    return abs(float(s))
+                except Exception:
+                    return 0.0
+
+            debit_val = 0.0
+            credit_val = 0.0
+
+            if debit_col is not None and credit_col is not None:
+                debit_val = parse_num(row[debit_col])
+                credit_val = parse_num(row[credit_col])
+            elif amt_col is not None:
+                amt = parse_num(row[amt_col])
+                raw_str = str(row[amt_col]).lower()
+                if "cr" in raw_str:
+                    credit_val = amt
+                else:
+                    debit_val = amt
+            else:
+                if len(row) > 2:
+                    debit_val = parse_num(row.iloc[2])
+                if len(row) > 3:
+                    credit_val = parse_num(row.iloc[3])
+
+            amount = debit_val if debit_val > 0 else credit_val
+            if amount == 0.0:
+                continue
+
+            txns.append({
+                "id": f"bank_{int(datetime.now().timestamp() * 1000)}_{idx}",
+                "date": date_val,
+                "narration": narr_val,
+                "debit": debit_val,
+                "credit": credit_val,
+                "amount": amount,
+                "voucher_type": "Payment" if debit_val > 0 else "Receipt",
+                "bank_ledger": bank_ledger
+            })
+        except Exception:
+            continue
+
+    # Auto-Matching Rules
+    for t in txns:
+        n = t["narration"].lower()
+        if "cash" in n or "atm" in n or "self" in n:
+            t["ledger"] = "Cash in Hand"
+            t["voucher_type"] = "Contra"
+        elif "zomato" in n:
+            t["ledger"] = "Zomato Payout Clearance"
+            t["voucher_type"] = "Receipt"
+        elif "swiggy" in n:
+            t["ledger"] = "Swiggy Payout Clearance"
+            t["voucher_type"] = "Receipt"
+        elif "elect" in n or "torrent" in n or "power" in n:
+            t["ledger"] = "Electricity Expense Payable"
+            t["voucher_type"] = "Payment"
+        elif "salary" in n or "wages" in n or "staff" in n:
+            t["ledger"] = "Staff Advance / Salary"
+            t["voucher_type"] = "Payment"
+        elif "rent" in n:
+            t["ledger"] = "Rent Expenses"
+            t["voucher_type"] = "Payment"
+        elif "charge" in n or "fee" in n:
+            t["ledger"] = "Bank Charges & Fees"
+            t["voucher_type"] = "Payment"
+        elif "interest" in n:
+            t["ledger"] = "Interest Income"
+            t["voucher_type"] = "Receipt"
+        else:
+            t["ledger"] = "UPI Collection"
+
+    return txns
 
 # ==============================================================================
 # ROUTE 3: PUSH PURCHASE INVOICE TO TALLY PRIME (PORT 9000 XML)
