@@ -6,10 +6,11 @@ import {
   FileText, 
   AlertCircle, 
   Sparkles,
-  Trash2,
-  AlertTriangle,
-  ShieldCheck,
-  ShieldAlert
+  Building,
+  Calendar,
+  Hash,
+  Layers,
+  ArrowRight
 } from "lucide-react";
 
 const BACKEND_BASE = "https://compliance4-backend-1021821620394.asia-south1.run.app";
@@ -26,56 +27,13 @@ const DEFAULT_PURCHASE_LEDGERS = [
   "Printing & Stationery Expenses"
 ];
 
-// Indian State Codes dictionary
-const GST_STATE_CODES = {
-  "01": "Jammu & Kashmir", "02": "Himachal Pradesh", "03": "Punjab", "04": "Chandigarh",
-  "05": "Uttarakhand", "06": "Haryana", "07": "Delhi", "08": "Rajasthan", "09": "Uttar Pradesh",
-  "10": "Bihar", "11": "Sikkim", "12": "Arunachal Pradesh", "13": "Nagaland", "14": "Manipur",
-  "15": "Mizoram", "16": "Tripura", "17": "Meghalaya", "18": "Assam", "19": "West Bengal",
-  "20": "Jharkhand", "21": "Odisha", "22": "Chhattisgarh", "23": "Madhya Pradesh",
-  "24": "Gujarat", "25": "Daman & Diu", "26": "Dadra & Nagar Haveli", "27": "Maharashtra",
-  "28": "Andhra Pradesh (Old)", "29": "Karnataka", "30": "Goa", "31": "Lakshadweep",
-  "32": "Kerala", "33": "Tamil Nadu", "34": "Puducherry", "35": "Andaman & Nicobar",
-  "36": "Telangana", "37": "Andhra Pradesh", "38": "Ladakh"
-};
-
-function validateGSTIN(gstin) {
-  if (!gstin) return { isValid: false, reason: "GSTIN missing" };
-  const clean = gstin.trim().toUpperCase();
-  if (clean.length !== 15) return { isValid: false, reason: "Must be 15 chars" };
-  const regex = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/;
-  if (!regex.test(clean)) return { isValid: false, reason: "Structure mismatch" };
-
-  const stateCode = clean.substring(0, 2);
-  const stateName = GST_STATE_CODES[stateCode];
-  if (!stateName) return { isValid: false, reason: `Invalid State: ${stateCode}` };
-
-  const chars = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-  let factor = 1;
-  let sum = 0;
-  for (let i = 0; i < 14; i++) {
-    const codePoint = chars.indexOf(clean[i]);
-    let addend = factor * codePoint;
-    factor = factor === 2 ? 1 : 2;
-    addend = Math.floor(addend / 36) + (addend % 36);
-    sum += addend;
-  }
-  const remainder = sum % 36;
-  const checkCodePoint = (36 - remainder) % 36;
-  const expectedCheckChar = chars[checkCodePoint];
-  return { isValid: expectedCheckChar === clean[14], stateName, stateCode };
-}
-
 export default function PurchaseModule({ activeClient = "Panasuria Confectionery" }) {
-  const [bills, setBills] = useState(() => {
-    try {
-      const saved = localStorage.getItem("c4_purchase_bills");
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
-    }
-  });
+  const [activeBill, setActiveBill] = useState(null);
+  const [uploading, setUploading] = useState(false);
+  const [pushing, setPushing] = useState(false);
+  const [toast, setToast] = useState(null);
 
+  // 1. Memorized Item -> Ledger Rules from localStorage
   const [itemRules, setItemRules] = useState(() => {
     try {
       const saved = localStorage.getItem("c4_purchase_item_rules");
@@ -85,15 +43,7 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
     }
   });
 
-  const [activeTab, setActiveTab] = useState("needs_review");
-  const [uploading, setUploading] = useState(false);
-  const [syncing, setSyncing] = useState(false);
-  const [toast, setToast] = useState(null);
-
-  useEffect(() => {
-    localStorage.setItem("c4_purchase_bills", JSON.stringify(bills));
-  }, [bills]);
-
+  // Keep localStorage synchronized
   useEffect(() => {
     localStorage.setItem("c4_purchase_item_rules", JSON.stringify(itemRules));
   }, [itemRules]);
@@ -103,6 +53,7 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
     setTimeout(() => setToast(null), 4000);
   };
 
+  // 2. Upload Invoice & Extract via Gemini
   const handleFileUpload = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -119,128 +70,122 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
       });
 
       if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.detail || `Server error ${res.status}`);
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.detail || `Server responded with status ${res.status}`);
       }
 
       const billData = await res.json();
-      const invNo = (billData.supplier_invoice_no || billData.invoice_number || "").trim().toUpperCase();
-      const vendor = (billData.vendor_name || "").trim().toLowerCase();
+      let matchedCount = 0;
 
-      // Check duplicates
-      const isDuplicate = bills.some(
-        (b) => (b.supplier_invoice_no || b.invoice_number || "").trim().toUpperCase() === invNo &&
-               (b.vendor_name || "").trim().toLowerCase() === vendor
-      );
+      // Apply memorized rules to extracted line items
+      const itemsWithMemory = (billData.items || []).map((item) => {
+        const cleanName = (item.item_name || "").trim().toLowerCase();
+        const savedLedger = itemRules[cleanName];
 
-      const gstCheck = validateGSTIN(billData.vendor_gstin);
+        if (savedLedger) {
+          matchedCount++;
+          return {
+            ...item,
+            ledger: savedLedger,
+            isAutoMatched: true
+          };
+        }
 
-      // Check learned item mappings
-      let matchedLedger = "Purchase: General Goods";
-      if (billData.items && billData.items.length > 0) {
-        const firstItem = (billData.items[0].item_name || "").trim().toLowerCase();
-        if (itemRules[firstItem]) matchedLedger = itemRules[firstItem];
-      }
+        return {
+          ...item,
+          ledger: "Purchase: General Goods",
+          isAutoMatched: false
+        };
+      });
 
-      const newBill = {
+      const processedBill = {
         ...billData,
-        id: billData.id || `inv_${Date.now()}`,
-        status: "needs_review",
-        isDuplicate,
-        gstValid: gstCheck.isValid,
-        gstState: gstCheck.stateName || "",
-        accounting_ledgers: [{ ledger_name: matchedLedger, amount: billData.taxable_amount || 0 }]
+        items: itemsWithMemory,
+        accounting_ledgers: [
+          {
+            ledger_name: itemsWithMemory[0]?.ledger || "Purchase: General Goods",
+            amount: billData.taxable_amount || 0.0
+          }
+        ]
       };
 
-      setBills((prev) => [newBill, ...prev]);
-      setActiveTab("needs_review");
-      showToast(isDuplicate ? `⚠️ Warning: Invoice #${invNo} appears to be a duplicate!` : `Invoice #${invNo} imported!`);
+      setActiveBill(processedBill);
+
+      if (matchedCount > 0) {
+        showToast(`Extracted bill with ${matchedCount} items auto-mapped from memory!`);
+      } else {
+        showToast(`Invoice #${billData.supplier_invoice_no || billData.invoice_number} extracted!`);
+      }
     } catch (err) {
-      showToast(`Upload failed: ${err.message}`, "error");
+      showToast(`Extraction failed: ${err.message}`, "error");
     } finally {
       setUploading(false);
       e.target.value = null;
     }
   };
 
-  const handleLedgerChange = (billId, newLedger) => {
-    setBills((prev) =>
-      prev.map((b) => {
-        if (b.id === billId) {
-          // Memorize first item
-          if (b.items && b.items.length > 0) {
-            const firstItem = (b.items[0].item_name || "").trim().toLowerCase();
-            if (firstItem) {
-              setItemRules((r) => ({ ...r, [firstItem]: newLedger }));
-            }
-          }
-          return {
-            ...b,
-            status: "approved",
-            accounting_ledgers: [{ ledger_name: newLedger, amount: b.taxable_amount || 0 }]
-          };
+  // 3. Handle Item Ledger Change & Learn for Future
+  const handleItemLedgerChange = (index, newLedger, itemName) => {
+    if (!activeBill) return;
+
+    const updatedItems = [...activeBill.items];
+    updatedItems[index] = {
+      ...updatedItems[index],
+      ledger: newLedger,
+      isAutoMatched: true
+    };
+
+    setActiveBill({
+      ...activeBill,
+      items: updatedItems,
+      accounting_ledgers: [
+        {
+          ledger_name: newLedger,
+          amount: activeBill.taxable_amount || 0.0
         }
-        return b;
-      })
-    );
-    showToast("Moved to Approved!");
+      ]
+    });
+
+    // Memorize mapping
+    if (itemName) {
+      const cleanKey = itemName.trim().toLowerCase();
+      setItemRules((prev) => ({
+        ...prev,
+        [cleanKey]: newLedger
+      }));
+      showToast(`Memorized "${itemName}" → ${newLedger}`);
+    }
   };
 
-  const handleApprove = (id) => {
-    setBills((prev) => prev.map((b) => (b.id === id ? { ...b, status: "approved" } : b)));
-  };
+  // 4. Push Invoice to Tally Prime
+  const handlePushToTally = async () => {
+    if (!activeBill) return;
 
-  const handlePushSingle = async (bill) => {
+    setPushing(true);
     try {
       const res = await fetch(`${BACKEND_BASE}/api/tally/push-voucher`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ bill, company_name: activeClient }),
+        body: JSON.stringify({
+          bill: activeBill,
+          company_name: activeClient
+        }),
       });
-      if (!res.ok) throw new Error("Push to Tally failed");
 
-      setBills((prev) => prev.map((b) => (b.id === bill.id ? { ...b, status: "pushed" } : b)));
-      showToast(`Invoice #${bill.supplier_invoice_no || bill.invoice_number} synced to Tally!`);
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.detail || "Failed to push to Tally Prime");
+      }
+
+      showToast(`Voucher #${activeBill.supplier_invoice_no || activeBill.invoice_number} synced to Tally Prime!`);
     } catch (err) {
       showToast(`Tally push error: ${err.message}`, "error");
+    } finally {
+      setPushing(false);
     }
   };
 
-  const handlePushAllApproved = async () => {
-    const toPush = bills.filter((b) => b.status === "approved");
-    if (toPush.length === 0) return;
-
-    setSyncing(true);
-    let count = 0;
-    for (const bill of toPush) {
-      try {
-        await fetch(`${BACKEND_BASE}/api/tally/push-voucher`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ bill, company_name: activeClient }),
-        });
-        count++;
-      } catch (e) {
-        console.error(e);
-      }
-    }
-    setBills((prev) => prev.map((b) => (b.status === "approved" ? { ...b, status: "pushed" } : b)));
-    setSyncing(false);
-    showToast(`Pushed ${count} invoices to Tally Prime!`);
-  };
-
-  const handleClearAll = () => {
-    if (window.confirm("Clear all purchase bills?")) {
-      setBills([]);
-      localStorage.removeItem("c4_purchase_bills");
-      showToast("Cleared purchase invoices.");
-    }
-  };
-
-  const needsReviewCount = bills.filter((b) => b.status === "needs_review").length;
-  const approvedCount = bills.filter((b) => b.status === "approved").length;
-  const pushedCount = bills.filter((b) => b.status === "pushed").length;
-  const displayedBills = bills.filter((b) => b.status === activeTab);
+  const memorizedRulesCount = Object.keys(itemRules).length;
 
   return (
     <div className="flex-1 flex flex-col h-full bg-[#F8FAFC] overflow-hidden">
@@ -250,26 +195,16 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
           <h2 className="text-xl font-bold text-slate-900 tracking-tight">Purchase Invoices</h2>
           <div className="flex items-center gap-2 mt-0.5">
             <p className="text-xs text-slate-500 font-medium">{activeClient}</p>
-            {Object.keys(itemRules).length > 0 && (
+            {memorizedRulesCount > 0 && (
               <span className="flex items-center gap-1 text-[10px] bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-full font-semibold border border-indigo-200">
                 <Sparkles className="w-2.5 h-2.5" />
-                {Object.keys(itemRules).length} Rules Learned
+                {memorizedRulesCount} Item Mappings Learned
               </span>
             )}
           </div>
         </div>
 
         <div className="flex items-center gap-3">
-          {bills.length > 0 && (
-            <button
-              onClick={handleClearAll}
-              className="flex items-center gap-1.5 px-3 py-2 border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-lg text-xs font-semibold transition"
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-              Reset
-            </button>
-          )}
-
           <label className="flex items-center gap-2 px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-semibold cursor-pointer transition shadow-sm">
             <Upload className="w-3.5 h-3.5" />
             {uploading ? "Extracting..." : "Upload Purchase Invoice"}
@@ -284,193 +219,151 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
         </div>
       </header>
 
-      {/* TABS & BATCH ACTIONS */}
-      <div className="px-8 pt-4 pb-2 flex items-center justify-between border-b border-slate-200 bg-white shrink-0">
-        <div className="flex items-center gap-6">
-          <button
-            onClick={() => setActiveTab("needs_review")}
-            className={`pb-2.5 text-xs font-bold transition flex items-center gap-2 border-b-2 ${
-              activeTab === "needs_review"
-                ? "border-slate-900 text-slate-900"
-                : "border-transparent text-slate-400 hover:text-slate-600"
-            }`}
-          >
-            Needs Review
-            <span
-              className={`px-1.5 py-0.5 rounded-full text-[10px] ${
-                activeTab === "needs_review" ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600"
-              }`}
-            >
-              {needsReviewCount}
-            </span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab("approved")}
-            className={`pb-2.5 text-xs font-bold transition flex items-center gap-2 border-b-2 ${
-              activeTab === "approved"
-                ? "border-slate-900 text-slate-900"
-                : "border-transparent text-slate-400 hover:text-slate-600"
-            }`}
-          >
-            Approved Invoices
-            <span
-              className={`px-1.5 py-0.5 rounded-full text-[10px] ${
-                activeTab === "approved" ? "bg-emerald-600 text-white" : "bg-slate-100 text-slate-600"
-              }`}
-            >
-              {approvedCount}
-            </span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab("pushed")}
-            className={`pb-2.5 text-xs font-bold transition flex items-center gap-2 border-b-2 ${
-              activeTab === "pushed"
-                ? "border-slate-900 text-slate-900"
-                : "border-transparent text-slate-400 hover:text-slate-600"
-            }`}
-          >
-            Pushed to Tally
-            <span
-              className={`px-1.5 py-0.5 rounded-full text-[10px] ${
-                activeTab === "pushed" ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-600"
-              }`}
-            >
-              {pushedCount}
-            </span>
-          </button>
-        </div>
-
-        <div>
-          {activeTab === "approved" && approvedCount > 0 && (
-            <button
-              onClick={handlePushAllApproved}
-              disabled={syncing}
-              className="flex items-center gap-1.5 px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-md text-xs font-semibold shadow-sm transition"
-            >
-              <Send className="w-3.5 h-3.5" />
-              {syncing ? "Pushing..." : `Push All to Tally (${approvedCount})`}
-            </button>
-          )}
-        </div>
-      </div>
-
-      {/* TABLE DATA CONTAINER */}
+      {/* CONTENT AREA */}
       <div className="flex-1 p-8 overflow-y-auto">
-        {displayedBills.length === 0 ? (
+        {!activeBill ? (
           <div className="bg-white rounded-xl border border-slate-200 p-16 flex flex-col items-center justify-center text-center shadow-sm">
             <FileText className="w-12 h-12 text-slate-300 mb-3" />
-            <p className="text-sm font-semibold text-slate-700">
-              No invoices in {activeTab === "needs_review" ? "Needs Review" : activeTab === "approved" ? "Approved" : "Pushed"}
-            </p>
+            <p className="text-sm font-semibold text-slate-700">No Purchase Invoice Loaded</p>
             <p className="text-xs text-slate-400 mt-1 max-w-sm">
-              Upload vendor bills (PDF or Images) to extract and review them here.
+              Upload a vendor invoice (PDF, JPG, PNG) to extract data with Gemini AI and auto-map line item ledgers.
             </p>
           </div>
         ) : (
-          <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
-            <table className="w-full text-left text-xs">
-              <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 font-semibold uppercase tracking-wider text-[10px]">
-                <tr>
-                  <th className="py-3 px-4">Date</th>
-                  <th className="py-3 px-4">Inv #</th>
-                  <th className="py-3 px-4">Supplier & GSTIN</th>
-                  <th className="py-3 px-4">Expense Ledger</th>
-                  <th className="py-3 px-4 text-right">Taxable (₹)</th>
-                  <th className="py-3 px-4 text-right">GST (₹)</th>
-                  <th className="py-3 px-4 text-right">Total (₹)</th>
-                  <th className="py-3 px-4 text-center">Action</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
-                {displayedBills.map((b) => {
-                  const currentLedger = b.accounting_ledgers?.[0]?.ledger_name || "Purchase: General Goods";
-                  const gstTotal = (Number(b.cgst || 0) + Number(b.sgst || 0) + Number(b.igst || 0));
+          <div className="max-w-5xl mx-auto space-y-6">
+            {/* INVOICE SUMMARY CARD */}
+            <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
+              <div className="flex items-center justify-between pb-4 border-b border-slate-100">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 bg-slate-100 rounded-lg text-slate-700">
+                    <Building className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-bold text-slate-900">{activeBill.vendor_name || "Vendor Unknown"}</h3>
+                    <p className="text-xs text-slate-400 font-mono">GSTIN: {activeBill.vendor_gstin || "N/A"}</p>
+                  </div>
+                </div>
 
-                  return (
-                    <tr key={b.id} className="hover:bg-slate-50/70 transition">
-                      <td className="py-3 px-4 whitespace-nowrap text-slate-500 font-mono">
-                        {b.bill_date || b.invoice_date || "-"}
-                      </td>
-                      <td className="py-3 px-4 font-mono font-semibold text-slate-800">
-                        {b.supplier_invoice_no || b.invoice_number || "-"}
-                        {b.isDuplicate && (
-                          <span className="ml-1 inline-flex items-center text-[9px] bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded font-bold">
-                            Duplicate
+                <div className="flex items-center gap-4 text-xs font-medium">
+                  <div className="flex items-center gap-1.5 text-slate-600">
+                    <Hash className="w-3.5 h-3.5 text-slate-400" />
+                    <span>Inv: {activeBill.supplier_invoice_no || activeBill.invoice_number || "N/A"}</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 text-slate-600">
+                    <Calendar className="w-3.5 h-3.5 text-slate-400" />
+                    <span>Date: {activeBill.bill_date || activeBill.invoice_date || "N/A"}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* AMOUNTS STRIP */}
+              <div className="grid grid-cols-4 gap-4 pt-4 text-center">
+                <div className="bg-slate-50 p-3 rounded-lg border border-slate-100">
+                  <p className="text-[10px] uppercase font-semibold text-slate-400">Taxable Value</p>
+                  <p className="text-sm font-bold text-slate-800 font-mono mt-0.5">
+                    ₹{Number(activeBill.taxable_amount || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                  </p>
+                </div>
+                <div className="bg-slate-50 p-3 rounded-lg border border-slate-100">
+                  <p className="text-[10px] uppercase font-semibold text-slate-400">CGST + SGST</p>
+                  <p className="text-sm font-bold text-slate-800 font-mono mt-0.5">
+                    ₹{(Number(activeBill.cgst || 0) + Number(activeBill.sgst || 0)).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                  </p>
+                </div>
+                <div className="bg-slate-50 p-3 rounded-lg border border-slate-100">
+                  <p className="text-[10px] uppercase font-semibold text-slate-400">IGST</p>
+                  <p className="text-sm font-bold text-slate-800 font-mono mt-0.5">
+                    ₹{Number(activeBill.igst || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                  </p>
+                </div>
+                <div className="bg-emerald-50 p-3 rounded-lg border border-emerald-100">
+                  <p className="text-[10px] uppercase font-semibold text-emerald-600">Grand Total</p>
+                  <p className="text-sm font-bold text-emerald-700 font-mono mt-0.5">
+                    ₹{Number(activeBill.grand_total || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* EXTRACTED ITEMS & LEDGER ASSIGNMENT TABLE */}
+            <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
+              <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Layers className="w-4 h-4 text-slate-500" />
+                  <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider">
+                    Extracted Line Items ({activeBill.items?.length || 0})
+                  </h4>
+                </div>
+                <p className="text-[11px] text-slate-400">
+                  Selecting a ledger saves it automatically for subsequent invoices
+                </p>
+              </div>
+
+              <table className="w-full text-left text-xs">
+                <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 font-semibold uppercase tracking-wider text-[10px]">
+                  <tr>
+                    <th className="py-3 px-4">Item Name</th>
+                    <th className="py-3 px-4 text-right">Qty</th>
+                    <th className="py-3 px-4 text-right">Rate (₹)</th>
+                    <th className="py-3 px-4 text-right">Amount (₹)</th>
+                    <th className="py-3 px-4">Expense Ledger (Tally Head)</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
+                  {(activeBill.items || []).map((item, idx) => (
+                    <tr key={idx} className="hover:bg-slate-50/70 transition">
+                      <td className="py-3 px-4 font-semibold text-slate-800">
+                        {item.item_name}
+                        {item.isAutoMatched && (
+                          <span className="ml-2 inline-flex items-center gap-0.5 text-[9px] bg-indigo-50 text-indigo-700 px-1.5 py-0.5 rounded font-medium border border-indigo-200">
+                            <Sparkles className="w-2.5 h-2.5" /> Memorized
                           </span>
                         )}
                       </td>
-                      <td className="py-3 px-4">
-                        <div className="font-semibold text-slate-900">{b.vendor_name || "Unknown"}</div>
-                        <div className="flex items-center gap-1.5 mt-0.5 font-mono text-[10px] text-slate-400">
-                          <span>{b.vendor_gstin || "No GSTIN"}</span>
-                          {b.gstValid ? (
-                            <span className="text-emerald-600 font-bold">✓ {b.gstState}</span>
-                          ) : (
-                            <span className="text-rose-500 font-bold">✕ Invalid</span>
-                          )}
-                        </div>
+                      <td className="py-3 px-4 text-right font-mono text-slate-600">{item.qty || 1}</td>
+                      <td className="py-3 px-4 text-right font-mono text-slate-600">
+                        ₹{Number(item.rate || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                      </td>
+                      <td className="py-3 px-4 text-right font-mono text-slate-900 font-bold">
+                        ₹{Number(item.amount || (item.qty || 1) * (item.rate || 0)).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                       </td>
                       <td className="py-3 px-4">
                         <select
-                          value={currentLedger}
-                          onChange={(e) => handleLedgerChange(b.id, e.target.value)}
-                          className={`border rounded px-2.5 py-1 text-xs font-semibold focus:outline-none transition ${
-                            b.status === "approved"
-                              ? "bg-emerald-50 border-emerald-300 text-emerald-900"
-                              : "bg-slate-50 border-slate-200 text-slate-800"
+                          value={item.ledger || "Purchase: General Goods"}
+                          onChange={(e) => handleItemLedgerChange(idx, e.target.value, item.item_name)}
+                          className={`border rounded-lg px-3 py-1.5 text-xs font-semibold focus:outline-none transition w-full max-w-xs ${
+                            item.isAutoMatched
+                              ? "bg-indigo-50/60 border-indigo-200 text-indigo-900"
+                              : "bg-white border-slate-200 text-slate-800"
                           }`}
                         >
-                          {DEFAULT_PURCHASE_LEDGERS.map((opt) => (
-                            <option key={opt} value={opt}>{opt}</option>
+                          {DEFAULT_PURCHASE_LEDGERS.map((ledgerOption) => (
+                            <option key={ledgerOption} value={ledgerOption}>
+                              {ledgerOption}
+                            </option>
                           ))}
                         </select>
                       </td>
-                      <td className="py-3 px-4 text-right whitespace-nowrap font-mono text-slate-900">
-                        ₹{Number(b.taxable_amount || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                      </td>
-                      <td className="py-3 px-4 text-right whitespace-nowrap font-mono text-slate-600">
-                        ₹{gstTotal.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                      </td>
-                      <td className="py-3 px-4 text-right whitespace-nowrap font-mono text-emerald-600 font-bold">
-                        ₹{Number(b.grand_total || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                      </td>
-                      <td className="py-3 px-4 text-center whitespace-nowrap">
-                        {b.status === "needs_review" && (
-                          <button
-                            onClick={() => handleApprove(b.id)}
-                            className="px-3 py-1 bg-amber-500 hover:bg-amber-600 text-white rounded font-semibold text-[11px] shadow-sm transition"
-                          >
-                            Approve
-                          </button>
-                        )}
-                        {b.status === "approved" && (
-                          <div className="flex items-center justify-center gap-1.5">
-                            <span className="px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded font-bold text-[10px] uppercase tracking-wider flex items-center gap-1">
-                              <CheckCircle className="w-3 h-3 text-emerald-600" />
-                              Approved
-                            </span>
-                            <button
-                              onClick={() => handlePushSingle(b)}
-                              className="p-1 bg-slate-900 hover:bg-slate-800 text-white rounded shadow-sm transition"
-                              title="Push to Tally Prime"
-                            >
-                              <Send className="w-3 h-3" />
-                            </button>
-                          </div>
-                        )}
-                        {b.status === "pushed" && (
-                          <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">
-                            Synced
-                          </span>
-                        )}
-                      </td>
                     </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                  ))}
+                </tbody>
+              </table>
+
+              {/* ACTION FOOTER */}
+              <div className="p-4 bg-slate-50 border-t border-slate-200 flex items-center justify-between">
+                <span className="text-xs text-slate-500 font-medium">
+                  Ready to dispatch to Tally Prime Port 9000
+                </span>
+                <button
+                  onClick={handlePushToTally}
+                  disabled={pushing}
+                  className="flex items-center gap-2 px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold shadow-sm transition disabled:opacity-50"
+                >
+                  <Send className="w-3.5 h-3.5" />
+                  {pushing ? "Pushing to Tally..." : "Push Voucher to Tally Prime"}
+                </button>
+              </div>
+            </div>
           </div>
         )}
       </div>
