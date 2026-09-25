@@ -144,7 +144,7 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
     }
   });
 
-  // FEATURE 3: Memorized Item -> Ledger Store
+  // Memorized Item -> Ledger Store
   const [itemRules, setItemRules] = useState(() => {
     try {
       const saved = localStorage.getItem("c4_purchase_item_rules");
@@ -198,7 +198,6 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
       reader.onerror = (error) => reject(error);
     });
 
-  // FEATURE 1: Check for duplicates across all queues
   const checkDuplicateInvoice = (invoiceNo, vendorName, currentId = null) => {
     if (!invoiceNo) return null;
     const cleanInv = invoiceNo.trim().toUpperCase();
@@ -232,7 +231,6 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
       }
     ];
 
-    // Auto-apply memorized ledger if available
     const mappedAccountingLedgers = bill.accounting_ledgers || items.map(it => {
       const cleanKey = (it.item_name || it.description || "").trim().toLowerCase();
       const memorized = itemRules[cleanKey];
@@ -307,7 +305,6 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
           extracted.id = extracted.id || `inv_${Date.now()}_${i}`;
           extracted.file_preview_url = persistentPreview;
 
-          // Memorization pre-fill during upload
           if (extracted.items && extracted.items.length > 0) {
             extracted.accounting_ledgers = extracted.items.map(it => {
               const cleanKey = (it.item_name || it.description || "").trim().toLowerCase();
@@ -321,7 +318,6 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
             });
           }
 
-          // Check duplicate
           const invNo = extracted.supplier_invoice_no || extracted.invoice_number;
           const duplicate = checkDuplicateInvoice(invNo, extracted.vendor_name);
           if (duplicate) {
@@ -375,7 +371,6 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
     });
   };
 
-  // FEATURE 3: Memorize Item / Description to Ledger
   const handleLedgerSelection = (idx, newLedger, descriptionOrItemName) => {
     const updated = [...voucherData.accounting_ledgers];
     updated[idx].ledger_name = newLedger;
@@ -392,15 +387,40 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
     }
   };
 
+  // AUTOMATIC TRANSITION TO NEXT BILL ON APPROVE
   const handleApproveInvoice = () => {
     setShowAllocationModal(false);
     const approvedVoucher = { ...voucherData, isApproved: true };
 
-    setPendingBills(prev => prev.filter(b => b.id !== activeReviewBill.id));
+    const remainingPending = pendingBills.filter(b => b.id !== activeReviewBill.id);
+    setPendingBills(remainingPending);
     setApprovedBills(prev => [approvedVoucher, ...prev.filter(b => b.id !== approvedVoucher.id)]);
-    setActiveReviewBill(null);
-    setPurchaseSubTab("approved");
-    notify(`Invoice #${approvedVoucher.supplier_invoice_no} saved to Approved Invoices!`, "success");
+
+    notify(`Invoice #${approvedVoucher.supplier_invoice_no} approved!`, "success");
+
+    // Automatically shift to the next bill in the queue
+    if (remainingPending.length > 0) {
+      openReviewWorkspace(remainingPending[0]);
+    } else {
+      setActiveReviewBill(null);
+      setPurchaseSubTab("approved");
+    }
+  };
+
+  // AUTOMATIC TRANSITION TO NEXT BILL ON DELETE
+  const handleDeleteCurrentReviewBill = () => {
+    const remainingPending = pendingBills.filter(b => b.id !== activeReviewBill.id);
+    setPendingBills(remainingPending);
+    setApprovedBills(prev => prev.filter(b => b.id !== activeReviewBill.id));
+
+    notify("Invoice deleted.", "info");
+
+    // Automatically shift to the next bill in the queue
+    if (remainingPending.length > 0) {
+      openReviewWorkspace(remainingPending[0]);
+    } else {
+      setActiveReviewBill(null);
+    }
   };
 
   const handlePushToTally = async (bill) => {
@@ -567,6 +587,10 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
     );
     const gstCheck = validateGSTIN(voucherData.vendor_gstin);
 
+    // Current invoice position in the queue
+    const currentQueueIndex = pendingBills.findIndex(b => b.id === activeReviewBill.id);
+    const hasNextBill = currentQueueIndex !== -1 && currentQueueIndex < pendingBills.length - 1;
+
     return (
       <div className="flex flex-col h-full bg-[#F8FAFC] text-slate-800 font-sans">
         <header className="h-14 bg-white border-b border-slate-200 px-6 flex items-center justify-between shadow-sm z-10 shrink-0">
@@ -581,6 +605,11 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
               {voucherData.vendor_name || "Invoice Review"}
             </h2>
             <span className="text-xs text-slate-400">| #{voucherData.supplier_invoice_no}</span>
+            {pendingBills.length > 0 && currentQueueIndex !== -1 && (
+              <span className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded font-mono font-medium">
+                {currentQueueIndex + 1} of {pendingBills.length}
+              </span>
+            )}
             {duplicateMatch && (
               <span className="flex items-center gap-1 text-[11px] font-bold text-amber-800 bg-amber-100 px-2 py-0.5 rounded border border-amber-300">
                 <AlertTriangle className="w-3 h-3 text-amber-700" />
@@ -591,11 +620,7 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
 
           <div className="flex items-center gap-3">
             <button
-              onClick={() => {
-                setPendingBills(prev => prev.filter(b => b.id !== activeReviewBill.id));
-                setApprovedBills(prev => prev.filter(b => b.id !== activeReviewBill.id));
-                setActiveReviewBill(null);
-              }}
+              onClick={handleDeleteCurrentReviewBill}
               className="text-xs font-medium text-rose-600 hover:bg-rose-50 px-3 py-1.5 rounded-lg transition"
             >
               Delete Bill
@@ -604,7 +629,7 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
               onClick={() => setShowAllocationModal(true)}
               className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold px-4 py-2 rounded-lg transition shadow-sm"
             >
-              <Check className="w-3.5 h-3.5" /> Approve Bill
+              <Check className="w-3.5 h-3.5" /> Approve Bill {hasNextBill ? "& Next →" : ""}
             </button>
           </div>
         </header>
@@ -766,7 +791,6 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
                   <div>
                     <div className="flex items-center justify-between mb-1">
                       <label className="text-xs font-bold text-slate-600">GSTIN</label>
-                      {/* FEATURE 2: GSTIN Verification Indicator */}
                       {voucherData.vendor_gstin && (
                         gstCheck.isValid ? (
                           <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded">
@@ -1153,9 +1177,9 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
                 </button>
                 <button
                   onClick={handleApproveInvoice}
-                  className="px-4 py-1.5 rounded font-semibold bg-emerald-600 hover:bg-emerald-700 text-white"
+                  className="px-4 py-1.5 rounded font-semibold bg-emerald-600 hover:bg-emerald-700 text-white flex items-center gap-1"
                 >
-                  Save to Approved
+                  Save & Next <ChevronLeft className="w-3.5 h-3.5 rotate-180" />
                 </button>
               </div>
             </div>
