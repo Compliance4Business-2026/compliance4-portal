@@ -146,27 +146,39 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
     }
   });
 
-  const getActiveVendorProfile = () => {
-  try {
-    const profiles = JSON.parse(localStorage.getItem("c4_client_profiles") || "{}");
-    return profiles[activeClient] || {
+  // Pulls vendor/client profile dynamically from c4_client_profiles or fallback
+  const getActiveProfile = () => {
+    try {
+      const all = JSON.parse(localStorage.getItem("c4_client_profiles") || "{}");
+      if (all[activeClient]) return all[activeClient];
+    } catch {}
+
+    try {
+      const single = JSON.parse(localStorage.getItem("c4_vendor_profile") || "{}");
+      if (single.companyName) return single;
+    } catch {}
+
+    return {
       companyName: activeClient,
       gstin: "24AABCP1234F1Z9",
-      address: "",
-      phone: "",
-      email: "",
+      pan: "AABCP1234F",
+      address: "GF-14, Titanium City Center, Anandnagar Road, Prahladnagar, Ahmedabad - 380015",
+      phone: "+91 98250 12345",
+      email: "accounts@panasuria.com",
       bankName: "HDFC Bank",
-      accountNo: "",
-      ifscCode: ""
+      accountNo: "50200080509922",
+      ifscCode: "HDFC0000006",
+      branch: "Prahladnagar Branch, Ahmedabad",
+      terms: "1. Subject to our home Jurisdiction.\n2. Our Responsibility Ceases as soon as goods leaves our Premises.\n3. Goods once sold will not be taken back.\n4. Delivery Ex-Premises.",
+      logoUrl: ""
     };
-  } catch {
-    return { companyName: activeClient };
-  }
-};
-    } catch {
-      return {};
-    }
-  });
+  };
+
+  const [vendorProfile, setVendorProfile] = useState(getActiveProfile);
+
+  useEffect(() => {
+    setVendorProfile(getActiveProfile());
+  }, [activeClient]);
 
   useEffect(() => {
     localStorage.setItem("c4_normal_sales_invoices", JSON.stringify(savedInvoices));
@@ -179,10 +191,6 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
   useEffect(() => {
     localStorage.setItem("c4_items_catalog", JSON.stringify(itemCatalog));
   }, [itemCatalog]);
-
-  useEffect(() => {
-    localStorage.setItem("c4_vendor_profile", JSON.stringify(vendorProfile));
-  }, [vendorProfile]);
 
   const [notification, setNotification] = useState(null);
   const [isPushing, setIsPushing] = useState(false);
@@ -248,14 +256,13 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
     setTimeout(() => setNotification(null), 4000);
   };
 
-  // COUNTRY CHANGE HANDLER FOR CUSTOMER CREATION
   const handleCustCountryChange = (selectedCountry) => {
     if (selectedCountry !== "India") {
       setNewCust(prev => ({
         ...prev,
         country: selectedCountry,
-        gstin: "", // Blank out GSTIN
-        state: ""  // Blank out State
+        gstin: "",
+        state: ""
       }));
     } else {
       setNewCust(prev => ({
@@ -440,6 +447,8 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
       return;
     }
 
+    const currentProfile = getActiveProfile();
+
     const newInv = {
       id: `sale_${Date.now()}`,
       invoiceType,
@@ -467,7 +476,7 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
       roundOff: autoRoundOff,
       grandTotal: roundedGrandTotal,
       isInterstate,
-      vendorProfile,
+      vendorProfile: currentProfile,
       status: "approved",
       createdAt: new Date().toLocaleDateString("en-IN")
     };
@@ -600,9 +609,13 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
           <!-- TOP SELLER HEADER -->
           <div class="two-col border-b" style="padding: 10px 14px; align-items: center; justify-content: space-between;">
             <div style="display: flex; align-items: center; gap: 12px;">
-              <div style="width: 44px; height: 44px; background: #2b6cb0; color: #fff; font-weight: 900; font-size: 20px; display: flex; align-items: center; justify-content: center; border-radius: 4px;">
-                C4
-              </div>
+              ${invoice.vendorProfile?.logoUrl ? `
+                <img src="${invoice.vendorProfile.logoUrl}" style="max-height: 48px; max-width: 80px; object-fit: contain; border-radius: 4px;" alt="Logo" />
+              ` : `
+                <div style="width: 44px; height: 44px; background: #2b6cb0; color: #fff; font-weight: 900; font-size: 20px; display: flex; align-items: center; justify-content: center; border-radius: 4px;">
+                  C4
+                </div>
+              `}
               <div>
                 <div style="font-size: 16px; font-weight: 900; color: #1a202c; text-transform: uppercase;">${invoice.vendorProfile?.companyName || "Panasuria Confectionery"}</div>
                 <div style="font-size: 9.5px; color: #4a5568; margin-top: 1px;">${invoice.vendorProfile?.address || ""}</div>
@@ -1706,7 +1719,7 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
         </div>
       )}
 
-      {/* MODAL 3: INVOICE PREVIEW WITH A4 FULL-PAGE DISPATCH */}
+      {/* MODAL 3: INVOICE PREVIEW WITH ACCESSIBLE FLOATING CLOSE BUTTON */}
       {showPrintModal && selectedInvoiceForPrint && (
         <div className="fixed inset-0 z-50 bg-slate-900/80 backdrop-blur-sm flex items-start justify-center p-4 overflow-y-auto">
           <button
