@@ -116,10 +116,10 @@ function validateGSTIN(gstin) {
 export default function PurchaseModule({ activeClient = "Panasuria Confectionery" }) {
   const [purchaseSubTab, setPurchaseSubTab] = useState("needs_review");
 
-  // Persistent Stores in localStorage
+  // Persistent Stores scoped to activeClient
   const [pendingBills, setPendingBills] = useState(() => {
     try {
-      const saved = localStorage.getItem("c4_pending_bills");
+      const saved = localStorage.getItem(`c4_pending_bills_${activeClient}`);
       return saved ? JSON.parse(saved) : [];
     } catch {
       return [];
@@ -128,7 +128,7 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
 
   const [approvedBills, setApprovedBills] = useState(() => {
     try {
-      const saved = localStorage.getItem("c4_approved_bills");
+      const saved = localStorage.getItem(`c4_approved_bills_${activeClient}`);
       return saved ? JSON.parse(saved) : [];
     } catch {
       return [];
@@ -137,17 +137,17 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
 
   const [pushedBills, setPushedBills] = useState(() => {
     try {
-      const saved = localStorage.getItem("c4_pushed_bills");
+      const saved = localStorage.getItem(`c4_pushed_bills_${activeClient}`);
       return saved ? JSON.parse(saved) : [];
     } catch {
       return [];
     }
   });
 
-  // Memorized Item -> Ledger Store
+  // Learned Item-to-Ledger Rules scoped to activeClient
   const [itemRules, setItemRules] = useState(() => {
     try {
-      const saved = localStorage.getItem("c4_purchase_item_rules");
+      const saved = localStorage.getItem(`c4_purchase_item_rules_${activeClient}`);
       return saved ? JSON.parse(saved) : {};
     } catch {
       return {};
@@ -155,21 +155,20 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
   });
 
   useEffect(() => {
-    localStorage.setItem("c4_pending_bills", JSON.stringify(pendingBills));
-  }, [pendingBills]);
+    localStorage.setItem(`c4_pending_bills_${activeClient}`, JSON.stringify(pendingBills));
+  }, [pendingBills, activeClient]);
 
   useEffect(() => {
-    localStorage.setItem("c4_approved_bills", JSON.stringify(approvedBills));
-  }, [approvedBills]);
+    localStorage.setItem(`c4_approved_bills_${activeClient}`, JSON.stringify(approvedBills));
+  }, [approvedBills, activeClient]);
 
   useEffect(() => {
-    localStorage.setItem("c4_pushed_bills", JSON.stringify(pushedBills));
-  }, [pushedBills]);
+    localStorage.setItem(`c4_pushed_bills_${activeClient}`, JSON.stringify(pushedBills));
+  }, [pushedBills, activeClient]);
 
   useEffect(() => {
-    localStorage.setItem("c4_purchase_item_rules", JSON.stringify(itemRules));
-  }, [itemRules]);
-
+    localStorage.setItem(`c4_purchase_item_rules_${activeClient}`, JSON.stringify(itemRules));
+  }, [itemRules, activeClient]);
   const [isUploadingBill, setIsUploadingBill] = useState(false);
   const [uploadProgress, setUploadProgress] = useState("");
   const [notification, setNotification] = useState(null);
