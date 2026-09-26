@@ -5,41 +5,32 @@ import {
   Send,
   CheckCircle2,
   FileText,
-  AlertCircle,
-  Calendar,
-  Layers,
-  CreditCard,
-  Building,
-  Tag,
-  Sparkles,
-  Percent
+  AlertCircle
 } from "lucide-react";
 
-const EXPENSE_GROUPS = [
-  {
-    group: "Employee Benefit Expenses",
-    subtypes: ["Staff Salary & Wages", "Director Remuneration", "Staff Welfare & Refreshment", "Bonus & Incentives"]
-  },
-  {
-    group: "Rent & Occupancy Costs",
-    subtypes: ["Commercial Office / Shop Rent", "Electricity & Fuel Charges", "Water & Maintenance Charges"]
-  },
-  {
-    group: "Administrative & Professional Overheads",
-    subtypes: ["Legal & Statutory Audit Fees", "Software Subscriptions & Cloud Hosting", "Printing, Stationery & Postage", "Consultancy & Advisory Fees"]
-  },
-  {
-    group: "Selling & Marketing Expenses",
-    subtypes: ["Digital Marketing & Advertisements", "Packaging Material & Cartons", "Delivery Commissions", "Promotions & Influencer Marketing"]
-  },
-  {
-    group: "Finance & Banking Charges",
-    subtypes: ["Bank Service Charges & Fees", "Loan Interest & Overdraft Interest", "Payment Gateway Processing Fees"]
-  },
-  {
-    group: "Depreciation & Non-Cash Book Entries",
-    subtypes: ["Depreciation on Machinery & Equipment", "Depreciation on Furniture & Fixtures", "Depreciation on Computers & IT Assets", "Amortization of Intangible Assets"]
-  }
+const EXPENSE_LEDGERS = [
+  "Staff Salary & Wages",
+  "Director Remuneration",
+  "Staff Welfare & Refreshment",
+  "Bonus & Incentives",
+  "Commercial Office / Shop Rent",
+  "Electricity & Fuel Charges",
+  "Water & Maintenance Charges",
+  "Legal & Statutory Audit Fees",
+  "Software Subscriptions & Cloud Hosting",
+  "Printing, Stationery & Postage",
+  "Consultancy & Advisory Fees",
+  "Digital Marketing & Advertisements",
+  "Packaging Material & Cartons",
+  "Delivery Commissions",
+  "Promotions & Influencer Marketing",
+  "Bank Service Charges & Fees",
+  "Loan Interest & Overdraft Interest",
+  "Payment Gateway Processing Fees",
+  "Depreciation on Machinery & Equipment",
+  "Depreciation on Furniture & Fixtures",
+  "Depreciation on Computers & IT Assets",
+  "Amortization of Intangible Assets"
 ];
 
 const LIABILITY_LEDGERS = [
@@ -57,9 +48,8 @@ const LIABILITY_LEDGERS = [
 const GST_RATE_SLABS = [0, 5, 12, 18, 28];
 
 export default function ExpenseModule({ activeClient = "Panasuria Confectionery" }) {
-  const [subTab, setSubTab] = useState("record"); // 'record' | 'register'
+  const [subTab, setSubTab] = useState("record");
 
-  // Client-scoped storage
   const [expenses, setExpenses] = useState(() => {
     try {
       const saved = localStorage.getItem(`c4_other_expenses_${activeClient}`);
@@ -77,8 +67,7 @@ export default function ExpenseModule({ activeClient = "Panasuria Confectionery"
   const [isPushing, setIsPushing] = useState(false);
 
   // Form State
-  const [selectedGroup, setSelectedGroup] = useState(EXPENSE_GROUPS[0].group);
-  const [expenseLedger, setExpenseLedger] = useState(EXPENSE_GROUPS[0].subtypes[0]);
+  const [expenseLedger, setExpenseLedger] = useState(EXPENSE_LEDGERS[0]);
   const [creditLedger, setCreditLedger] = useState(LIABILITY_LEDGERS[0]);
   const [voucherDate, setVoucherDate] = useState(new Date().toISOString().split("T")[0]);
   const [voucherNo, setVoucherNo] = useState(`EXP/26-27/${String(expenses.length + 1).padStart(3, "0")}`);
@@ -96,20 +85,13 @@ export default function ExpenseModule({ activeClient = "Panasuria Confectionery"
     setTimeout(() => setNotification(null), 4000);
   };
 
-  const handleGroupChange = (grp) => {
-    setSelectedGroup(grp);
-    const found = EXPENSE_GROUPS.find((g) => g.group === grp);
-    if (found && found.subtypes.length > 0) {
-      setExpenseLedger(found.subtypes[0]);
-    }
-    // Auto-suggest liability ledger for non-cash depreciation
-    if (grp.includes("Depreciation")) {
+  const handleExpenseLedgerChange = (ledger) => {
+    setExpenseLedger(ledger);
+    if (ledger.toLowerCase().includes("depreciation") || ledger.toLowerCase().includes("amortization")) {
       setCreditLedger("Accumulated Depreciation (Asset Contra)");
-      setHasGst(false);
-    } else if (grp.includes("Employee")) {
+    } else if (ledger.toLowerCase().includes("salary") || ledger.toLowerCase().includes("wage")) {
       setCreditLedger("Salary & Wages Payable");
-      setHasGst(false);
-    } else if (grp.includes("Rent")) {
+    } else if (ledger.toLowerCase().includes("rent")) {
       setCreditLedger("Rent Payable");
     } else {
       setCreditLedger("Outstanding Expenses / Provisions");
@@ -139,7 +121,6 @@ export default function ExpenseModule({ activeClient = "Panasuria Confectionery"
       id: `exp_${Date.now()}`,
       voucherNo,
       voucherDate,
-      group: selectedGroup,
       expenseLedger,
       creditLedger,
       payee: vendorOrPayee.trim() || "-",
@@ -175,7 +156,6 @@ export default function ExpenseModule({ activeClient = "Panasuria Confectionery"
     notify(`Voucher #${exp.voucherNo} deleted.`, "info");
   };
 
-  // Dispatch standard Journal voucher to Tally Prime
   const handlePushToTally = async (exp) => {
     setIsPushing(true);
     const tallyDate = (exp.voucherDate || "").replace(/-/g, "");
@@ -196,7 +176,6 @@ export default function ExpenseModule({ activeClient = "Panasuria Confectionery"
             <REFERENCE>${exp.voucherNo}</REFERENCE>
             <NARRATION>${exp.narration} [Booked via Compliance4]</NARRATION>
             
-            <!-- DEBIT EXPENSE HEAD -->
             <ALLLEDGERENTRIES.LIST>
               <LEDGERNAME>${exp.expenseLedger}</LEDGERNAME>
               <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
@@ -224,7 +203,6 @@ export default function ExpenseModule({ activeClient = "Panasuria Confectionery"
               <AMOUNT>-${exp.igst.toFixed(2)}</AMOUNT>
             </ALLLEDGERENTRIES.LIST>` : ""}
 
-            <!-- CREDIT LIABILITY / ACCRUAL / ASSET CONTRA -->
             <ALLLEDGERENTRIES.LIST>
               <LEDGERNAME>${exp.creditLedger}</LEDGERNAME>
               <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
@@ -340,57 +318,46 @@ export default function ExpenseModule({ activeClient = "Panasuria Confectionery"
               </div>
             </div>
 
-            {/* EXPENSE GROUP & CLASSIFICATION */}
+            {/* LEDGER CLASSIFICATION */}
             <div className="border-t border-slate-100 pt-5 space-y-4">
               <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">
-                P&L Classification & Ledgers
+                Ledger Allocations
               </h3>
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">Expense Category (P&L Head)</label>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Debit Ledger (Expense Account)
+                  </label>
                   <select
-                    value={selectedGroup}
-                    onChange={(e) => handleGroupChange(e.target.value)}
-                    className="w-full text-xs border border-slate-300 rounded-lg p-2 bg-white font-medium"
+                    value={expenseLedger}
+                    onChange={(e) => handleExpenseLedgerChange(e.target.value)}
+                    className="w-full text-xs border border-slate-300 rounded-lg p-2 bg-white font-semibold text-slate-900"
                   >
-                    {EXPENSE_GROUPS.map((g) => (
-                      <option key={g.group} value={g.group}>{g.group}</option>
+                    {EXPENSE_LEDGERS.map((ldr) => (
+                      <option key={ldr} value={ldr}>{ldr}</option>
                     ))}
                   </select>
                 </div>
 
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">Debit Ledger (Expense Account)</label>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Credit Ledger (Liability / Payable / Asset Contra)
+                  </label>
                   <select
-                    value={expenseLedger}
-                    onChange={(e) => setExpenseLedger(e.target.value)}
-                    className="w-full text-xs border border-slate-300 rounded-lg p-2 bg-white font-semibold text-slate-900"
+                    value={creditLedger}
+                    onChange={(e) => setCreditLedger(e.target.value)}
+                    className="w-full text-xs border border-slate-300 rounded-lg p-2 bg-white font-semibold text-indigo-900"
                   >
-                    {EXPENSE_GROUPS.find((g) => g.group === selectedGroup)?.subtypes.map((sub) => (
-                      <option key={sub} value={sub}>{sub}</option>
+                    {LIABILITY_LEDGERS.map((ldr) => (
+                      <option key={ldr} value={ldr}>{ldr}</option>
                     ))}
                   </select>
                 </div>
               </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
-                  Credit Ledger (Liability / Payable / Asset Contra)
-                </label>
-                <select
-                  value={creditLedger}
-                  onChange={(e) => setCreditLedger(e.target.value)}
-                  className="w-full text-xs border border-slate-300 rounded-lg p-2 bg-white font-semibold text-indigo-900"
-                >
-                  {LIABILITY_LEDGERS.map((ldr) => (
-                    <option key={ldr} value={ldr}>{ldr}</option>
-                  ))}
-                </select>
-                <span className="text-[10px] text-slate-400 mt-1 block">
-                  Select a Payable ledger to book on accrual basis. Select Bank/Cash if already settled.
-                </span>
-              </div>
+              <span className="text-[10px] text-slate-400 block">
+                Select a Payable ledger to book on accrual basis. Select Bank/Cash if already settled.
+              </span>
             </div>
 
             {/* AMOUNT & OPTIONAL GST BREAKDOWN */}
@@ -403,7 +370,6 @@ export default function ExpenseModule({ activeClient = "Panasuria Confectionery"
                   <input
                     type="checkbox"
                     checked={hasGst}
-                    disabled={selectedGroup.includes("Depreciation") || selectedGroup.includes("Employee")}
                     onChange={(e) => setHasGst(e.target.checked)}
                     className="rounded text-slate-900 focus:ring-slate-900"
                   />
@@ -543,7 +509,9 @@ export default function ExpenseModule({ activeClient = "Panasuria Confectionery"
                         </td>
                         <td className="py-3 px-4">
                           <p className="font-bold text-slate-900">{exp.expenseLedger}</p>
-                          <p className="text-[10px] text-slate-400">{exp.group} {exp.payee !== "-" ? `• ${exp.payee}` : ""}</p>
+                          {exp.payee !== "-" && (
+                            <p className="text-[10px] text-slate-400">{exp.payee}</p>
+                          )}
                         </td>
                         <td className="py-3 px-4 text-indigo-900 font-semibold">
                           {exp.creditLedger}
