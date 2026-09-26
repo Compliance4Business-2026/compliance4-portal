@@ -1,9 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { 
   Building2, 
-  Upload, 
-  CheckCircle2, 
-  AlertCircle, 
   Save, 
   Plus, 
   Trash2, 
@@ -11,7 +8,8 @@ import {
   ShieldCheck,
   ShieldAlert,
   CreditCard,
-  FileText
+  AlertCircle,
+  CheckCircle2
 } from "lucide-react";
 
 const GST_STATE_CODES = {
@@ -53,6 +51,21 @@ function validateGSTIN(gstin) {
   return { isValid: expectedCheckChar === clean[14], stateName, stateCode };
 }
 
+const BLANK_FORM = {
+  companyName: "",
+  gstin: "",
+  pan: "",
+  address: "",
+  phone: "",
+  email: "",
+  bankName: "",
+  accountNo: "",
+  ifscCode: "",
+  branch: "",
+  terms: "1. Goods once sold will not be taken back.\n2. Subject to local Jurisdiction.",
+  logoUrl: ""
+};
+
 export default function SettingsModule({ activeClient, setActiveClient }) {
   const [profiles, setProfiles] = useState(() => {
     try {
@@ -69,7 +82,7 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
           accountNo: "50200080509922",
           ifscCode: "HDFC0000006",
           branch: "Prahladnagar Branch, Ahmedabad",
-          terms: "1. Subject to our home Jurisdiction.\n2. Our Responsibility Ceases as soon as goods leaves our Premises.\n3. Goods once sold will not be taken back.\n4. Delivery Ex-Premises.",
+          terms: "1. Subject to our home Jurisdiction.\n2. Goods once sold will not be taken back.\n3. Delivery Ex-Premises.",
           logoUrl: ""
         }
       };
@@ -78,54 +91,27 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
     }
   });
 
-  const [currentForm, setCurrentForm] = useState(
-    profiles[activeClient] || {
-      companyName: activeClient,
-      gstin: "",
-      pan: "",
-      address: "",
-      phone: "",
-      email: "",
-      bankName: "",
-      accountNo: "",
-      ifscCode: "",
-      branch: "",
-      terms: "1. Goods once sold will not be taken back.\n2. Subject to local Jurisdiction.",
-      logoUrl: ""
-    }
-  );
-
+  const [currentForm, setCurrentForm] = useState(() => profiles[activeClient] || { ...BLANK_FORM, companyName: activeClient });
+  const [isAddingNew, setIsAddingNew] = useState(false);
   const [notification, setNotification] = useState(null);
   const fileInputRef = useRef(null);
 
   useEffect(() => {
     localStorage.setItem("c4_client_profiles", JSON.stringify(profiles));
-    // Keep backward-compatible pointer for active sales vendor profile
     if (profiles[activeClient]) {
       localStorage.setItem("c4_vendor_profile", JSON.stringify(profiles[activeClient]));
     }
   }, [profiles, activeClient]);
 
   useEffect(() => {
-    if (profiles[activeClient]) {
-      setCurrentForm(profiles[activeClient]);
-    } else {
-      setCurrentForm({
-        companyName: activeClient,
-        gstin: "",
-        pan: "",
-        address: "",
-        phone: "",
-        email: "",
-        bankName: "",
-        accountNo: "",
-        ifscCode: "",
-        branch: "",
-        terms: "1. Goods once sold will not be taken back.\n2. Subject to local Jurisdiction.",
-        logoUrl: ""
-      });
+    if (!isAddingNew) {
+      if (profiles[activeClient]) {
+        setCurrentForm(profiles[activeClient]);
+      } else {
+        setCurrentForm({ ...BLANK_FORM, companyName: activeClient });
+      }
     }
-  }, [activeClient]);
+  }, [activeClient, isAddingNew]);
 
   const notify = (msg, type = "success") => {
     setNotification({ msg, type });
@@ -139,14 +125,13 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
     const reader = new FileReader();
     reader.onload = () => {
       setCurrentForm(prev => ({ ...prev, logoUrl: reader.result }));
-      notify("Logo uploaded. Click 'Save Profile' to apply.", "info");
+      notify("Logo selected. Click 'Save Profile' to apply.", "info");
     };
     reader.readAsDataURL(file);
   };
 
   const handleGSTINChange = (val) => {
     const clean = val.toUpperCase().trim();
-    const check = validateGSTIN(clean);
     let extractedPan = currentForm.pan;
     if (clean.length >= 12) {
       extractedPan = clean.substring(2, 12);
@@ -158,51 +143,63 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
     }));
   };
 
+  // POINT 3: INITIATE COMPLETELY BLANK PROFILE
+  const handleStartAddNewClient = () => {
+    setIsAddingNew(true);
+    setCurrentForm({ ...BLANK_FORM });
+  };
+
+  // SAVE OR UPDATE PROFILE
   const handleSaveProfile = () => {
     if (!currentForm.companyName.trim()) {
-      notify("Company Name is required", "error");
+      notify("Please provide a Legal / Trade Company Name", "error");
       return;
     }
 
+    const targetName = currentForm.companyName.trim();
     const updated = {
       ...profiles,
-      [currentForm.companyName]: currentForm
+      [targetName]: { ...currentForm, companyName: targetName }
     };
 
     setProfiles(updated);
-    setActiveClient(currentForm.companyName);
-    notify(`Profile for "${currentForm.companyName}" successfully saved!`, "success");
+    setIsAddingNew(false);
+    setActiveClient(targetName);
+    notify(`Client profile "${targetName}" saved successfully!`, "success");
   };
 
-  const handleAddNewClientPrompt = () => {
-    const name = window.prompt("Enter Legal / Trade Name for new client entity:");
-    if (!name || !name.trim()) return;
+  // POINT 4: DELETE ANY CLIENT PROFILE
+  const handleDeleteClient = (clientToDelete) => {
+    const confirmDelete = window.confirm(
+      `Are you sure you want to permanently delete "${clientToDelete}" and its profile?`
+    );
+    if (!confirmDelete) return;
 
-    const trimmed = name.trim();
-    if (profiles[trimmed]) {
-      setActiveClient(trimmed);
-      notify(`Switched to existing client "${trimmed}"`, "info");
-      return;
+    const updated = { ...profiles };
+    delete updated[clientToDelete];
+
+    // Clean up local storage data
+    localStorage.removeItem(`c4_normal_sales_invoices_${clientToDelete}`);
+    localStorage.removeItem(`c4_pending_bills_${clientToDelete}`);
+    localStorage.removeItem(`c4_approved_bills_${clientToDelete}`);
+    localStorage.removeItem(`c4_pushed_bills_${clientToDelete}`);
+
+    const remainingKeys = Object.keys(updated);
+
+    if (remainingKeys.length > 0) {
+      setProfiles(updated);
+      setActiveClient(remainingKeys[0]);
+      setCurrentForm(updated[remainingKeys[0]]);
+      notify(`Profile "${clientToDelete}" deleted. Switched to "${remainingKeys[0]}".`, "info");
+    } else {
+      // If all deleted, establish a fresh blank state
+      const freshName = "My Business";
+      const freshProfile = { ...BLANK_FORM, companyName: freshName };
+      setProfiles({ [freshName]: freshProfile });
+      setActiveClient(freshName);
+      setCurrentForm(freshProfile);
+      notify("All client profiles deleted. Reset to blank company profile.", "info");
     }
-
-    const newProfile = {
-      companyName: trimmed,
-      gstin: "",
-      pan: "",
-      address: "",
-      phone: "",
-      email: "",
-      bankName: "HDFC Bank",
-      accountNo: "",
-      ifscCode: "",
-      branch: "",
-      terms: "1. Goods once sold will not be taken back.\n2. Subject to local Jurisdiction.",
-      logoUrl: ""
-    };
-
-    setProfiles(prev => ({ ...prev, [trimmed]: newProfile }));
-    setActiveClient(trimmed);
-    notify(`New client "${trimmed}" added and activated!`, "success");
   };
 
   const gstCheck = validateGSTIN(currentForm.gstin);
@@ -213,15 +210,15 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
       <header className="bg-white border-b border-slate-200 px-8 py-4 flex items-center justify-between shadow-sm shrink-0">
         <div>
           <h2 className="text-xl font-bold text-slate-900 tracking-tight">Client Profile Master & Settings</h2>
-          <p className="text-xs text-slate-500 font-medium">Configure entity branding, statutory GSTIN, and settlement bank accounts</p>
+          <p className="text-xs text-slate-500 font-medium">Manage entities, statutory details, bank accounts, and invoice branding</p>
         </div>
 
         <div className="flex items-center gap-3">
           <button
-            onClick={handleAddNewClientPrompt}
+            onClick={handleStartAddNewClient}
             className="flex items-center gap-1.5 px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-lg text-xs font-semibold transition"
           >
-            <Plus className="w-3.5 h-3.5" /> + Add Client Entity
+            <Plus className="w-3.5 h-3.5" /> + Add New Client
           </button>
           <button
             onClick={handleSaveProfile}
@@ -234,33 +231,66 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
 
       <div className="p-8 max-w-5xl mx-auto w-full space-y-6">
         
-        {/* ENTITY PICKER TABS */}
+        {/* ENTITY SELECTOR PILLS WITH DELETE OPTION */}
         <div className="flex items-center gap-2 overflow-x-auto pb-2 border-b border-slate-200">
           <span className="text-xs font-bold text-slate-400 uppercase tracking-wider mr-2">Entities:</span>
           {Object.keys(profiles).map(name => (
-            <button
+            <div
               key={name}
-              onClick={() => setActiveClient(name)}
-              className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 whitespace-nowrap ${
-                activeClient === name
-                  ? "bg-slate-900 text-white shadow-sm"
-                  : "bg-white text-slate-600 hover:bg-slate-100 border border-slate-200"
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-bold transition ${
+                activeClient === name && !isAddingNew
+                  ? "bg-slate-900 text-white border-slate-900 shadow-sm"
+                  : "bg-white text-slate-700 hover:bg-slate-100 border-slate-200"
               }`}
             >
-              <Building2 className="w-3.5 h-3.5" />
-              {name}
-            </button>
+              <button
+                onClick={() => {
+                  setIsAddingNew(false);
+                  setActiveClient(name);
+                }}
+                className="flex items-center gap-1.5 cursor-pointer"
+              >
+                <Building2 className="w-3.5 h-3.5" />
+                <span>{name}</span>
+              </button>
+
+              {/* DELETE BUTTON */}
+              <button
+                onClick={() => handleDeleteClient(name)}
+                title={`Delete ${name}`}
+                className={`p-0.5 rounded transition ${
+                  activeClient === name && !isAddingNew 
+                    ? "text-slate-400 hover:text-rose-400" 
+                    : "text-slate-300 hover:text-rose-600"
+                }`}
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            </div>
           ))}
+
+          {isAddingNew && (
+            <span className="px-3 py-1.5 rounded-lg bg-indigo-50 border border-indigo-200 text-indigo-700 font-bold text-xs">
+              + New Client Form (Blank)
+            </span>
+          )}
         </div>
 
-        {/* SECTION 1: BRANDING & IDENTITY */}
+        {/* SECTION 1: IDENTITY & LOGO */}
         <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm space-y-5">
-          <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-            <Building2 className="w-4 h-4 text-slate-600" /> Organization Identity & Trade Name
-          </h3>
+          <div className="flex items-center justify-between">
+            <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+              <Building2 className="w-4 h-4 text-slate-600" /> Organization Identity & Trade Name
+            </h3>
+            {isAddingNew && (
+              <span className="text-[11px] font-semibold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100">
+                New Blank Profile Setup
+              </span>
+            )}
+          </div>
 
           <div className="grid grid-cols-4 gap-6 items-center">
-            {/* LOGO UPLOAD BOX */}
+            {/* LOGO BOX */}
             <div className="col-span-1 flex flex-col items-center justify-center p-4 border-2 border-dashed border-slate-200 rounded-xl hover:border-slate-400 transition bg-slate-50/50 text-center">
               {currentForm.logoUrl ? (
                 <div className="relative group w-24 h-24 flex items-center justify-center">
@@ -303,12 +333,15 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
               </button>
             </div>
 
-            {/* COMPANY NAME & CONTACT DETAILS */}
+            {/* NAME & CONTACT */}
             <div className="col-span-3 space-y-4">
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">Legal / Registered Trade Name</label>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Legal / Registered Trade Name <span className="text-rose-500">*</span>
+                </label>
                 <input
                   type="text"
+                  placeholder="e.g. My Cafe & Bakery Private Limited"
                   value={currentForm.companyName}
                   onChange={(e) => setCurrentForm({ ...currentForm, companyName: e.target.value })}
                   className="w-full text-xs font-bold border border-slate-300 rounded-lg p-2.5 focus:ring-1 focus:ring-slate-900"
@@ -354,7 +387,7 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
                 {currentForm.gstin && (
                   gstCheck.isValid ? (
                     <span className="inline-flex items-center gap-0.5 text-[9px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded">
-                      <ShieldCheck className="w-2.5 h-2.5 text-emerald-600" /> {gstCheck.stateName} ({gstCheck.stateCode})
+                      <ShieldCheck className="w-2.5 h-2.5 text-emerald-600" /> {gstCheck.stateName}
                     </span>
                   ) : (
                     <span className="inline-flex items-center gap-0.5 text-[9px] font-bold text-rose-700 bg-rose-50 px-1.5 py-0.5 rounded">
@@ -365,7 +398,7 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
               </div>
               <input
                 type="text"
-                placeholder="24AABCP1234F1Z9"
+                placeholder="24ABCDE1234F1Z5"
                 value={currentForm.gstin}
                 onChange={(e) => handleGSTINChange(e.target.value)}
                 className="w-full text-xs font-mono font-bold border border-slate-300 rounded-lg p-2 focus:ring-1 focus:ring-slate-900"
@@ -376,7 +409,7 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
               <label className="block text-xs font-bold text-slate-700 mb-1">PAN Number</label>
               <input
                 type="text"
-                placeholder="AABCP1234F"
+                placeholder="ABCDE1234F"
                 value={currentForm.pan}
                 onChange={(e) => setCurrentForm({ ...currentForm, pan: e.target.value.toUpperCase() })}
                 className="w-full text-xs font-mono font-bold border border-slate-300 rounded-lg p-2"
@@ -394,7 +427,7 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
             </div>
 
             <div className="col-span-3">
-              <label className="block text-xs font-bold text-slate-700 mb-1">Complete Registered Address (Printed on Invoices)</label>
+              <label className="block text-xs font-bold text-slate-700 mb-1">Registered Address (Printed on Invoices)</label>
               <input
                 type="text"
                 value={currentForm.address}
@@ -409,7 +442,7 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
         {/* SECTION 3: BANK DETAILS & TERMS */}
         <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm space-y-4">
           <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-            <CreditCard className="w-4 h-4 text-slate-600" /> Default Bank Account for Settlement
+            <CreditCard className="w-4 h-4 text-slate-600" /> Default Settlement Bank Account
           </h3>
 
           <div className="grid grid-cols-4 gap-4">
@@ -420,7 +453,7 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
                 value={currentForm.bankName}
                 onChange={(e) => setCurrentForm({ ...currentForm, bankName: e.target.value })}
                 className="w-full text-xs border border-slate-300 rounded-lg p-2"
-                placeholder="e.g. HDFC Bank"
+                placeholder="e.g. HDFC Bank / ICICI Bank"
               />
             </div>
             <div>
@@ -450,7 +483,7 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
                 value={currentForm.branch}
                 onChange={(e) => setCurrentForm({ ...currentForm, branch: e.target.value })}
                 className="w-full text-xs border border-slate-300 rounded-lg p-2"
-                placeholder="Prahladnagar, Ahmedabad"
+                placeholder="Ahmedabad Branch"
               />
             </div>
           </div>
@@ -466,17 +499,42 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
           </div>
         </div>
 
-        {/* SAVE BUTTON AT BOTTOM */}
-        <div className="flex justify-end pt-2">
-          <button
-            onClick={handleSaveProfile}
-            className="flex items-center gap-2 px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-bold transition shadow-sm"
-          >
-            <Save className="w-4 h-4" /> Save Profile Details
-          </button>
+        {/* BOTTOM ACTIONS */}
+        <div className="flex items-center justify-between pt-2">
+          {!isAddingNew ? (
+            <button
+              onClick={() => handleDeleteClient(activeClient)}
+              className="flex items-center gap-1.5 px-4 py-2 border border-rose-300 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-lg text-xs font-semibold transition"
+            >
+              <Trash2 className="w-3.5 h-3.5" /> Delete This Client Entity
+            </button>
+          ) : (
+            <div></div>
+          )}
+
+          <div className="flex items-center gap-3">
+            {isAddingNew && (
+              <button
+                onClick={() => {
+                  setIsAddingNew(false);
+                  setCurrentForm(profiles[activeClient] || { ...BLANK_FORM, companyName: activeClient });
+                }}
+                className="px-4 py-2 rounded-lg text-xs text-slate-600 hover:bg-slate-200 transition"
+              >
+                Cancel
+              </button>
+            )}
+            <button
+              onClick={handleSaveProfile}
+              className="flex items-center gap-2 px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-bold transition shadow-sm"
+            >
+              <Save className="w-4 h-4" /> Save Profile Details
+            </button>
+          </div>
         </div>
       </div>
 
+      {/* TOAST ALERTS */}
       {notification && (
         <div
           className={`fixed bottom-6 right-6 px-4 py-2.5 rounded-lg text-white text-xs font-semibold flex items-center gap-2 shadow-lg transition-all z-50 ${
