@@ -119,7 +119,7 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
   const [activeCategory, setActiveCategory] = useState("normal_sales");
   const [salesSubTab, setSalesSubTab] = useState("create");
 
-  // SCOPED TO ACTIVE CLIENT
+  // Client-scoped persistent state
   const [savedInvoices, setSavedInvoices] = useState(() => {
     try {
       const s = localStorage.getItem(`c4_normal_sales_invoices_${activeClient}`);
@@ -147,19 +147,6 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
     }
   });
 
-  // Automatically sync to client-scoped keys
-  useEffect(() => {
-    localStorage.setItem(`c4_normal_sales_invoices_${activeClient}`, JSON.stringify(savedInvoices));
-  }, [savedInvoices, activeClient]);
-
-  useEffect(() => {
-    localStorage.setItem(`c4_customers_${activeClient}`, JSON.stringify(customers));
-  }, [customers, activeClient]);
-
-  useEffect(() => {
-    localStorage.setItem(`c4_items_catalog_${activeClient}`, JSON.stringify(itemCatalog));
-  }, [itemCatalog, activeClient]);
-  // Pulls vendor/client profile dynamically from c4_client_profiles or fallback
   const getActiveProfile = () => {
     try {
       const all = JSON.parse(localStorage.getItem("c4_client_profiles") || "{}");
@@ -194,16 +181,16 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
   }, [activeClient]);
 
   useEffect(() => {
-    localStorage.setItem("c4_normal_sales_invoices", JSON.stringify(savedInvoices));
-  }, [savedInvoices]);
+    localStorage.setItem(`c4_normal_sales_invoices_${activeClient}`, JSON.stringify(savedInvoices));
+  }, [savedInvoices, activeClient]);
 
   useEffect(() => {
-    localStorage.setItem("c4_customers", JSON.stringify(customers));
-  }, [customers]);
+    localStorage.setItem(`c4_customers_${activeClient}`, JSON.stringify(customers));
+  }, [customers, activeClient]);
 
   useEffect(() => {
-    localStorage.setItem("c4_items_catalog", JSON.stringify(itemCatalog));
-  }, [itemCatalog]);
+    localStorage.setItem(`c4_items_catalog_${activeClient}`, JSON.stringify(itemCatalog));
+  }, [itemCatalog, activeClient]);
 
   const [notification, setNotification] = useState(null);
   const [isPushing, setIsPushing] = useState(false);
@@ -524,7 +511,16 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
     setSalesSubTab("invoices");
   };
 
-  // TRUE FULL-PAGE A4 SIZING (EXACT TO REFERENCE)
+  // DELETE INVOICE FROM INVOICE REGISTER
+  const handleDeleteInvoice = (inv) => {
+    const confirmDelete = window.confirm(`Are you sure you want to delete Invoice #${inv.invoiceNumber}?`);
+    if (!confirmDelete) return;
+
+    setSavedInvoices(prev => prev.filter(i => i.id !== inv.id));
+    notify(`Invoice #${inv.invoiceNumber} deleted from register.`, "info");
+  };
+
+  // FULL-PAGE A4 SIZING DISPATCH
   const triggerFullPagePrint = (invoice) => {
     const iframe = document.createElement("iframe");
     iframe.style.position = "fixed";
@@ -1397,7 +1393,7 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
             </div>
           )}
 
-          {/* VIEW 2: INVOICE REGISTER TABLE */}
+          {/* VIEW 2: INVOICE REGISTER TABLE (WITH DELETE INVOICE OPTION) */}
           {salesSubTab === "invoices" && (
             <div className="flex-1 p-8 overflow-y-auto">
               {savedInvoices.length === 0 ? (
@@ -1454,15 +1450,25 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
                             ₹{inv.grandTotal.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                           </td>
                           <td className="py-3 px-4 text-center whitespace-nowrap">
-                            <div className="inline-flex items-center gap-2">
+                            <div className="inline-flex items-center gap-1.5">
                               <button
                                 onClick={() => {
                                   setSelectedInvoiceForPrint(inv);
                                   setShowPrintModal(true);
                                 }}
                                 className="inline-flex items-center gap-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-[11px] px-2.5 py-1.5 rounded transition"
+                                title="Print or Save PDF"
                               >
                                 <Printer className="w-3.5 h-3.5" /> Print / PDF
+                              </button>
+                              
+                              {/* DELETE INVOICE BUTTON */}
+                              <button
+                                onClick={() => handleDeleteInvoice(inv)}
+                                className="text-slate-400 hover:text-rose-600 hover:bg-rose-50 p-1.5 rounded transition"
+                                title="Delete Invoice"
+                              >
+                                <Trash2 className="w-4 h-4" />
                               </button>
                             </div>
                           </td>
@@ -1732,7 +1738,7 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
         </div>
       )}
 
-      {/* MODAL 3: INVOICE PREVIEW WITH ACCESSIBLE FLOATING CLOSE BUTTON */}
+      {/* MODAL 3: INVOICE PREVIEW WITH A4 FULL-PAGE DISPATCH */}
       {showPrintModal && selectedInvoiceForPrint && (
         <div className="fixed inset-0 z-50 bg-slate-900/80 backdrop-blur-sm flex items-start justify-center p-4 overflow-y-auto">
           <button
