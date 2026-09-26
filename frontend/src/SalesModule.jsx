@@ -119,9 +119,10 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
   const [activeCategory, setActiveCategory] = useState("normal_sales");
   const [salesSubTab, setSalesSubTab] = useState("create");
 
+  // SCOPED TO ACTIVE CLIENT
   const [savedInvoices, setSavedInvoices] = useState(() => {
     try {
-      const s = localStorage.getItem("c4_normal_sales_invoices");
+      const s = localStorage.getItem(`c4_normal_sales_invoices_${activeClient}`);
       return s ? JSON.parse(s) : [];
     } catch {
       return [];
@@ -130,7 +131,7 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
 
   const [customers, setCustomers] = useState(() => {
     try {
-      const c = localStorage.getItem("c4_customers");
+      const c = localStorage.getItem(`c4_customers_${activeClient}`);
       return c ? JSON.parse(c) : [];
     } catch {
       return [];
@@ -139,13 +140,25 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
 
   const [itemCatalog, setItemCatalog] = useState(() => {
     try {
-      const it = localStorage.getItem("c4_items_catalog");
+      const it = localStorage.getItem(`c4_items_catalog_${activeClient}`);
       return it ? JSON.parse(it) : [];
     } catch {
       return [];
     }
   });
 
+  // Automatically sync to client-scoped keys
+  useEffect(() => {
+    localStorage.setItem(`c4_normal_sales_invoices_${activeClient}`, JSON.stringify(savedInvoices));
+  }, [savedInvoices, activeClient]);
+
+  useEffect(() => {
+    localStorage.setItem(`c4_customers_${activeClient}`, JSON.stringify(customers));
+  }, [customers, activeClient]);
+
+  useEffect(() => {
+    localStorage.setItem(`c4_items_catalog_${activeClient}`, JSON.stringify(itemCatalog));
+  }, [itemCatalog, activeClient]);
   // Pulls vendor/client profile dynamically from c4_client_profiles or fallback
   const getActiveProfile = () => {
     try {
