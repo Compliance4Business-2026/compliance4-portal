@@ -10,6 +10,7 @@ import {
 import BankModule from "./BankModule";
 import PurchaseModule from "./PurchaseModule";
 import SalesModule from "./SalesModule";
+import SettingsModule from "./SettingsModule";
 
 export default function App() {
   const [activeTab, setActiveTab] = useState("sales"); // Set to sales to view immediately
@@ -99,16 +100,19 @@ export default function App() {
       </aside>
 
       {/* DYNAMIC MODULE VIEW */}
-      <main className="flex-1 flex flex-col overflow-hidden">
-        {activeTab === "purchase" && <PurchaseModule activeClient={activeClient} />}
-        {activeTab === "bank" && <BankModule activeClient={activeClient} />}
-        {activeTab === "sales" && <SalesModule activeClient={activeClient} />}
-        {activeTab !== "purchase" && activeTab !== "bank" && activeTab !== "sales" && (
-          <div className="flex-1 flex items-center justify-center text-slate-400">
-            <p className="text-sm capitalize">{activeTab} Module Ready for Integration</p>
-          </div>
-        )}
-      </main>
+     <main className="flex-1 flex flex-col overflow-hidden">
+  {activeTab === "purchase" && <PurchaseModule activeClient={activeClient} />}
+  {activeTab === "bank" && <BankModule activeClient={activeClient} />}
+  {activeTab === "sales" && <SalesModule activeClient={activeClient} />}
+  {activeTab === "settings" && (
+    <SettingsModule activeClient={activeClient} setActiveClient={setActiveClient} />
+  )}
+  {activeTab === "dashboard" && (
+    <div className="flex-1 flex items-center justify-center text-slate-400">
+      <p className="text-sm">Dashboard Overview Ready for Integration</p>
+    </div>
+  )}
+</main>
     </div>
   );
 }
