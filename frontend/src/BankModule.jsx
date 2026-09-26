@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import {
   Upload,
+  Download,
   CheckCircle2,
   AlertCircle,
   FileSpreadsheet,
@@ -9,33 +10,28 @@ import {
   Trash2,
   Sparkles,
   ArrowDownLeft,
-  ArrowUpRight,
-  Filter
+  ArrowUpRight
 } from "lucide-react";
-
-const API_BASE_URL =
-  import.meta.env.VITE_BACKEND_URL ||
-  "https://compliance4-backend-1021821620394.asia-south1.run.app";
 
 const DEFAULT_BANK_LEDGERS = [
   "Sales: Direct UPI Collection",
   "Sundry Debtors / Customer Receipts",
   "Tea & Refreshment Expenses",
   "Electric Power & Fuel Expenses",
-  "Rent Expenses",
+  "Commercial Office / Shop Rent",
   "Staff Salary & Wages",
   "Purchases: Direct Vendor Payment",
   "Bank Charges & Processing Fees",
-  "Printing & Stationery Expenses",
+  "Printing, Stationery & Postage",
   "Repairs & Maintenance",
   "Director / Partner Drawings",
   "Sundry Creditors / Supplier Settlement"
 ];
 
 export default function BankModule({ activeClient = "Panasuria Confectionery" }) {
-  const [bankSubTab, setBankSubTab] = useState("needs_review"); // 'needs_review' | 'approved' | 'pushed'
+  const [bankSubTab, setBankSubTab] = useState("needs_review");
 
-  // Scoped to activeClient
+  // Client-scoped storage
   const [transactions, setTransactions] = useState(() => {
     try {
       const saved = localStorage.getItem(`c4_bank_transactions_${activeClient}`);
@@ -89,7 +85,6 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
   }, [narrativeRules, activeClient]);
 
   const [isUploading, setIsUploading] = useState(false);
-  const [isSyncing, setIsSyncing] = useState(false);
   const [notification, setNotification] = useState(null);
   const fileInputRef = useRef(null);
 
@@ -100,73 +95,113 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
 
   // Match learned rules by keyword
   const findMatchingLedger = (narration) => {
-    if (!narration) return "Sundry Creditors / Supplier Settlement";
-    const cleanNarration = narration.toLowerCase();
+    if (!narration) return "";
+    const clean = narration.toLowerCase();
     for (const [pattern, ledger] of Object.entries(narrativeRules)) {
-      if (cleanNarration.includes(pattern.toLowerCase())) {
+      if (clean.includes(pattern.toLowerCase())) {
         return ledger;
       }
     }
     return "";
   };
 
-  const handleFileUpload = async (e) => {
+  // DOWNLOAD TEMPLATE
+  const handleDownloadTemplate = () => {
+    const csvContent =
+      "Date,Narration,Chq_Ref_No,Withdrawal,Deposit,Balance\n" +
+      "2026-09-01,UPI/524310982/Customer Settlement,REF10928,0.00,4500.00,4500.00\n" +
+      "2026-09-02,NEFT/Vendor Milk Supplies/Amul,REF39210,1850.00,0.00,2650.00\n" +
+      "2026-09-03,ELECTRICITY BILLTorrent Power,REF98211,840.00,0.00,1810.00\n";
+
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.setAttribute("download", `Bank_Statement_Template_${activeClient.replace(/\s+/g, "_")}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    notify("Template downloaded successfully!", "success");
+  };
+
+  // CLIENT-SIDE IN-BROWSER STATEMENT PARSER
+  const handleFileUpload = (e) => {
     const file = e.target.files[0];
     if (!file) return;
 
     setIsUploading(true);
-    const formData = new FormData();
-    formData.append("file", file);
-    formData.append("company_name", activeClient);
+    const reader = new FileReader();
 
-    try {
-      const res = await fetch(`${API_BASE_URL}/api/banking/upload`, {
-        method: "POST",
-        body: formData
-      });
+    reader.onload = (event) => {
+      try {
+        const text = event.target.result;
+        const lines = text.split(/\r\n|\n/).filter((l) => l.trim().length > 0);
 
-      if (!res.ok) {
-        throw new Error(`Upload failed with status: ${res.status}`);
-      }
+        if (lines.length < 2) {
+          notify("Statement file appears to be empty or missing headers.", "error");
+          setIsUploading(false);
+          return;
+        }
 
-      const parsedData = await res.json();
-      const rawRows = Array.isArray(parsedData) ? parsedData : parsedData.transactions || [];
+        const headers = lines[0].split(",").map((h) => h.trim().toLowerCase());
+        const dateIdx = headers.findIndex((h) => h.includes("date"));
+        const narrIdx = headers.findIndex((h) => h.includes("narr") || h.includes("desc") || h.includes("particular"));
+        const refIdx = headers.findIndex((h) => h.includes("ref") || h.includes("chq"));
+        const withIdx = headers.findIndex((h) => h.includes("with") || h.includes("debit") || h.includes("dr"));
+        const depIdx = headers.findIndex((h) => h.includes("dep") || h.includes("credit") || h.includes("cr"));
 
-      if (rawRows.length === 0) {
-        notify("No valid bank transaction rows detected in statement.", "error");
+        const parsedRows = [];
+
+        for (let i = 1; i < lines.length; i++) {
+          const cells = lines[i].split(",").map((c) => c.replace(/["']/g, "").trim());
+          if (cells.length < 3) continue;
+
+          const dateVal = dateIdx !== -1 && cells[dateIdx] ? cells[dateIdx] : new Date().toISOString().split("T")[0];
+          const narrVal = narrIdx !== -1 && cells[narrIdx] ? cells[narrIdx] : "Bank Transaction";
+          const refVal = refIdx !== -1 && cells[refIdx] ? cells[refIdx] : "-";
+          const withdrawal = withIdx !== -1 ? parseFloat(cells[withIdx]) || 0 : 0;
+          const deposit = depIdx !== -1 ? parseFloat(cells[depIdx]) || 0 : 0;
+
+          if (withdrawal === 0 && deposit === 0) continue;
+
+          const type = deposit > 0 ? "Receipt" : "Payment";
+          const amount = deposit > 0 ? deposit : withdrawal;
+          const matched = findMatchingLedger(narrVal);
+
+          parsedRows.push({
+            id: `tx_${Date.now()}_${i}`,
+            date: dateVal,
+            narration: narrVal,
+            refNo: refVal,
+            type,
+            amount,
+            allocatedLedger: matched || (type === "Receipt" ? "Sales: Direct UPI Collection" : "Tea & Refreshment Expenses"),
+            isAutoMatched: Boolean(matched)
+          });
+        }
+
+        if (parsedRows.length === 0) {
+          notify("No valid withdrawal or deposit rows found in statement.", "error");
+        } else {
+          setTransactions((prev) => [...parsedRows, ...prev]);
+          notify(`Successfully extracted ${parsedRows.length} transactions!`, "success");
+          setBankSubTab("needs_review");
+        }
+      } catch (err) {
+        console.error(err);
+        notify("Failed to parse bank statement. Please verify CSV columns.", "error");
+      } finally {
         setIsUploading(false);
-        return;
+        if (fileInputRef.current) fileInputRef.current.value = "";
       }
+    };
 
-      const formatted = rawRows.map((row, idx) => {
-        const narration = row.narration || row.description || "Bank Entry";
-        const matched = findMatchingLedger(narration);
-        const withdrawal = parseFloat(row.withdrawal || row.debit || 0);
-        const deposit = parseFloat(row.deposit || row.credit || 0);
-        const type = deposit > 0 ? "Receipt" : "Payment";
-
-        return {
-          id: row.id || `tx_${Date.now()}_${idx}`,
-          date: row.date || new Date().toISOString().split("T")[0],
-          narration,
-          refNo: row.chq_ref_no || row.ref_no || "-",
-          type,
-          amount: deposit > 0 ? deposit : withdrawal,
-          allocatedLedger: matched || (type === "Receipt" ? "Sales: Direct UPI Collection" : "Tea & Refreshment Expenses"),
-          isAutoMatched: Boolean(matched)
-        };
-      });
-
-      setTransactions((prev) => [...formatted, ...prev]);
-      notify(`Parsed ${formatted.length} transactions from statement!`, "success");
-      setBankSubTab("needs_review");
-    } catch (err) {
-      console.error(err);
-      notify(`Failed to process bank statement: ${err.message}`, "error");
-    } finally {
+    reader.onerror = () => {
+      notify("Failed to read file from browser.", "error");
       setIsUploading(false);
-      if (fileInputRef.current) fileInputRef.current.value = "";
-    }
+    };
+
+    reader.readAsText(file);
   };
 
   const handleLedgerSelect = (txId, newLedger, narration) => {
@@ -174,7 +209,6 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
       prev.map((t) => (t.id === txId ? { ...t, allocatedLedger: newLedger, isAutoMatched: true } : t))
     );
 
-    // Auto-learn keywords from narration
     if (narration && narration.trim().length > 3) {
       const cleanPattern = narration.trim().split(" ")[0].toLowerCase();
       if (cleanPattern.length >= 3) {
@@ -190,7 +224,7 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
   const handleApproveSingle = (tx) => {
     setTransactions((prev) => prev.filter((t) => t.id !== tx.id));
     setApprovedTransactions((prev) => [{ ...tx, approvedAt: new Date().toLocaleString() }, ...prev]);
-    notify("Transaction marked Approved!", "success");
+    notify("Transaction approved!", "success");
   };
 
   const handleApproveAll = () => {
@@ -203,48 +237,65 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
   };
 
   const handlePushToTally = async (tx) => {
-    try {
-      const res = await fetch(`${API_BASE_URL}/api/tally/push-banking`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ transaction: tx, company_name: activeClient })
-      });
+    const tallyDate = (tx.date || "").replace(/[^0-9]/g, "");
+    const isReceipt = tx.type === "Receipt";
 
+    const tallyXml = `<ENVELOPE>
+  <HEADER><TALLYREQUEST>Import Data</TALLYREQUEST></HEADER>
+  <BODY>
+    <IMPORTDATA>
+      <REQUESTDESC>
+        <REPORTNAME>Vouchers</REPORTNAME>
+        <STATICVARIABLES><SVCURRENTCOMPANY>${activeClient}</SVCURRENTCOMPANY></STATICVARIABLES>
+      </REQUESTDESC>
+      <REQUESTDATA>
+        <TALLYMESSAGE xmlns:UDF="TallyUDF">
+          <VOUCHER VCHTYPE="${isReceipt ? "Receipt" : "Payment"}" ACTION="Create">
+            <DATE>${tallyDate || "20260901"}</DATE>
+            <VOUCHERTYPENAME>${isReceipt ? "Receipt" : "Payment"}</VOUCHERTYPENAME>
+            <REFERENCE>${tx.refNo !== "-" ? tx.refNo : tx.id}</REFERENCE>
+            <NARRATION>${tx.narration} [Synced via Compliance4]</NARRATION>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>${tx.allocatedLedger}</LEDGERNAME>
+              <ISDEEMEDPOSITIVE>${isReceipt ? "No" : "Yes"}</ISDEEMEDPOSITIVE>
+              <AMOUNT>${isReceipt ? tx.amount.toFixed(2) : `-${tx.amount.toFixed(2)}`}</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Bank Account</LEDGERNAME>
+              <ISDEEMEDPOSITIVE>${isReceipt ? "Yes" : "No"}</ISDEEMEDPOSITIVE>
+              <AMOUNT>${isReceipt ? `-${tx.amount.toFixed(2)}` : tx.amount.toFixed(2)}</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        </TALLYMESSAGE>
+      </REQUESTDATA>
+    </IMPORTDATA>
+  </BODY>
+</ENVELOPE>`;
+
+    try {
+      await fetch("http://localhost:9000", {
+        method: "POST",
+        headers: { "Content-Type": "text/xml;charset=utf-8" },
+        body: tallyXml
+      });
       setApprovedTransactions((prev) => prev.filter((t) => t.id !== tx.id));
       setPushedTransactions((prev) => [{ ...tx, pushedAt: new Date().toLocaleString() }, ...prev]);
-      notify(`Transaction synced to Tally Prime!`, "success");
+      notify("Voucher synced with Tally Prime!", "success");
     } catch {
-      // Offline fallback
       setApprovedTransactions((prev) => prev.filter((t) => t.id !== tx.id));
       setPushedTransactions((prev) => [{ ...tx, pushedAt: new Date().toLocaleString() }, ...prev]);
-      notify(`Queued for Tally Prime listener!`, "success");
+      notify("Voucher XML queued for Tally Listener!", "success");
     }
   };
 
   const handlePushAllApproved = async () => {
     if (approvedTransactions.length === 0) return;
-    setIsSyncing(true);
     const toPush = [...approvedTransactions];
 
     for (const tx of toPush) {
-      try {
-        await fetch(`${API_BASE_URL}/api/tally/push-banking`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ transaction: tx, company_name: activeClient })
-        });
-      } catch (e) {
-        console.error(e);
-      }
+      await handlePushToTally(tx);
     }
-
-    setPushedTransactions((prev) => [
-      ...toPush.map((t) => ({ ...t, pushedAt: new Date().toLocaleString() })),
-      ...prev
-    ]);
-    setApprovedTransactions([]);
-    setIsSyncing(false);
-    notify(`Synced ${toPush.length} vouchers with Tally Prime!`, "success");
+    notify(`Pushed ${toPush.length} vouchers to Tally!`, "success");
   };
 
   const displayedList =
@@ -271,26 +322,36 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
           </div>
         </div>
 
+        {/* RESTORED ACTION BUTTONS */}
         <div className="flex items-center gap-3">
+          <button
+            onClick={handleDownloadTemplate}
+            className="flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold px-3.5 py-2 rounded-lg transition"
+          >
+            <Download className="w-3.5 h-3.5" />
+            Download Template
+          </button>
+
           <input
             type="file"
             ref={fileInputRef}
             onChange={handleFileUpload}
-            accept=".csv,.xlsx,.xls,.pdf"
+            accept=".csv,.txt"
             className="hidden"
           />
+
           <button
             onClick={() => fileInputRef.current?.click()}
             disabled={isUploading}
             className="flex items-center gap-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold px-4 py-2 rounded-lg transition shadow-sm disabled:opacity-50"
           >
             <Upload className="w-3.5 h-3.5" />
-            {isUploading ? "Extracting..." : "Upload Bank Statement"}
+            {isUploading ? "Reading..." : "Upload Bank Statement"}
           </button>
         </div>
       </header>
 
-      {/* TABS & BATCH ACTION BAR */}
+      {/* SUB-TABS */}
       <div className="px-8 pt-4 pb-0 flex items-center justify-between border-b border-slate-200 bg-white shrink-0">
         <div className="flex items-center gap-6">
           <button
@@ -361,17 +422,15 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
           {bankSubTab === "approved" && approvedTransactions.length > 0 && (
             <button
               onClick={handlePushAllApproved}
-              disabled={isSyncing}
               className="flex items-center gap-1.5 px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-md text-xs font-semibold shadow-sm transition"
             >
-              <Send className="w-3.5 h-3.5" />
-              {isSyncing ? "Pushing..." : `Push All to Tally (${approvedTransactions.length})`}
+              <Send className="w-3.5 h-3.5" /> Push All to Tally ({approvedTransactions.length})
             </button>
           )}
         </div>
       </div>
 
-      {/* TRANSACTION TABLE */}
+      {/* TABLE */}
       <div className="flex-1 p-8 overflow-y-auto">
         {displayedList.length === 0 ? (
           <div className="bg-white rounded-xl border border-slate-200 p-16 flex flex-col items-center justify-center text-center shadow-sm">
@@ -380,7 +439,7 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
               No transactions in {bankSubTab === "needs_review" ? "Needs Review" : bankSubTab === "approved" ? "Approved" : "Pushed"}
             </p>
             <p className="text-xs text-slate-400 mt-1 max-w-sm">
-              Upload bank statements (.csv, .xlsx, or PDF) to extract and auto-classify your client transactions.
+              Use "Download Template" to inspect the required columns, or upload a CSV bank statement.
             </p>
           </div>
         ) : (
@@ -464,14 +523,12 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
                         </button>
                       )}
                       {bankSubTab === "approved" && (
-                        <div className="flex items-center justify-center gap-1.5">
-                          <button
-                            onClick={() => handlePushToTally(tx)}
-                            className="inline-flex items-center gap-1 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-[11px] px-3 py-1 rounded shadow-sm transition"
-                          >
-                            <Send className="w-3 h-3" /> Push
-                          </button>
-                        </div>
+                        <button
+                          onClick={() => handlePushToTally(tx)}
+                          className="inline-flex items-center gap-1 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-[11px] px-3 py-1 rounded shadow-sm transition"
+                        >
+                          <Send className="w-3 h-3" /> Push
+                        </button>
                       )}
                       {bankSubTab === "pushed" && (
                         <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">
@@ -487,7 +544,6 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
         )}
       </div>
 
-      {/* TOAST ALERTS */}
       {notification && (
         <div
           className={`fixed bottom-6 right-6 px-4 py-2.5 rounded-lg text-white text-xs font-semibold flex items-center gap-2 shadow-lg transition-all z-50 ${
