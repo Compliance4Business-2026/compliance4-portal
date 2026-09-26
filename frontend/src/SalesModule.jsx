@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { 
   Plus, 
   Trash2, 
@@ -8,12 +8,12 @@ import {
   AlertCircle, 
   ShieldCheck, 
   ShieldAlert, 
-  Printer,
-  FileSpreadsheet,
-  X,
-  UserPlus,
-  PackagePlus,
-  Percent
+  Printer, 
+  FileSpreadsheet, 
+  X, 
+  UserPlus, 
+  PackagePlus, 
+  Percent 
 } from "lucide-react";
 
 const GST_STATE_CODES = {
@@ -48,6 +48,25 @@ const GST_RATE_OPTIONS = [
 ];
 
 const UOM_OPTIONS = ["PCs", "KG", "GM", "Boxes", "Packs", "LTR", "MTR", "DZN", "SET"];
+
+function numberToWords(num) {
+  const a = ["", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten", "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen", "Seventeen", "Eighteen", "Nineteen"];
+  const b = ["", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy", "Eighty", "Ninety"];
+
+  function inWords(n) {
+    if (n === 0) return "";
+    if (n < 20) return a[n] + " ";
+    if (n < 100) return b[Math.floor(n / 10)] + " " + a[n % 10] + " ";
+    if (n < 1000) return a[Math.floor(n / 100)] + " Hundred " + inWords(n % 100);
+    if (n < 100000) return inWords(Math.floor(n / 1000)) + "Thousand " + inWords(n % 1000);
+    if (n < 10000000) return inWords(Math.floor(n / 100000)) + "Lakh " + inWords(n % 100000);
+    return inWords(Math.floor(n / 10000000)) + "Crore " + inWords(n % 10000000);
+  }
+
+  const rounded = Math.round(num);
+  if (rounded === 0) return "Zero Rupees Only";
+  return (inWords(rounded).trim() + " Rupees Only").toUpperCase();
+}
 
 function validateGSTIN(gstin) {
   if (!gstin) return { isValid: false, reason: "Missing" };
@@ -101,11 +120,7 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
   const [itemCatalog, setItemCatalog] = useState(() => {
     try {
       const it = localStorage.getItem("c4_items_catalog");
-      return it ? JSON.parse(it) : [
-        { id: "item_1", itemName: "Assorted French Pastries", hsnCode: "1905", uom: "Boxes", taxRate: 5, priceExcl: 450, priceIncl: 472.5 },
-        { id: "item_2", itemName: "Belgium Dark Chocolate Truffle Cake 1KG", hsnCode: "1905", uom: "PCs", taxRate: 18, priceExcl: 900, priceIncl: 1062 },
-        { id: "item_3", itemName: "Handcrafted Macarons (Box of 6)", hsnCode: "1905", uom: "Boxes", taxRate: 18, priceExcl: 350, priceIncl: 413 }
-      ];
+      return it ? JSON.parse(it) : [];
     } catch {
       return [];
     }
@@ -124,8 +139,7 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
         accountNo: "50200080509922",
         ifscCode: "HDFC0000006",
         branch: "Prahladnagar Branch, Ahmedabad",
-        terms: "1. Goods once sold will not be taken back.\n2. Payment strictly due within 15 days of invoice date.\n3. Subject to Ahmedabad Jurisdiction only.",
-        logoUrl: ""
+        terms: "1. Goods once sold will not be taken back.\n2. Payment strictly due within 15 days of invoice date.\n3. Subject to Ahmedabad Jurisdiction only."
       };
     } catch {
       return {};
@@ -157,9 +171,10 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
   const [selectedInvoiceForPrint, setSelectedInvoiceForPrint] = useState(null);
 
   const [invoiceType, setInvoiceType] = useState("Tax Invoice");
-  const [lutNumber, setLutNumber] = useState("AD240326001290U");
+  const [lutNumber, setLutNumber] = useState("");
   const [hasConsignee, setHasConsignee] = useState(false);
 
+  // COMPLETELY BLANK FORM STATE
   const [invoiceHeader, setInvoiceHeader] = useState({
     invoiceNumber: `PC/26-27/${String(savedInvoices.length + 1).padStart(3, "0")}`,
     invoiceDate: new Date().toISOString().split("T")[0],
@@ -180,42 +195,27 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
   const [lines, setLines] = useState([
     {
       id: 1,
-      itemName: "Assorted French Pastries",
-      hsnCode: "1905",
+      itemName: "",
+      hsnCode: "",
       uom: "Boxes",
-      qty: 10,
-      rate: 450,
+      qty: "",
+      rate: "",
       discountPercent: 0,
       taxRate: 5
     }
   ]);
 
-  const [roundOff, setRoundOff] = useState(0.00);
-
   const [newCust, setNewCust] = useState({
-    gstin: "",
-    name: "",
-    address: "",
-    pincode: "",
-    state: "Gujarat",
-    country: "India",
-    phone: "",
-    email: "",
-    discountPercent: 0
+    gstin: "", name: "", address: "", pincode: "", state: "Gujarat", country: "India", phone: "", email: "", discountPercent: 0
   });
 
   const [newItem, setNewItem] = useState({
-    itemName: "",
-    hsnCode: "1905",
-    uom: "Boxes",
-    taxRate: 5,
-    priceExcl: 0,
-    priceIncl: 0
+    itemName: "", hsnCode: "", uom: "Boxes", taxRate: 5, priceExcl: "", priceIncl: ""
   });
 
   const notify = (msg, type = "info") => {
     setNotification({ msg, type });
-    setTimeout(() => setNotification(null), 4500);
+    setTimeout(() => setNotification(null), 4000);
   };
 
   const handleCustGstinChange = (val) => {
@@ -264,14 +264,14 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
   const handlePriceExclChange = (val, taxRate) => {
     const excl = parseFloat(val) || 0;
     const incl = excl + (excl * (parseFloat(taxRate) || 0)) / 100;
-    setNewItem(prev => ({ ...prev, priceExcl: excl, priceIncl: parseFloat(incl.toFixed(2)) }));
+    setNewItem(prev => ({ ...prev, priceExcl: val, priceIncl: excl > 0 ? parseFloat(incl.toFixed(2)) : "" }));
   };
 
   const handlePriceInclChange = (val, taxRate) => {
     const incl = parseFloat(val) || 0;
     const t = parseFloat(taxRate) || 0;
     const excl = incl / (1 + t / 100);
-    setNewItem(prev => ({ ...prev, priceIncl: incl, priceExcl: parseFloat(excl.toFixed(2)) }));
+    setNewItem(prev => ({ ...prev, priceIncl: val, priceExcl: incl > 0 ? parseFloat(excl.toFixed(2)) : "" }));
   };
 
   const handleSaveItemModal = () => {
@@ -295,8 +295,8 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
         taxRate: created.taxRate
       }
     ]);
-    notify(`Item "${created.itemName}" saved to Catalog and added to invoice!`, "success");
-    setNewItem({ itemName: "", hsnCode: "1905", uom: "Boxes", taxRate: 5, priceExcl: 0, priceIncl: 0 });
+    notify(`Item "${created.itemName}" saved to Catalog!`, "success");
+    setNewItem({ itemName: "", hsnCode: "", uom: "Boxes", taxRate: 5, priceExcl: "", priceIncl: "" });
   };
 
   const isInterstate = !invoiceHeader.placeOfSupply.toLowerCase().includes("gujarat") &&
@@ -329,7 +329,11 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
   const totalCgst = computedItems.reduce((acc, it) => acc + it.cgst, 0);
   const totalSgst = computedItems.reduce((acc, it) => acc + it.sgst, 0);
   const totalIgst = computedItems.reduce((acc, it) => acc + it.igst, 0);
-  const grandTotal = totalTaxable + totalCgst + totalSgst + totalIgst + (parseFloat(roundOff) || 0);
+
+  // AUTOMATIC ROUND-OFF TO NEAREST RUPEE
+  const rawSubTotal = totalTaxable + totalCgst + totalSgst + totalIgst;
+  const roundedGrandTotal = Math.round(rawSubTotal);
+  const autoRoundOff = parseFloat((roundedGrandTotal - rawSubTotal).toFixed(2));
 
   const handleAddLine = () => {
     setLines(prev => [
@@ -337,10 +341,10 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
       {
         id: Date.now(),
         itemName: "",
-        hsnCode: "1905",
+        hsnCode: "",
         uom: "Boxes",
-        qty: 1,
-        rate: 0,
+        qty: "",
+        rate: "",
         discountPercent: invoiceHeader.discountPercent || 0,
         taxRate: 5
       }
@@ -404,8 +408,8 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
       cgst: totalCgst,
       sgst: totalSgst,
       igst: totalIgst,
-      roundOff: parseFloat(roundOff) || 0,
-      grandTotal: parseFloat(grandTotal.toFixed(2)),
+      roundOff: autoRoundOff,
+      grandTotal: roundedGrandTotal,
       isInterstate,
       vendorProfile,
       status: "approved",
@@ -418,6 +422,7 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
     setSelectedInvoiceForPrint(newInv);
     setShowPrintModal(true);
 
+    // Reset with blank slate
     setInvoiceHeader({
       invoiceNumber: `PC/26-27/${String(savedInvoices.length + 2).padStart(3, "0")}`,
       invoiceDate: new Date().toISOString().split("T")[0],
@@ -434,107 +439,272 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
       consigneeAddress: "",
       consigneeGstin: ""
     });
+    setLines([
+      { id: Date.now(), itemName: "", hsnCode: "", uom: "Boxes", qty: "", rate: "", discountPercent: 0, taxRate: 5 }
+    ]);
     setHasConsignee(false);
     setSalesSubTab("invoices");
   };
 
-  const handlePushToTally = async (inv) => {
-    setIsPushing(true);
-    const tallyDate = (inv.invoiceDate || "").replace(/-/g, "");
+  // TRUE FULL-PAGE A4 PRINT DISPATCH VIA HIDDEN IFRAME
+  const triggerFullPagePrint = (invoice) => {
+    const iframe = document.createElement("iframe");
+    iframe.style.position = "fixed";
+    iframe.style.right = "0";
+    iframe.style.bottom = "0";
+    iframe.style.width = "0";
+    iframe.style.height = "0";
+    iframe.style.border = "0";
+    document.body.appendChild(iframe);
 
-    const tallyXml = `<ENVELOPE>
-  <HEADER><TALLYREQUEST>Import Data</TALLYREQUEST></HEADER>
-  <BODY>
-    <IMPORTDATA>
-      <REQUESTDESC>
-        <REPORTNAME>Vouchers</REPORTNAME>
-        <STATICVARIABLES><SVCURRENTCOMPANY>${activeClient}</SVCURRENTCOMPANY></STATICVARIABLES>
-      </REQUESTDESC>
-      <REQUESTDATA>
-        <TALLYMESSAGE xmlns:UDF="TallyUDF">
-          <VOUCHER VCHTYPE="Sales" ACTION="Create">
-            <DATE>${tallyDate}</DATE>
-            <VOUCHERTYPENAME>Sales</VOUCHERTYPENAME>
-            <REFERENCE>${inv.invoiceNumber}</REFERENCE>
-            <PARTYLEDGERNAME>${inv.customerName}</PARTYLEDGERNAME>
-            <NARRATION>${inv.invoiceType} #${inv.invoiceNumber} ${inv.poNumber ? `PO: ${inv.poNumber}` : ""} ${inv.lutNumber ? `LUT: ${inv.lutNumber}` : ""} synced via Compliance4 Hub</NARRATION>
-            <ALLLEDGERENTRIES.LIST>
-              <LEDGERNAME>${inv.customerName}</LEDGERNAME>
-              <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
-              <AMOUNT>-${inv.grandTotal.toFixed(2)}</AMOUNT>
-            </ALLLEDGERENTRIES.LIST>
-            <ALLLEDGERENTRIES.LIST>
-              <LEDGERNAME>Sales: Food & Confectionery</LEDGERNAME>
-              <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
-              <AMOUNT>${inv.taxableAmount.toFixed(2)}</AMOUNT>
-            </ALLLEDGERENTRIES.LIST>
-            ${inv.cgst > 0 ? `<ALLLEDGERENTRIES.LIST><LEDGERNAME>Output CGST 2.5%</LEDGERNAME><ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE><AMOUNT>${inv.cgst.toFixed(2)}</AMOUNT></ALLLEDGERENTRIES.LIST>` : ""}
-            ${inv.sgst > 0 ? `<ALLLEDGERENTRIES.LIST><LEDGERNAME>Output SGST 2.5%</LEDGERNAME><ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE><AMOUNT>${inv.sgst.toFixed(2)}</AMOUNT></ALLLEDGERENTRIES.LIST>` : ""}
-            ${inv.igst > 0 ? `<ALLLEDGERENTRIES.LIST><LEDGERNAME>Output IGST 5%</LEDGERNAME><ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE><AMOUNT>${inv.igst.toFixed(2)}</AMOUNT></ALLLEDGERENTRIES.LIST>` : ""}
-          </VOUCHER>
-        </TALLYMESSAGE>
-      </REQUESTDATA>
-    </IMPORTDATA>
-  </BODY>
-</ENVELOPE>`;
+    const doc = iframe.contentWindow.document;
+    const isExport = invoice.invoiceType === "Export Invoice";
+    const headerTitle = isExport ? "EXPORT INVOICE" : invoice.invoiceType ? invoice.invoiceType.toUpperCase() : "TAX INVOICE";
 
-    try {
-      await fetch("http://localhost:9000", {
-        method: "POST",
-        headers: { "Content-Type": "text/xml;charset=utf-8" },
-        body: tallyXml
-      });
-      setSavedInvoices(prev => prev.map(i => (i.id === inv.id ? { ...i, status: "pushed" } : i)));
-      notify(`Invoice #${inv.invoiceNumber} synced to Tally Prime!`, "success");
-    } catch {
-      setSavedInvoices(prev => prev.map(i => (i.id === inv.id ? { ...i, status: "pushed" } : i)));
-      notify(`Voucher #${inv.invoiceNumber} XML queued for Tally Listener!`, "success");
-    } finally {
-      setIsPushing(false);
-    }
+    const printHtml = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>${headerTitle} - ${invoice.invoiceNumber}</title>
+        <style>
+          @page {
+            size: A4 portrait;
+            margin: 8mm;
+          }
+          * {
+            box-sizing: border-box;
+            font-family: Arial, Helvetica, sans-serif;
+            color: #000;
+          }
+          body {
+            margin: 0;
+            padding: 0;
+            font-size: 11px;
+            line-height: 1.3;
+          }
+          .invoice-box {
+            width: 100%;
+            border: 1.5px solid #000;
+          }
+          .text-center { text-align: center; }
+          .text-right { text-align: right; }
+          .font-bold { font-weight: bold; }
+          .font-black { font-weight: 900; }
+          .border-b { border-bottom: 1px solid #000; }
+          .border-r { border-right: 1px solid #000; }
+          .border-t { border-top: 1px solid #000; }
+          .p-1 { padding: 4px 6px; }
+          .p-2 { padding: 6px 8px; }
+          
+          .banner-title {
+            background-color: #f1f5f9;
+            padding: 6px;
+            font-size: 14px;
+            letter-spacing: 0.12em;
+            font-weight: 900;
+            text-align: center;
+            border-bottom: 1.5px solid #000;
+          }
+          .table-grid {
+            width: 100%;
+            border-collapse: collapse;
+          }
+          .table-grid th {
+            background-color: #f8fafc;
+            border-bottom: 1px solid #000;
+            border-right: 1px solid #000;
+            padding: 5px 4px;
+            font-size: 10px;
+          }
+          .table-grid td {
+            border-right: 1px solid #000;
+            padding: 5px 4px;
+            font-size: 10.5px;
+          }
+          .table-grid th:last-child, .table-grid td:last-child {
+            border-right: none;
+          }
+          .two-col {
+            display: flex;
+            width: 100%;
+          }
+          .col-half {
+            width: 50%;
+          }
+        </style>
+      </head>
+      <body>
+        <div class="invoice-box">
+          <!-- TOP SELLER HEADER -->
+          <div style="padding: 10px 14px; border-bottom: 1px solid #000; display: flex; justify-content: space-between; align-items: flex-start;">
+            <div>
+              <div style="font-size: 17px; font-weight: 900; letter-spacing: -0.02em;">${invoice.vendorProfile?.companyName || "Panasuria Confectionery"}</div>
+              <div style="font-size: 10px; color: #333; margin-top: 2px;">${invoice.vendorProfile?.address || ""}</div>
+              <div style="font-size: 10px; margin-top: 2px;"><strong>GSTIN:</strong> ${invoice.vendorProfile?.gstin || ""}</div>
+              <div style="font-size: 10px; color: #333;"><strong>Email:</strong> ${invoice.vendorProfile?.email || ""} | <strong>Phone:</strong> ${invoice.vendorProfile?.phone || ""}</div>
+            </div>
+            <div style="text-align: right; min-width: 180px;">
+              <div style="font-size: 11px;"><strong>ORIGINAL FOR RECIPIENT</strong></div>
+              <div style="font-size: 13px; font-weight: 900; margin-top: 4px;">#${invoice.invoiceNumber}</div>
+              <div style="font-size: 10.5px; color: #333;">Date: ${invoice.invoiceDate}</div>
+              ${invoice.poNumber ? `<div style="font-size: 10.5px; margin-top: 2px;"><strong>PO No:</strong> ${invoice.poNumber}</div>` : ""}
+            </div>
+          </div>
+
+          <!-- CENTER TITLE BANNER -->
+          <div class="banner-title">
+            ${headerTitle}
+          </div>
+          ${invoice.lutNumber ? `<div style="font-size: 9px; text-align: center; padding: 3px; background: #fafafa; border-bottom: 1px solid #000;">SUPPLY MEANT FOR EXPORT UNDER BOND OR LETTER OF UNDERTAKING WITHOUT PAYMENT OF INTEGRATED TAX (LUT NO: ${invoice.lutNumber})</div>` : ""}
+
+          <!-- BILLED TO & SHIPPED TO -->
+          <div class="two-col border-b">
+            <div class="col-half border-r p-2" style="background: #fafafa;">
+              <div style="font-size: 9px; font-weight: 900; color: #555; text-transform: uppercase;">Details of Buyer (Billed to):</div>
+              <div style="font-size: 12px; font-weight: 900; margin-top: 2px;">${invoice.customerName}</div>
+              <div style="font-size: 10px; margin-top: 2px;">${invoice.billingAddress || ""}</div>
+              <div style="font-size: 10.5px; font-weight: bold; margin-top: 3px;">GSTIN: ${invoice.customerGstin || "Unregistered"}</div>
+              <div style="font-size: 10px;">Place of Supply: ${invoice.placeOfSupply}</div>
+            </div>
+            <div class="col-half p-2" style="background: #fafafa;">
+              <div style="font-size: 9px; font-weight: 900; color: #555; text-transform: uppercase;">Details of Consignee (Shipped to):</div>
+              <div style="font-size: 12px; font-weight: 900; margin-top: 2px;">${invoice.hasConsignee ? invoice.consigneeName : invoice.customerName}</div>
+              <div style="font-size: 10px; margin-top: 2px;">${invoice.hasConsignee ? invoice.consigneeAddress : invoice.billingAddress}</div>
+              ${invoice.consigneeGstin ? `<div style="font-size: 10.5px; font-weight: bold; margin-top: 3px;">GSTIN: ${invoice.consigneeGstin}</div>` : ""}
+            </div>
+          </div>
+
+          <!-- LINE ITEMS TABLE -->
+          <table class="table-grid">
+            <thead>
+              <tr>
+                <th style="width: 25px;">#</th>
+                <th style="text-align: left;">Name of Product / Service</th>
+                <th style="width: 50px;">HSN/SAC</th>
+                <th style="width: 40px; text-align: right;">Qty</th>
+                <th style="width: 45px;">UOM</th>
+                <th style="width: 60px; text-align: right;">Rate (₹)</th>
+                <th style="width: 45px; text-align: right;">Disc %</th>
+                <th style="width: 70px; text-align: right;">Taxable (₹)</th>
+                <th style="width: 75px; text-align: right;">Total (₹)</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${invoice.items?.map((it, idx) => `
+                <tr>
+                  <td class="text-center" style="color: #666;">${idx + 1}</td>
+                  <td class="font-bold">${it.itemName}</td>
+                  <td class="text-center">${it.hsnCode || "-"}</td>
+                  <td class="text-right font-bold">${it.qty || 0}</td>
+                  <td class="text-center">${it.uom || "PCs"}</td>
+                  <td class="text-right">${Number(it.rate || 0).toFixed(2)}</td>
+                  <td class="text-right">${it.discountPercent || 0}%</td>
+                  <td class="text-right">${Number(it.taxable || 0).toFixed(2)}</td>
+                  <td class="text-right font-bold">${Number(it.total || 0).toFixed(2)}</td>
+                </tr>
+              `).join("")}
+              ${Array.from({ length: Math.max(0, 7 - (invoice.items?.length || 0)) }).map(() => `
+                <tr style="height: 22px;">
+                  <td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td>
+                </tr>
+              `).join("")}
+            </tbody>
+            <tfoot>
+              <tr class="border-t font-black" style="background: #f8fafc;">
+                <td colspan="3" class="text-right p-1 font-bold">Total</td>
+                <td class="text-right p-1 font-black">${invoice.totalQuantity || 0}</td>
+                <td></td>
+                <td colspan="3" class="text-right p-1 font-bold">Taxable Amount:</td>
+                <td class="text-right p-1 font-black">₹${Number(invoice.taxableAmount || 0).toFixed(2)}</td>
+              </tr>
+            </tfoot>
+          </table>
+
+          <!-- TOTAL IN WORDS & SUMMARY BOX -->
+          <div class="two-col border-t border-b">
+            <div class="col-half border-r p-2" style="display: flex; flex-direction: column; justify-content: space-between;">
+              <div>
+                <div style="font-size: 9px; font-weight: 900; color: #555; text-transform: uppercase;">Amount in Words:</div>
+                <div style="font-size: 10px; font-weight: bold; margin-top: 3px; line-height: 1.4;">${numberToWords(invoice.grandTotal)}</div>
+              </div>
+              <div style="margin-top: 10px; padding: 6px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 4px;">
+                <div style="font-size: 9px; font-weight: 900; text-transform: uppercase;">Bank Account Settlement Details:</div>
+                <div style="font-size: 10px; margin-top: 2px;">Bank Name: <strong>${invoice.vendorProfile?.bankName || "HDFC Bank"}</strong></div>
+                <div style="font-size: 10px;">A/c No: <strong>${invoice.vendorProfile?.accountNo || ""}</strong></div>
+                <div style="font-size: 10px;">IFSC Code: <strong>${invoice.vendorProfile?.ifscCode || ""}</strong></div>
+              </div>
+            </div>
+            
+            <div class="col-half p-2">
+              <table style="width: 100%; font-size: 10.5px; border-collapse: collapse;">
+                <tr>
+                  <td class="p-1">Taxable Value:</td>
+                  <td class="p-1 text-right font-bold">₹${Number(invoice.taxableAmount || 0).toFixed(2)}</td>
+                </tr>
+                ${invoice.cgst > 0 ? `
+                  <tr>
+                    <td class="p-1">Output CGST:</td>
+                    <td class="p-1 text-right font-bold">₹${Number(invoice.cgst).toFixed(2)}</td>
+                  </tr>
+                ` : ""}
+                ${invoice.sgst > 0 ? `
+                  <tr>
+                    <td class="p-1">Output SGST:</td>
+                    <td class="p-1 text-right font-bold">₹${Number(invoice.sgst).toFixed(2)}</td>
+                  </tr>
+                ` : ""}
+                ${invoice.igst > 0 ? `
+                  <tr>
+                    <td class="p-1">Output IGST:</td>
+                    <td class="p-1 text-right font-bold">₹${Number(invoice.igst).toFixed(2)}</td>
+                  </tr>
+                ` : ""}
+                <tr>
+                  <td class="p-1">Round Off (+/-):</td>
+                  <td class="p-1 text-right font-bold">${Number(invoice.roundOff || 0) >= 0 ? "+" : ""}${Number(invoice.roundOff || 0).toFixed(2)}</td>
+                </tr>
+                <tr style="border-top: 1.5px solid #000;">
+                  <td class="p-1" style="font-size: 13px; font-weight: 900;">Grand Total (₹):</td>
+                  <td class="p-1 text-right" style="font-size: 14px; font-weight: 900;">₹${Number(invoice.grandTotal || 0).toFixed(2)}</td>
+                </tr>
+              </table>
+            </div>
+          </div>
+
+          <!-- TERMS & AUTHORISED SIGNATORY -->
+          <div class="two-col" style="min-height: 85px;">
+            <div class="col-half border-r p-2" style="font-size: 9px; color: #444;">
+              <div style="font-weight: 900; text-transform: uppercase; color: #000;">Terms and Conditions:</div>
+              <div style="white-space: pre-line; margin-top: 3px;">${invoice.vendorProfile?.terms || ""}</div>
+            </div>
+            <div class="col-half p-2 text-right" style="display: flex; flex-direction: column; justify-content: space-between;">
+              <div style="font-size: 10px; font-weight: bold;">For ${invoice.vendorProfile?.companyName || "Panasuria Confectionery"}</div>
+              <div style="margin-top: 35px; font-size: 9.5px; font-weight: 900; text-transform: uppercase; border-top: 1px solid #ccc; display: inline-block; padding-top: 2px;">
+                Authorised Signatory
+              </div>
+            </div>
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
+
+    doc.open();
+    doc.write(printHtml);
+    doc.close();
+
+    setTimeout(() => {
+      iframe.contentWindow.focus();
+      iframe.contentWindow.print();
+      setTimeout(() => document.body.removeChild(iframe), 2000);
+    }, 300);
   };
 
   const gstCheck = validateGSTIN(invoiceHeader.customerGstin);
 
   return (
     <div className="flex-1 flex flex-col h-full bg-[#F8FAFC] overflow-hidden">
-      {/* INJECT PRINT STYLES FOR FULL A4 COVERAGE */}
-      <style>{`
-        @media print {
-          @page {
-            size: A4 portrait;
-            margin: 8mm 10mm;
-          }
-          body * {
-            visibility: hidden;
-          }
-          #print-invoice-sheet, #print-invoice-sheet * {
-            visibility: visible;
-          }
-          #print-invoice-sheet {
-            position: absolute;
-            left: 0;
-            top: 0;
-            width: 100% !important;
-            max-width: 100% !important;
-            margin: 0 !important;
-            padding: 0 !important;
-            border: 1.5px solid #0f172a !important;
-          }
-          .print-header-center {
-            text-align: center !important;
-            font-size: 16px !important;
-            font-weight: 900 !important;
-            letter-spacing: 0.15em !important;
-            text-transform: uppercase !important;
-          }
-          .no-print {
-            display: none !important;
-          }
-        }
-      `}</style>
-
-      {/* MODULE HEADER BAR */}
+      {/* HEADER SECTION */}
       <header className="bg-white border-b border-slate-200 px-8 py-4 flex items-center justify-between shadow-sm shrink-0">
         <div>
           <h2 className="text-xl font-bold text-slate-900 tracking-tight">Sales & Revenue Center</h2>
@@ -570,7 +740,6 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
       {/* NORMAL SALES INVOICE WORKSPACE */}
       {activeCategory === "normal_sales" && (
         <div className="flex-1 flex flex-col overflow-hidden">
-          {/* SUB-TABS */}
           <div className="px-8 pt-4 pb-0 flex items-center justify-between border-b border-slate-200 bg-white shrink-0">
             <div className="flex items-center gap-6">
               <button
@@ -619,7 +788,7 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
             <div className="flex-1 p-8 overflow-y-auto">
               <div className="max-w-5xl mx-auto bg-white rounded-xl border border-slate-200 shadow-sm p-6 space-y-6">
                 
-                {/* INVOICE TYPE SELECTOR */}
+                {/* DOCUMENT TYPE */}
                 <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between gap-4">
                   <div className="flex items-center gap-4">
                     <span className="text-xs font-bold text-slate-700">Document Type:</span>
@@ -653,7 +822,7 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
                   )}
                 </div>
 
-                {/* INVOICE NUMBER, DATE, PO NUMBER & PLACE OF SUPPLY */}
+                {/* NUMBER, DATE, PO NO, PLACE OF SUPPLY */}
                 <div className="grid grid-cols-4 gap-4">
                   <div>
                     <label className="block text-xs font-bold text-slate-700 mb-1">Invoice Number</label>
@@ -700,7 +869,7 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
                   </div>
                 </div>
 
-                {/* CUSTOMER DETAILS */}
+                {/* CUSTOMER SECTION */}
                 <div className="border-t border-slate-100 pt-4 space-y-4">
                   <div className="flex items-center justify-between">
                     <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">
@@ -843,7 +1012,7 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
                   </div>
                 </div>
 
-                {/* LINE ITEMS TABLE */}
+                {/* LINE ITEMS */}
                 <div className="border-t border-slate-100 pt-5 space-y-3">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
@@ -1045,20 +1214,16 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
                       )}
 
                       <div className="flex justify-between items-center text-slate-600 font-medium">
-                        <span>Round Off:</span>
-                        <input
-                          type="number"
-                          step="0.01"
-                          value={roundOff}
-                          onChange={(e) => setRoundOff(e.target.value)}
-                          className="w-20 text-right font-mono p-1 border border-slate-200 rounded text-xs"
-                        />
+                        <span>Auto Round Off (+/-):</span>
+                        <span className="font-mono font-semibold text-slate-700">
+                          {autoRoundOff >= 0 ? `+₹${autoRoundOff.toFixed(2)}` : `-₹${Math.abs(autoRoundOff).toFixed(2)}`}
+                        </span>
                       </div>
 
                       <div className="border-t border-slate-200 pt-2 flex justify-between items-center text-base font-bold text-slate-900">
-                        <span>Grand Total:</span>
+                        <span>Grand Total (Rounded):</span>
                         <span className="font-mono text-emerald-700 text-lg">
-                          ₹{grandTotal.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                          ₹{roundedGrandTotal.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                         </span>
                       </div>
                     </div>
@@ -1164,7 +1329,7 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
                                   disabled={isPushing}
                                   className="inline-flex items-center gap-1 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-[11px] px-3 py-1.5 rounded transition shadow-sm"
                                 >
-                                  <Send className="w-3 h-3" /> Push
+                                  <Send className="w-3.5 h-3.5" /> Push
                                 </button>
                               )}
                             </div>
@@ -1416,205 +1581,118 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
         </div>
       )}
 
-      {/* MODAL 3: FULL-WIDTH PRINTABLE A4 STATUTORY TAX INVOICE */}
+      {/* MODAL 3: INVOICE PREVIEW WITH FLOATING CLOSE BUTTON */}
       {showPrintModal && selectedInvoiceForPrint && (
-        <div className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
-          <div className="bg-white rounded-xl shadow-2xl max-w-4xl w-full p-8 my-8 text-slate-900 font-sans print:p-0 print:shadow-none print:max-w-none">
-            
+        <div className="fixed inset-0 z-50 bg-slate-900/80 backdrop-blur-sm flex items-start justify-center p-4 overflow-y-auto">
+          {/* FLOATING TOP-RIGHT CLOSE BUTTON */}
+          <button
+            onClick={() => setShowPrintModal(false)}
+            className="fixed top-4 right-6 z-[60] bg-white hover:bg-rose-50 text-slate-700 hover:text-rose-600 p-2.5 rounded-full shadow-2xl border border-slate-200 transition"
+            title="Close Preview (Esc)"
+          >
+            <X className="w-5 h-5 stroke-[2.5]" />
+          </button>
+
+          <div className="bg-white rounded-xl shadow-2xl max-w-3xl w-full p-6 my-6 text-slate-900 font-sans">
             {/* TOOLBAR */}
-            <div className="flex items-center justify-between border-b pb-4 mb-6 no-print">
-              <span className="font-bold text-sm">Invoice Preview: #{selectedInvoiceForPrint.invoiceNumber}</span>
+            <div className="flex items-center justify-between border-b pb-4 mb-5">
+              <div>
+                <span className="font-bold text-sm text-slate-900">Invoice: #{selectedInvoiceForPrint.invoiceNumber}</span>
+                <span className="text-xs text-slate-400 ml-2">({selectedInvoiceForPrint.invoiceType})</span>
+              </div>
               <div className="flex items-center gap-3">
                 <button
-                  onClick={() => window.print()}
-                  className="flex items-center gap-1.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold px-5 py-2.5 rounded-lg transition shadow-sm"
+                  onClick={() => triggerFullPagePrint(selectedInvoiceForPrint)}
+                  className="flex items-center gap-1.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold px-5 py-2.5 rounded-lg transition shadow-md"
                 >
-                  <Printer className="w-4 h-4" /> Print / Save as PDF
-                </button>
-                <button
-                  onClick={() => setShowPrintModal(false)}
-                  className="text-slate-400 hover:text-slate-600"
-                >
-                  <X className="w-5 h-5" />
+                  <Printer className="w-4 h-4" /> Print / Save A4 PDF
                 </button>
               </div>
             </div>
 
-            {/* PRINTABLE A4 SHEET CONTAINER */}
-            <div id="print-invoice-sheet" className="border-2 border-slate-900 p-6 text-xs space-y-4 bg-white text-slate-900">
-              
-              {/* POINT 2: PROMINENT CENTERED DOCUMENT TYPE HEADER */}
-              <div className="text-center border-b-2 border-slate-900 pb-2 mb-2">
-                <h1 className="text-lg font-black tracking-widest uppercase text-slate-900">
-                  {selectedInvoiceForPrint.invoiceType || "TAX INVOICE"}
-                </h1>
-                {selectedInvoiceForPrint.lutNumber && (
-                  <p className="text-[10px] font-mono font-bold text-slate-600 mt-0.5">
-                    SUPPLY MEANT FOR EXPORT UNDER BOND OR LETTER OF UNDERTAKING WITHOUT PAYMENT OF INTEGRATED TAX (LUT: {selectedInvoiceForPrint.lutNumber})
-                  </p>
-                )}
+            {/* PREVIEW CONTAINER */}
+            <div className="border border-slate-300 p-4 rounded-lg text-xs space-y-3 bg-white">
+              <div className="text-center font-black text-sm tracking-wider uppercase border-b pb-2">
+                {selectedInvoiceForPrint.invoiceType}
               </div>
 
-              {/* SELLER DETAILS (LEFT) & INVOICE / PO METADATA (RIGHT) */}
-              <div className="flex justify-between items-start border-b border-slate-300 pb-4">
-                <div className="max-w-md">
-                  <h2 className="text-base font-black tracking-tight text-slate-900 uppercase">
-                    {selectedInvoiceForPrint.vendorProfile?.companyName}
-                  </h2>
-                  <p className="text-[11px] text-slate-600 leading-relaxed mt-0.5">
-                    {selectedInvoiceForPrint.vendorProfile?.address}
-                  </p>
-                  <p className="text-[11px] font-mono font-bold text-slate-900 mt-1">
-                    GSTIN: {selectedInvoiceForPrint.vendorProfile?.gstin}
-                  </p>
-                  <p className="text-[11px] text-slate-600">
-                    Email: {selectedInvoiceForPrint.vendorProfile?.email} | Tel: {selectedInvoiceForPrint.vendorProfile?.phone}
-                  </p>
+              <div className="flex justify-between items-start border-b pb-3">
+                <div>
+                  <h3 className="font-bold text-slate-900">{selectedInvoiceForPrint.vendorProfile?.companyName}</h3>
+                  <p className="text-[11px] text-slate-500">{selectedInvoiceForPrint.vendorProfile?.address}</p>
+                  <p className="text-[11px] font-mono font-bold mt-1">GSTIN: {selectedInvoiceForPrint.vendorProfile?.gstin}</p>
                 </div>
-
-                {/* POINT 3: INVOICE NO, DATE, AND PO NUMBER */}
-                <div className="text-right space-y-1 bg-slate-50 border border-slate-200 p-2.5 rounded min-w-[210px]">
-                  <div>
-                    <span className="text-[10px] uppercase font-bold text-slate-400 block">Invoice Number</span>
-                    <span className="text-sm font-mono font-black text-slate-900">#{selectedInvoiceForPrint.invoiceNumber}</span>
-                  </div>
-                  <div>
-                    <span className="text-[10px] uppercase font-bold text-slate-400 block">Invoice Date</span>
-                    <span className="text-xs font-mono font-semibold text-slate-700">{selectedInvoiceForPrint.invoiceDate}</span>
-                  </div>
+                <div className="text-right">
+                  <p className="font-mono font-bold">#{selectedInvoiceForPrint.invoiceNumber}</p>
+                  <p className="text-[11px] text-slate-500">Date: {selectedInvoiceForPrint.invoiceDate}</p>
                   {selectedInvoiceForPrint.poNumber && (
-                    <div className="border-t border-slate-200 pt-1 mt-1">
-                      <span className="text-[10px] uppercase font-bold text-indigo-700 block">Purchase Order (PO) No.</span>
-                      <span className="text-xs font-mono font-bold text-indigo-900">{selectedInvoiceForPrint.poNumber}</span>
-                    </div>
+                    <p className="text-[11px] font-mono text-indigo-700">PO: {selectedInvoiceForPrint.poNumber}</p>
                   )}
                 </div>
               </div>
 
-              {/* BILLED TO vs SHIPPED TO */}
-              <div className="grid grid-cols-2 gap-4 border-b border-slate-300 pb-4">
-                <div className="p-3 bg-slate-50/60 rounded border border-slate-200">
-                  <p className="font-black text-[10px] uppercase tracking-wider text-slate-500 mb-1">Billed To (Customer)</p>
-                  <p className="font-bold text-slate-900 text-sm">{selectedInvoiceForPrint.customerName}</p>
-                  <p className="text-slate-600 text-[11px] leading-relaxed mt-0.5">{selectedInvoiceForPrint.billingAddress}</p>
-                  <p className="font-mono font-bold text-[11px] mt-1 text-slate-900">GSTIN: {selectedInvoiceForPrint.customerGstin || "Unregistered"}</p>
-                  <p className="text-slate-500 text-[11px]">Place of Supply: {selectedInvoiceForPrint.placeOfSupply}</p>
+              <div className="grid grid-cols-2 gap-4 border-b pb-3">
+                <div>
+                  <p className="font-bold text-[10px] text-slate-400 uppercase">Billed To</p>
+                  <p className="font-bold text-slate-900">{selectedInvoiceForPrint.customerName}</p>
+                  <p className="text-[11px] text-slate-600">{selectedInvoiceForPrint.billingAddress}</p>
+                  <p className="text-[11px] font-mono">GSTIN: {selectedInvoiceForPrint.customerGstin || "Unregistered"}</p>
                 </div>
-
-                <div className="p-3 bg-slate-50/60 rounded border border-slate-200">
-                  <p className="font-black text-[10px] uppercase tracking-wider text-slate-500 mb-1">Shipped To (Consignee)</p>
-                  <p className="font-bold text-slate-900 text-sm">
+                <div>
+                  <p className="font-bold text-[10px] text-slate-400 uppercase">Shipped To</p>
+                  <p className="font-bold text-slate-900">
                     {selectedInvoiceForPrint.hasConsignee ? selectedInvoiceForPrint.consigneeName : selectedInvoiceForPrint.customerName}
                   </p>
-                  <p className="text-slate-600 text-[11px] leading-relaxed mt-0.5">
+                  <p className="text-[11px] text-slate-600">
                     {selectedInvoiceForPrint.hasConsignee ? selectedInvoiceForPrint.consigneeAddress : selectedInvoiceForPrint.billingAddress}
                   </p>
-                  {selectedInvoiceForPrint.consigneeGstin && (
-                    <p className="font-mono font-bold text-[11px] mt-1 text-slate-900">GSTIN: {selectedInvoiceForPrint.consigneeGstin}</p>
-                  )}
                 </div>
               </div>
 
-              {/* LINE ITEMS FULL WIDTH TABLE */}
-              <div className="border border-slate-300 rounded overflow-hidden">
-                <table className="w-full text-left text-xs">
-                  <thead className="bg-slate-100 border-b border-slate-300 font-black uppercase text-[10px] text-slate-800">
-                    <tr>
-                      <th className="p-2 border-r border-slate-300 text-center w-8">#</th>
-                      <th className="p-2 border-r border-slate-300">Item Description</th>
-                      <th className="p-2 border-r border-slate-300 text-center w-16">HSN</th>
-                      <th className="p-2 border-r border-slate-300 text-right w-12">Qty</th>
-                      <th className="p-2 border-r border-slate-300 text-center w-14">UOM</th>
-                      <th className="p-2 border-r border-slate-300 text-right w-20">Rate (₹)</th>
-                      <th className="p-2 border-r border-slate-300 text-right w-16">Disc %</th>
-                      <th className="p-2 border-r border-slate-300 text-right w-20">Taxable</th>
-                      <th className="p-2 text-right w-24">Total (₹)</th>
+              {/* TABLE */}
+              <table className="w-full text-left text-[11px] border border-slate-200">
+                <thead className="bg-slate-50 border-b font-bold uppercase text-[9px]">
+                  <tr>
+                    <th className="p-1.5 border-r">Item</th>
+                    <th className="p-1.5 border-r text-center">HSN</th>
+                    <th className="p-1.5 border-r text-right">Qty</th>
+                    <th className="p-1.5 border-r text-center">UOM</th>
+                    <th className="p-1.5 border-r text-right">Rate</th>
+                    <th className="p-1.5 border-r text-right">Disc%</th>
+                    <th className="p-1.5 text-right">Total</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {selectedInvoiceForPrint.items?.map((it, idx) => (
+                    <tr key={idx}>
+                      <td className="p-1.5 border-r font-semibold">{it.itemName}</td>
+                      <td className="p-1.5 border-r text-center font-mono">{it.hsnCode}</td>
+                      <td className="p-1.5 border-r text-right font-mono font-bold">{it.qty}</td>
+                      <td className="p-1.5 border-r text-center">{it.uom}</td>
+                      <td className="p-1.5 border-r text-right font-mono">₹{it.rate}</td>
+                      <td className="p-1.5 border-r text-right font-mono">{it.discountPercent}%</td>
+                      <td className="p-1.5 text-right font-mono font-bold">₹{it.total?.toFixed(2)}</td>
                     </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-200 font-medium text-slate-800">
-                    {selectedInvoiceForPrint.items?.map((it, idx) => (
-                      <tr key={idx}>
-                        <td className="p-2 border-r border-slate-200 text-center text-slate-400 font-mono">{idx + 1}</td>
-                        <td className="p-2 border-r border-slate-200 font-bold text-slate-900">{it.itemName}</td>
-                        <td className="p-2 border-r border-slate-200 text-center font-mono text-slate-600">{it.hsnCode}</td>
-                        <td className="p-2 border-r border-slate-200 text-right font-mono font-black">{it.qty}</td>
-                        <td className="p-2 border-r border-slate-200 text-center text-slate-600">{it.uom}</td>
-                        <td className="p-2 border-r border-slate-200 text-right font-mono">₹{it.rate?.toFixed(2)}</td>
-                        <td className="p-2 border-r border-slate-200 text-right font-mono text-amber-700">{it.discountPercent || 0}%</td>
-                        <td className="p-2 border-r border-slate-200 text-right font-mono">₹{it.taxable?.toFixed(2)}</td>
-                        <td className="p-2 text-right font-mono font-black text-slate-900">₹{it.total?.toFixed(2)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr className="border-t bg-slate-50 font-bold">
+                    <td colSpan="2" className="p-1.5 text-right">Total:</td>
+                    <td className="p-1.5 text-right font-mono font-black">{selectedInvoiceForPrint.totalQuantity}</td>
+                    <td colSpan="3" className="p-1.5 text-right">Grand Total:</td>
+                    <td className="p-1.5 text-right font-mono font-black text-emerald-700">₹{selectedInvoiceForPrint.grandTotal?.toFixed(2)}</td>
+                  </tr>
+                </tfoot>
+              </table>
+
+              <div className="flex justify-end pt-2">
+                <button
+                  onClick={() => triggerFullPagePrint(selectedInvoiceForPrint)}
+                  className="flex items-center gap-1.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold px-4 py-2 rounded-lg transition"
+                >
+                  <Printer className="w-3.5 h-3.5" /> Print Invoice
+                </button>
               </div>
-
-              {/* TOTALS & STATUTORY SIGNATURE BLOCK */}
-              <div className="grid grid-cols-2 gap-6 pt-2">
-                <div className="space-y-3">
-                  <div className="p-3 bg-slate-50 border border-slate-200 rounded text-[11px] space-y-1">
-                    <p className="font-bold text-slate-800 uppercase tracking-wider text-[10px]">Bank Settlement Details</p>
-                    <p>Bank: <strong>{selectedInvoiceForPrint.vendorProfile?.bankName}</strong></p>
-                    <p>A/c No: <strong className="font-mono">{selectedInvoiceForPrint.vendorProfile?.accountNo}</strong></p>
-                    <p>IFSC: <strong className="font-mono">{selectedInvoiceForPrint.vendorProfile?.ifscCode}</strong></p>
-                  </div>
-                  <div>
-                    <p className="font-bold text-[10px] uppercase tracking-wider text-slate-400">Terms & Conditions</p>
-                    <p className="text-[10px] text-slate-600 whitespace-pre-line leading-relaxed mt-0.5">{selectedInvoiceForPrint.vendorProfile?.terms}</p>
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <div className="space-y-1 text-xs border border-slate-200 p-3 rounded bg-slate-50/50">
-                    <div className="flex justify-between text-slate-600 font-medium">
-                      <span>Total Items Quantity:</span>
-                      <span className="font-mono font-black text-slate-900">{selectedInvoiceForPrint.totalQuantity}</span>
-                    </div>
-                    <div className="flex justify-between text-slate-600 font-medium">
-                      <span>Total Taxable Amount:</span>
-                      <span className="font-mono">₹{selectedInvoiceForPrint.taxableAmount?.toFixed(2)}</span>
-                    </div>
-                    {selectedInvoiceForPrint.cgst > 0 && (
-                      <div className="flex justify-between text-slate-600 font-medium">
-                        <span>CGST:</span>
-                        <span className="font-mono">₹{selectedInvoiceForPrint.cgst?.toFixed(2)}</span>
-                      </div>
-                    )}
-                    {selectedInvoiceForPrint.sgst > 0 && (
-                      <div className="flex justify-between text-slate-600 font-medium">
-                        <span>SGST:</span>
-                        <span className="font-mono">₹{selectedInvoiceForPrint.sgst?.toFixed(2)}</span>
-                      </div>
-                    )}
-                    {selectedInvoiceForPrint.igst > 0 && (
-                      <div className="flex justify-between text-slate-600 font-medium">
-                        <span>IGST:</span>
-                        <span className="font-mono">₹{selectedInvoiceForPrint.igst?.toFixed(2)}</span>
-                      </div>
-                    )}
-                    <div className="flex justify-between text-slate-600 font-medium">
-                      <span>Round Off:</span>
-                      <span className="font-mono">₹{selectedInvoiceForPrint.roundOff?.toFixed(2)}</span>
-                    </div>
-                    <div className="flex justify-between items-center text-sm font-black text-slate-900 border-t border-slate-300 pt-1.5 mt-1">
-                      <span>Grand Total:</span>
-                      <span className="font-mono text-base font-black text-emerald-800">
-                        ₹{selectedInvoiceForPrint.grandTotal?.toFixed(2)}
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="border-2 border-slate-900 rounded p-4 text-right space-y-8 bg-white mt-3">
-                    <p className="text-xs font-bold text-slate-900">
-                      For {selectedInvoiceForPrint.vendorProfile?.companyName}
-                    </p>
-                    <p className="text-[10px] font-black uppercase tracking-wider text-slate-800">
-                      Authorised Signatory
-                    </p>
-                  </div>
-                </div>
-              </div>
-
             </div>
           </div>
         </div>
