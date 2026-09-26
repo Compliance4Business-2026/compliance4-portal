@@ -28,6 +28,21 @@ const DEFAULT_BANK_LEDGERS = [
   "Sundry Creditors / Supplier Settlement"
 ];
 
+// Helper to dynamically load SheetJS CDN inside the browser
+const loadSheetJS = () => {
+  return new Promise((resolve, reject) => {
+    if (window.XLSX) {
+      resolve(window.XLSX);
+      return;
+    }
+    const script = document.createElement("script");
+    script.src = "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js";
+    script.onload = () => resolve(window.XLSX);
+    script.onerror = () => reject(new Error("Failed to load spreadsheet engine"));
+    document.head.appendChild(script);
+  });
+};
+
 export default function BankModule({ activeClient = "Panasuria Confectionery" }) {
   const [bankSubTab, setBankSubTab] = useState("needs_review");
 
@@ -93,7 +108,6 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
     setTimeout(() => setNotification(null), 4000);
   };
 
-  // Match learned rules by keyword
   const findMatchingLedger = (narration) => {
     if (!narration) return "";
     const clean = narration.toLowerCase();
@@ -105,13 +119,13 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
     return "";
   };
 
-  // DOWNLOAD TEMPLATE
+  // DOWNLOAD TEMPLATE (.CSV)
   const handleDownloadTemplate = () => {
     const csvContent =
       "Date,Narration,Chq_Ref_No,Withdrawal,Deposit,Balance\n" +
       "2026-09-01,UPI/524310982/Customer Settlement,REF10928,0.00,4500.00,4500.00\n" +
       "2026-09-02,NEFT/Vendor Milk Supplies/Amul,REF39210,1850.00,0.00,2650.00\n" +
-      "2026-09-03,ELECTRICITY BILLTorrent Power,REF98211,840.00,0.00,1810.00\n";
+      "2026-09-03,ELECTRICITY BILL Torrent Power,REF98211,840.00,0.00,1810.00\n";
 
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
@@ -124,84 +138,122 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
     notify("Template downloaded successfully!", "success");
   };
 
-  // CLIENT-SIDE IN-BROWSER STATEMENT PARSER
-  const handleFileUpload = (e) => {
+  // ROBUST PARSER FOR EXCEL (.xlsx, .xls) AND CSV
+  const handleFileUpload = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
 
     setIsUploading(true);
-    const reader = new FileReader();
+    const fileName = file.name.toLowerCase();
 
-    reader.onload = (event) => {
-      try {
-        const text = event.target.result;
-        const lines = text.split(/\r\n|\n/).filter((l) => l.trim().length > 0);
+    try {
+      const XLSX = await loadSheetJS();
+      const reader = new FileReader();
 
-        if (lines.length < 2) {
-          notify("Statement file appears to be empty or missing headers.", "error");
+      reader.onload = (event) => {
+        try {
+          let rawRows = [];
+
+          if (fileName.endsWith(".csv") || fileName.endsWith(".txt")) {
+            // Text/CSV handling
+            const text = new TextDecoder().decode(event.target.result);
+            const lines = text.split(/\r\n|\n/).filter((l) => l.trim().length > 0);
+            rawRows = lines.map((line) => line.split(",").map((c) => c.replace(/["']/g, "").trim()));
+          } else {
+            // Excel (.xlsx, .xls) binary handling
+            const data = new Uint8Array(event.target.result);
+            const workbook = XLSX.read(data, { type: "array" });
+            const firstSheetName = workbook.SheetNames[0];
+            const worksheet = workbook.Sheets[firstSheetName];
+            rawRows = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" });
+          }
+
+          if (!rawRows || rawRows.length < 2) {
+            notify("File appears to be empty or missing data rows.", "error");
+            setIsUploading(false);
+            return;
+          }
+
+          // Dynamically detect header row
+          let headerIdx = 0;
+          for (let r = 0; r < Math.min(rawRows.length, 12); r++) {
+            const rowStr = (rawRows[r] || []).join(" ").toLowerCase();
+            if (
+              rowStr.includes("date") &&
+              (rowStr.includes("narr") || rowStr.includes("desc") || rowStr.includes("particular") || rowStr.includes("withdrawal") || rowStr.includes("deposit") || rowStr.includes("debit") || rowStr.includes("credit"))
+            ) {
+              headerIdx = r;
+              break;
+            }
+          }
+
+          const headers = (rawRows[headerIdx] || []).map((h) => String(h || "").trim().toLowerCase());
+          const dateIdx = headers.findIndex((h) => h.includes("date") || h.includes("txn date"));
+          const narrIdx = headers.findIndex((h) => h.includes("narr") || h.includes("desc") || h.includes("particular") || h.includes("remark"));
+          const refIdx = headers.findIndex((h) => h.includes("ref") || h.includes("chq") || h.includes("cheque") || h.includes("utr"));
+          const withIdx = headers.findIndex((h) => h.includes("with") || h.includes("debit") || h.includes("dr"));
+          const depIdx = headers.findIndex((h) => h.includes("dep") || h.includes("credit") || h.includes("cr"));
+
+          const parsedRows = [];
+
+          for (let i = headerIdx + 1; i < rawRows.length; i++) {
+            const cells = rawRows[i] || [];
+            if (!cells || cells.length === 0) continue;
+
+            let dateVal = dateIdx !== -1 && cells[dateIdx] ? String(cells[dateIdx]).trim() : new Date().toISOString().split("T")[0];
+
+            // Convert Excel serial date numbers if applicable
+            if (!isNaN(dateVal) && Number(dateVal) > 20000 && Number(dateVal) < 60000) {
+              const excelDate = new Date(Math.round((Number(dateVal) - 25569) * 86400 * 1000));
+              dateVal = excelDate.toISOString().split("T")[0];
+            }
+
+            const narrVal = narrIdx !== -1 && cells[narrIdx] ? String(cells[narrIdx]).trim() : "Bank Transaction";
+            const refVal = refIdx !== -1 && cells[refIdx] ? String(cells[refIdx]).trim() : "-";
+
+            const withdrawal = withIdx !== -1 ? Math.abs(parseFloat(String(cells[withIdx]).replace(/[^0-9.-]/g, "")) || 0) : 0;
+            const deposit = depIdx !== -1 ? Math.abs(parseFloat(String(cells[depIdx]).replace(/[^0-9.-]/g, "")) || 0) : 0;
+
+            if (withdrawal === 0 && deposit === 0) continue;
+
+            const type = deposit > 0 ? "Receipt" : "Payment";
+            const amount = deposit > 0 ? deposit : withdrawal;
+            const matched = findMatchingLedger(narrVal);
+
+            parsedRows.push({
+              id: `tx_${Date.now()}_${i}`,
+              date: dateVal,
+              narration: narrVal,
+              refNo: refVal,
+              type,
+              amount,
+              allocatedLedger: matched || (type === "Receipt" ? "Sales: Direct UPI Collection" : "Tea & Refreshment Expenses"),
+              isAutoMatched: Boolean(matched)
+            });
+          }
+
+          if (parsedRows.length === 0) {
+            notify("No valid withdrawal or deposit rows detected.", "error");
+          } else {
+            setTransactions((prev) => [...parsedRows, ...prev]);
+            notify(`Extracted ${parsedRows.length} transactions from statement!`, "success");
+            setBankSubTab("needs_review");
+          }
+        } catch (err) {
+          console.error(err);
+          notify("Failed to process statement layout. Please verify columns.", "error");
+        } finally {
           setIsUploading(false);
-          return;
+          if (fileInputRef.current) fileInputRef.current.value = "";
         }
+      };
 
-        const headers = lines[0].split(",").map((h) => h.trim().toLowerCase());
-        const dateIdx = headers.findIndex((h) => h.includes("date"));
-        const narrIdx = headers.findIndex((h) => h.includes("narr") || h.includes("desc") || h.includes("particular"));
-        const refIdx = headers.findIndex((h) => h.includes("ref") || h.includes("chq"));
-        const withIdx = headers.findIndex((h) => h.includes("with") || h.includes("debit") || h.includes("dr"));
-        const depIdx = headers.findIndex((h) => h.includes("dep") || h.includes("credit") || h.includes("cr"));
-
-        const parsedRows = [];
-
-        for (let i = 1; i < lines.length; i++) {
-          const cells = lines[i].split(",").map((c) => c.replace(/["']/g, "").trim());
-          if (cells.length < 3) continue;
-
-          const dateVal = dateIdx !== -1 && cells[dateIdx] ? cells[dateIdx] : new Date().toISOString().split("T")[0];
-          const narrVal = narrIdx !== -1 && cells[narrIdx] ? cells[narrIdx] : "Bank Transaction";
-          const refVal = refIdx !== -1 && cells[refIdx] ? cells[refIdx] : "-";
-          const withdrawal = withIdx !== -1 ? parseFloat(cells[withIdx]) || 0 : 0;
-          const deposit = depIdx !== -1 ? parseFloat(cells[depIdx]) || 0 : 0;
-
-          if (withdrawal === 0 && deposit === 0) continue;
-
-          const type = deposit > 0 ? "Receipt" : "Payment";
-          const amount = deposit > 0 ? deposit : withdrawal;
-          const matched = findMatchingLedger(narrVal);
-
-          parsedRows.push({
-            id: `tx_${Date.now()}_${i}`,
-            date: dateVal,
-            narration: narrVal,
-            refNo: refVal,
-            type,
-            amount,
-            allocatedLedger: matched || (type === "Receipt" ? "Sales: Direct UPI Collection" : "Tea & Refreshment Expenses"),
-            isAutoMatched: Boolean(matched)
-          });
-        }
-
-        if (parsedRows.length === 0) {
-          notify("No valid withdrawal or deposit rows found in statement.", "error");
-        } else {
-          setTransactions((prev) => [...parsedRows, ...prev]);
-          notify(`Successfully extracted ${parsedRows.length} transactions!`, "success");
-          setBankSubTab("needs_review");
-        }
-      } catch (err) {
-        console.error(err);
-        notify("Failed to parse bank statement. Please verify CSV columns.", "error");
-      } finally {
-        setIsUploading(false);
-        if (fileInputRef.current) fileInputRef.current.value = "";
-      }
-    };
-
-    reader.onerror = () => {
-      notify("Failed to read file from browser.", "error");
+      reader.readAsArrayBuffer(file);
+    } catch (err) {
+      console.error(err);
+      notify("Failed to initialize spreadsheet reader.", "error");
       setIsUploading(false);
-    };
-
-    reader.readAsText(file);
+    }
   };
 
   const handleLedgerSelect = (txId, newLedger, narration) => {
@@ -322,21 +374,23 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
           </div>
         </div>
 
-        {/* RESTORED ACTION BUTTONS */}
+        {/* ACTIONS */}
         <div className="flex items-center gap-3">
           <button
             onClick={handleDownloadTemplate}
             className="flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold px-3.5 py-2 rounded-lg transition"
+            title="Download CSV Statement Template"
           >
             <Download className="w-3.5 h-3.5" />
             Download Template
           </button>
 
+          {/* accept="*" allows Windows Explorer to show Excel (.xlsx, .xls) and CSV without restrictions */}
           <input
             type="file"
             ref={fileInputRef}
             onChange={handleFileUpload}
-            accept=".csv,.txt"
+            accept="*"
             className="hidden"
           />
 
@@ -346,7 +400,7 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
             className="flex items-center gap-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold px-4 py-2 rounded-lg transition shadow-sm disabled:opacity-50"
           >
             <Upload className="w-3.5 h-3.5" />
-            {isUploading ? "Reading..." : "Upload Bank Statement"}
+            {isUploading ? "Processing..." : "Upload Bank Statement (Excel / CSV)"}
           </button>
         </div>
       </header>
@@ -430,7 +484,7 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
         </div>
       </div>
 
-      {/* TABLE */}
+      {/* TABLE VIEW */}
       <div className="flex-1 p-8 overflow-y-auto">
         {displayedList.length === 0 ? (
           <div className="bg-white rounded-xl border border-slate-200 p-16 flex flex-col items-center justify-center text-center shadow-sm">
@@ -439,7 +493,7 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
               No transactions in {bankSubTab === "needs_review" ? "Needs Review" : bankSubTab === "approved" ? "Approved" : "Pushed"}
             </p>
             <p className="text-xs text-slate-400 mt-1 max-w-sm">
-              Use "Download Template" to inspect the required columns, or upload a CSV bank statement.
+              Upload bank statements in <strong>Excel (.xlsx, .xls)</strong> or <strong>CSV</strong> format to extract and auto-classify transactions.
             </p>
           </div>
         ) : (
@@ -544,6 +598,7 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
         )}
       </div>
 
+      {/* TOAST ALERTS */}
       {notification && (
         <div
           className={`fixed bottom-6 right-6 px-4 py-2.5 rounded-lg text-white text-xs font-semibold flex items-center gap-2 shadow-lg transition-all z-50 ${
