@@ -12,7 +12,7 @@ import PurchaseModule from "./PurchaseModule";
 import SalesModule from "./SalesModule";
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState("bank"); // Default to banking to test immediately
+  const [activeTab, setActiveTab] = useState("sales"); // Set to sales to view immediately
   const [activeClient, setActiveClient] = useState("Panasuria Confectionery");
 
   return (
@@ -102,7 +102,8 @@ export default function App() {
       <main className="flex-1 flex flex-col overflow-hidden">
         {activeTab === "purchase" && <PurchaseModule activeClient={activeClient} />}
         {activeTab === "bank" && <BankModule activeClient={activeClient} />}
-        {activeTab !== "purchase" && activeTab !== "bank" && (
+        {activeTab === "sales" && <SalesModule activeClient={activeClient} />}
+        {activeTab !== "purchase" && activeTab !== "bank" && activeTab !== "sales" && (
           <div className="flex-1 flex items-center justify-center text-slate-400">
             <p className="text-sm capitalize">{activeTab} Module Ready for Integration</p>
           </div>
