@@ -215,7 +215,7 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
             const matched = findMatchingLedger(narrVal);
 
             parsedRows.push({
-              id: `tx_${Date.now()}_${i}`,
+              id: `tx_${Date.now()}_${i}_${Math.random().toString(36).substr(2, 4)}`,
               date: dateVal,
               narration: narrVal,
               refNo: refVal,
@@ -250,9 +250,11 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
     }
   };
 
-  // FEATURE 1 & 2: AUTO-APPROVE AND MOVE TRANSACTION ON LEDGER SELECTION
+  // 1. AUTO-APPROVE ON LEDGER SELECTION
   const handleLedgerSelectAndAutoApprove = (tx, newLedger) => {
-    // 1. Learn keyword pattern
+    if (!newLedger) return;
+
+    // Learn keyword pattern from narration
     if (tx.narration && tx.narration.trim().length > 3) {
       const cleanPattern = tx.narration.trim().split(" ")[0].toLowerCase();
       if (cleanPattern.length >= 3) {
@@ -263,10 +265,10 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
       }
     }
 
-    // 2. Remove from Needs Review immediately
+    // Immediately remove from Needs Review
     setTransactions((prev) => prev.filter((t) => t.id !== tx.id));
 
-    // 3. Shift into Approved Transactions queue
+    // Shift to Approved queue
     const approvedTx = {
       ...tx,
       allocatedLedger: newLedger,
@@ -293,6 +295,33 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
     setTransactions([]);
     setBankSubTab("approved");
     notify(`Approved all ${toApprove.length} transactions!`, "success");
+  };
+
+  // 2. DISCARD ALL TRANSACTIONS (FOR CURRENT ACTIVE SUB-TAB)
+  const handleDiscardAll = () => {
+    if (bankSubTab === "needs_review") {
+      if (transactions.length === 0) return;
+      if (!window.confirm(`Discard all ${transactions.length} transactions in Needs Review?`)) return;
+      setTransactions([]);
+      notify("All pending transactions discarded.", "info");
+    } else if (bankSubTab === "approved") {
+      if (approvedTransactions.length === 0) return;
+      if (!window.confirm(`Discard all ${approvedTransactions.length} transactions in Approved queue?`)) return;
+      setApprovedTransactions([]);
+      notify("All approved transactions discarded.", "info");
+    }
+  };
+
+  // 3. DELETE SINGLE APPROVED TRANSACTION
+  const handleDeleteApproved = (txId) => {
+    setApprovedTransactions((prev) => prev.filter((t) => t.id !== txId));
+    notify("Transaction removed from Approved queue.", "info");
+  };
+
+  // Delete Single Needs Review Transaction
+  const handleDeleteNeedsReview = (txId) => {
+    setTransactions((prev) => prev.filter((t) => t.id !== txId));
+    notify("Transaction dismissed.", "info");
   };
 
   // Push single voucher to Tally
@@ -350,7 +379,6 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
     notify(`Transaction #${tx.id} synced to Tally!`, "success");
   };
 
-  // FEATURE 3: ONE-CLICK PUSH ALL APPROVED TRANSACTIONS TO TALLY
   const handlePushAllApproved = async () => {
     if (approvedTransactions.length === 0) return;
     setIsSyncing(true);
@@ -379,7 +407,7 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
 
   return (
     <div className="flex-1 flex flex-col h-full bg-[#F8FAFC] overflow-hidden">
-      {/* HEADER SECTION */}
+      {/* HEADER BAR */}
       <header className="bg-white border-b border-slate-200 px-8 py-4 flex items-center justify-between shadow-sm shrink-0">
         <div>
           <h2 className="text-xl font-bold text-slate-900 tracking-tight">Banking Center</h2>
@@ -394,6 +422,7 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
           </div>
         </div>
 
+        {/* ACTIONS */}
         <div className="flex items-center gap-3">
           <button
             onClick={handleDownloadTemplate}
@@ -423,7 +452,7 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
         </div>
       </header>
 
-      {/* SUB-TABS & BATCH ACTION BAR */}
+      {/* SUB-TABS & BATCH ACTION CONTROLS */}
       <div className="px-8 pt-4 pb-0 flex items-center justify-between border-b border-slate-200 bg-white shrink-0">
         <div className="flex items-center gap-6">
           <button
@@ -482,26 +511,45 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
         </div>
 
         {/* BATCH ACTION CONTROLS */}
-        <div className="pb-2">
+        <div className="flex items-center gap-2 pb-2">
           {bankSubTab === "needs_review" && transactions.length > 0 && (
-            <button
-              onClick={handleApproveAll}
-              className="flex items-center gap-1.5 px-3.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md text-xs font-semibold transition"
-            >
-              <Check className="w-3.5 h-3.5" /> Approve All ({transactions.length})
-            </button>
+            <>
+              <button
+                onClick={handleDiscardAll}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-md text-xs font-semibold transition"
+                title="Discard all pending transactions"
+              >
+                <Trash2 className="w-3.5 h-3.5" /> Discard All
+              </button>
+
+              <button
+                onClick={handleApproveAll}
+                className="flex items-center gap-1.5 px-3.5 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-md text-xs font-semibold shadow-sm transition"
+              >
+                <Check className="w-3.5 h-3.5" /> Approve All ({transactions.length})
+              </button>
+            </>
           )}
 
-          {/* FEATURE 3: ONE-CLICK PUSH ALL APPROVED TO TALLY */}
           {bankSubTab === "approved" && approvedTransactions.length > 0 && (
-            <button
-              onClick={handlePushAllApproved}
-              disabled={isSyncing}
-              className="flex items-center gap-1.5 px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-md text-xs font-bold shadow-sm transition disabled:opacity-50"
-            >
-              <Send className="w-3.5 h-3.5" />
-              {isSyncing ? "Pushing to Tally..." : `Push All to Tally (${approvedTransactions.length})`}
-            </button>
+            <>
+              <button
+                onClick={handleDiscardAll}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-md text-xs font-semibold transition"
+                title="Discard all approved transactions"
+              >
+                <Trash2 className="w-3.5 h-3.5" /> Discard All
+              </button>
+
+              <button
+                onClick={handlePushAllApproved}
+                disabled={isSyncing}
+                className="flex items-center gap-1.5 px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-md text-xs font-bold shadow-sm transition disabled:opacity-50"
+              >
+                <Send className="w-3.5 h-3.5" />
+                {isSyncing ? "Pushing to Tally..." : `Push All to Tally (${approvedTransactions.length})`}
+              </button>
+            </>
           )}
         </div>
       </div>
@@ -558,22 +606,27 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
                     <td className="py-3 px-4">
                       {bankSubTab === "needs_review" ? (
                         <div className="flex items-center gap-1.5">
+                          {/* AUTO-TRIGGER ON USER SELECTION */}
                           <select
-                            value={tx.allocatedLedger}
-                            onChange={(e) => handleLedgerSelectAndAutoApprove(tx, e.target.value)}
-                            className={`border rounded px-2.5 py-1 text-xs font-semibold focus:outline-none transition max-w-xs ${
-                              tx.isAutoMatched
-                                ? "bg-indigo-50 border-indigo-200 text-indigo-900"
-                                : "bg-slate-50 border-slate-200 text-slate-800"
-                            }`}
+                            defaultValue=""
+                            onChange={(e) => {
+                              if (e.target.value) {
+                                handleLedgerSelectAndAutoApprove(tx, e.target.value);
+                              }
+                            }}
+                            className="bg-white border border-slate-300 hover:border-slate-400 rounded px-2.5 py-1 text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-slate-900 transition max-w-xs text-slate-800"
                           >
-                            <option value="" disabled>Select & Auto-Approve...</option>
+                            <option value="" disabled>
+                              Select Ledger to Approve →
+                            </option>
                             {DEFAULT_BANK_LEDGERS.map((opt) => (
-                              <option key={opt} value={opt}>{opt}</option>
+                              <option key={opt} value={opt}>
+                                {opt}
+                              </option>
                             ))}
                           </select>
                           {tx.isAutoMatched && (
-                            <span title="Auto-matched via learned rules" className="text-indigo-600 shrink-0">
+                            <span title={`Auto-suggested: ${tx.allocatedLedger}`} className="text-indigo-600 shrink-0">
                               <Sparkles className="w-3.5 h-3.5" />
                             </span>
                           )}
@@ -591,21 +644,40 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
 
                     <td className="py-3 px-4 text-center whitespace-nowrap">
                       {bankSubTab === "needs_review" && (
-                        <button
-                          onClick={() => handleApproveSingle(tx)}
-                          className="px-3 py-1 bg-slate-900 hover:bg-slate-800 text-white rounded font-semibold text-[11px] shadow-sm transition"
-                        >
-                          Approve
-                        </button>
+                        <div className="inline-flex items-center gap-1.5">
+                          <button
+                            onClick={() => handleApproveSingle(tx)}
+                            className="px-3 py-1 bg-slate-900 hover:bg-slate-800 text-white rounded font-semibold text-[11px] shadow-sm transition"
+                          >
+                            Approve
+                          </button>
+                          <button
+                            onClick={() => handleDeleteNeedsReview(tx.id)}
+                            className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded transition"
+                            title="Dismiss Transaction"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       )}
 
                       {bankSubTab === "approved" && (
-                        <button
-                          onClick={() => handlePushSingle(tx)}
-                          className="inline-flex items-center gap-1 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-[11px] px-3 py-1 rounded shadow-sm transition"
-                        >
-                          <Send className="w-3 h-3" /> Push
-                        </button>
+                        <div className="inline-flex items-center gap-1.5">
+                          <button
+                            onClick={() => handlePushSingle(tx)}
+                            className="inline-flex items-center gap-1 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-[11px] px-3 py-1 rounded shadow-sm transition"
+                          >
+                            <Send className="w-3 h-3" /> Push
+                          </button>
+                          {/* DELETE SINGLE APPROVED TRANSACTION */}
+                          <button
+                            onClick={() => handleDeleteApproved(tx.id)}
+                            className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded transition"
+                            title="Remove from Approved"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       )}
 
                       {bankSubTab === "pushed" && (
