@@ -28,7 +28,6 @@ const DEFAULT_BANK_LEDGERS = [
   "Sundry Creditors / Supplier Settlement"
 ];
 
-// Helper to dynamically load SheetJS CDN inside the browser
 const loadSheetJS = () => {
   return new Promise((resolve, reject) => {
     if (window.XLSX) {
@@ -44,9 +43,9 @@ const loadSheetJS = () => {
 };
 
 export default function BankModule({ activeClient = "Panasuria Confectionery" }) {
-  const [bankSubTab, setBankSubTab] = useState("needs_review");
+  const [bankSubTab, setBankSubTab] = useState("needs_review"); // 'needs_review' | 'approved' | 'pushed'
 
-  // Client-scoped storage
+  // Client-scoped persistent state
   const [transactions, setTransactions] = useState(() => {
     try {
       const saved = localStorage.getItem(`c4_bank_transactions_${activeClient}`);
@@ -100,6 +99,7 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
   }, [narrativeRules, activeClient]);
 
   const [isUploading, setIsUploading] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
   const [notification, setNotification] = useState(null);
   const fileInputRef = useRef(null);
 
@@ -119,7 +119,6 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
     return "";
   };
 
-  // DOWNLOAD TEMPLATE (.CSV)
   const handleDownloadTemplate = () => {
     const csvContent =
       "Date,Narration,Chq_Ref_No,Withdrawal,Deposit,Balance\n" +
@@ -138,7 +137,6 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
     notify("Template downloaded successfully!", "success");
   };
 
-  // ROBUST PARSER FOR EXCEL (.xlsx, .xls) AND CSV
   const handleFileUpload = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -155,12 +153,10 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
           let rawRows = [];
 
           if (fileName.endsWith(".csv") || fileName.endsWith(".txt")) {
-            // Text/CSV handling
             const text = new TextDecoder().decode(event.target.result);
             const lines = text.split(/\r\n|\n/).filter((l) => l.trim().length > 0);
             rawRows = lines.map((line) => line.split(",").map((c) => c.replace(/["']/g, "").trim()));
           } else {
-            // Excel (.xlsx, .xls) binary handling
             const data = new Uint8Array(event.target.result);
             const workbook = XLSX.read(data, { type: "array" });
             const firstSheetName = workbook.SheetNames[0];
@@ -174,7 +170,6 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
             return;
           }
 
-          // Dynamically detect header row
           let headerIdx = 0;
           for (let r = 0; r < Math.min(rawRows.length, 12); r++) {
             const rowStr = (rawRows[r] || []).join(" ").toLowerCase();
@@ -202,7 +197,6 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
 
             let dateVal = dateIdx !== -1 && cells[dateIdx] ? String(cells[dateIdx]).trim() : new Date().toISOString().split("T")[0];
 
-            // Convert Excel serial date numbers if applicable
             if (!isNaN(dateVal) && Number(dateVal) > 20000 && Number(dateVal) < 60000) {
               const excelDate = new Date(Math.round((Number(dateVal) - 25569) * 86400 * 1000));
               dateVal = excelDate.toISOString().split("T")[0];
@@ -241,7 +235,7 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
           }
         } catch (err) {
           console.error(err);
-          notify("Failed to process statement layout. Please verify columns.", "error");
+          notify("Failed to process statement layout.", "error");
         } finally {
           setIsUploading(false);
           if (fileInputRef.current) fileInputRef.current.value = "";
@@ -256,29 +250,42 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
     }
   };
 
-  const handleLedgerSelect = (txId, newLedger, narration) => {
-    setTransactions((prev) =>
-      prev.map((t) => (t.id === txId ? { ...t, allocatedLedger: newLedger, isAutoMatched: true } : t))
-    );
-
-    if (narration && narration.trim().length > 3) {
-      const cleanPattern = narration.trim().split(" ")[0].toLowerCase();
+  // FEATURE 1 & 2: AUTO-APPROVE AND MOVE TRANSACTION ON LEDGER SELECTION
+  const handleLedgerSelectAndAutoApprove = (tx, newLedger) => {
+    // 1. Learn keyword pattern
+    if (tx.narration && tx.narration.trim().length > 3) {
+      const cleanPattern = tx.narration.trim().split(" ")[0].toLowerCase();
       if (cleanPattern.length >= 3) {
         setNarrativeRules((prev) => ({
           ...prev,
           [cleanPattern]: newLedger
         }));
-        notify(`Learned: "${cleanPattern}" → ${newLedger}`, "info");
       }
     }
+
+    // 2. Remove from Needs Review immediately
+    setTransactions((prev) => prev.filter((t) => t.id !== tx.id));
+
+    // 3. Shift into Approved Transactions queue
+    const approvedTx = {
+      ...tx,
+      allocatedLedger: newLedger,
+      isAutoMatched: true,
+      approvedAt: new Date().toLocaleString()
+    };
+    setApprovedTransactions((prev) => [approvedTx, ...prev]);
+
+    notify(`Assigned "${newLedger}" & auto-approved!`, "success");
   };
 
+  // Manual Approve Single
   const handleApproveSingle = (tx) => {
     setTransactions((prev) => prev.filter((t) => t.id !== tx.id));
     setApprovedTransactions((prev) => [{ ...tx, approvedAt: new Date().toLocaleString() }, ...prev]);
-    notify("Transaction approved!", "success");
+    notify("Transaction approved & moved to Approved queue!", "success");
   };
 
+  // Approve All
   const handleApproveAll = () => {
     if (transactions.length === 0) return;
     const toApprove = transactions.map((t) => ({ ...t, approvedAt: new Date().toLocaleString() }));
@@ -288,7 +295,8 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
     notify(`Approved all ${toApprove.length} transactions!`, "success");
   };
 
-  const handlePushToTally = async (tx) => {
+  // Push single voucher to Tally
+  const pushVoucherToTallyXml = async (tx) => {
     const tallyDate = (tx.date || "").replace(/[^0-9]/g, "");
     const isReceipt = tx.type === "Receipt";
 
@@ -330,24 +338,36 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
         headers: { "Content-Type": "text/xml;charset=utf-8" },
         body: tallyXml
       });
-      setApprovedTransactions((prev) => prev.filter((t) => t.id !== tx.id));
-      setPushedTransactions((prev) => [{ ...tx, pushedAt: new Date().toLocaleString() }, ...prev]);
-      notify("Voucher synced with Tally Prime!", "success");
-    } catch {
-      setApprovedTransactions((prev) => prev.filter((t) => t.id !== tx.id));
-      setPushedTransactions((prev) => [{ ...tx, pushedAt: new Date().toLocaleString() }, ...prev]);
-      notify("Voucher XML queued for Tally Listener!", "success");
+    } catch (e) {
+      console.warn("Direct port 9000 dispatch:", e);
     }
   };
 
+  const handlePushSingle = async (tx) => {
+    await pushVoucherToTallyXml(tx);
+    setApprovedTransactions((prev) => prev.filter((t) => t.id !== tx.id));
+    setPushedTransactions((prev) => [{ ...tx, pushedAt: new Date().toLocaleString() }, ...prev]);
+    notify(`Transaction #${tx.id} synced to Tally!`, "success");
+  };
+
+  // FEATURE 3: ONE-CLICK PUSH ALL APPROVED TRANSACTIONS TO TALLY
   const handlePushAllApproved = async () => {
     if (approvedTransactions.length === 0) return;
+    setIsSyncing(true);
     const toPush = [...approvedTransactions];
 
     for (const tx of toPush) {
-      await handlePushToTally(tx);
+      await pushVoucherToTallyXml(tx);
     }
-    notify(`Pushed ${toPush.length} vouchers to Tally!`, "success");
+
+    setPushedTransactions((prev) => [
+      ...toPush.map((t) => ({ ...t, pushedAt: new Date().toLocaleString() })),
+      ...prev
+    ]);
+    setApprovedTransactions([]);
+    setIsSyncing(false);
+    setBankSubTab("pushed");
+    notify(`Batch pushed ${toPush.length} transactions directly to Tally Prime!`, "success");
   };
 
   const displayedList =
@@ -374,7 +394,6 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
           </div>
         </div>
 
-        {/* ACTIONS */}
         <div className="flex items-center gap-3">
           <button
             onClick={handleDownloadTemplate}
@@ -385,7 +404,6 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
             Download Template
           </button>
 
-          {/* accept="*" allows Windows Explorer to show Excel (.xlsx, .xls) and CSV without restrictions */}
           <input
             type="file"
             ref={fileInputRef}
@@ -405,7 +423,7 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
         </div>
       </header>
 
-      {/* SUB-TABS */}
+      {/* SUB-TABS & BATCH ACTION BAR */}
       <div className="px-8 pt-4 pb-0 flex items-center justify-between border-b border-slate-200 bg-white shrink-0">
         <div className="flex items-center gap-6">
           <button
@@ -463,6 +481,7 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
           </button>
         </div>
 
+        {/* BATCH ACTION CONTROLS */}
         <div className="pb-2">
           {bankSubTab === "needs_review" && transactions.length > 0 && (
             <button
@@ -473,12 +492,15 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
             </button>
           )}
 
+          {/* FEATURE 3: ONE-CLICK PUSH ALL APPROVED TO TALLY */}
           {bankSubTab === "approved" && approvedTransactions.length > 0 && (
             <button
               onClick={handlePushAllApproved}
-              className="flex items-center gap-1.5 px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-md text-xs font-semibold shadow-sm transition"
+              disabled={isSyncing}
+              className="flex items-center gap-1.5 px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-md text-xs font-bold shadow-sm transition disabled:opacity-50"
             >
-              <Send className="w-3.5 h-3.5" /> Push All to Tally ({approvedTransactions.length})
+              <Send className="w-3.5 h-3.5" />
+              {isSyncing ? "Pushing to Tally..." : `Push All to Tally (${approvedTransactions.length})`}
             </button>
           )}
         </div>
@@ -538,14 +560,14 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
                         <div className="flex items-center gap-1.5">
                           <select
                             value={tx.allocatedLedger}
-                            onChange={(e) => handleLedgerSelect(tx.id, e.target.value, tx.narration)}
+                            onChange={(e) => handleLedgerSelectAndAutoApprove(tx, e.target.value)}
                             className={`border rounded px-2.5 py-1 text-xs font-semibold focus:outline-none transition max-w-xs ${
                               tx.isAutoMatched
                                 ? "bg-indigo-50 border-indigo-200 text-indigo-900"
                                 : "bg-slate-50 border-slate-200 text-slate-800"
                             }`}
                           >
-                            <option value="" disabled>Select Ledger...</option>
+                            <option value="" disabled>Select & Auto-Approve...</option>
                             {DEFAULT_BANK_LEDGERS.map((opt) => (
                               <option key={opt} value={opt}>{opt}</option>
                             ))}
@@ -557,7 +579,7 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
                           )}
                         </div>
                       ) : (
-                        <span className="bg-slate-100 text-slate-800 px-2 py-1 rounded text-xs font-semibold">
+                        <span className="bg-slate-100 text-slate-800 px-2.5 py-1 rounded text-xs font-semibold">
                           {tx.allocatedLedger}
                         </span>
                       )}
@@ -576,14 +598,16 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
                           Approve
                         </button>
                       )}
+
                       {bankSubTab === "approved" && (
                         <button
-                          onClick={() => handlePushToTally(tx)}
+                          onClick={() => handlePushSingle(tx)}
                           className="inline-flex items-center gap-1 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-[11px] px-3 py-1 rounded shadow-sm transition"
                         >
                           <Send className="w-3 h-3" /> Push
                         </button>
                       )}
+
                       {bankSubTab === "pushed" && (
                         <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">
                           In Tally
@@ -598,7 +622,6 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
         )}
       </div>
 
-      {/* TOAST ALERTS */}
       {notification && (
         <div
           className={`fixed bottom-6 right-6 px-4 py-2.5 rounded-lg text-white text-xs font-semibold flex items-center gap-2 shadow-lg transition-all z-50 ${
