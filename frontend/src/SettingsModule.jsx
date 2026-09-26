@@ -11,7 +11,12 @@ import {
   BookOpen,
   Download,
   Upload,
-  FileSpreadsheet
+  Image as ImageIcon,
+  PenTool,
+  Globe,
+  Phone,
+  Mail,
+  UserCheck
 } from "lucide-react";
 
 export const DEFAULT_PL_CATEGORIES = [
@@ -58,10 +63,33 @@ const loadSheetJS = () => {
   });
 };
 
-export default function SettingsModule({ activeClient, setActiveClient }) {
-  const [settingsTab, setSettingsTab] = useState("coa"); // 'profile' | 'coa'
+const getFreshProfileState = (clientName, savedProfiles) => {
+  if (savedProfiles[clientName]) {
+    return { ...savedProfiles[clientName], companyName: clientName };
+  }
+  return {
+    companyName: clientName,
+    gstin: "",
+    pan: "",
+    contactPerson: "",
+    phone: "",
+    email: "",
+    website: "",
+    address: "",
+    bankName: "",
+    accountNo: "",
+    ifscCode: "",
+    branch: "",
+    terms: "1. Goods once sold will not be taken back.\n2. Subject to our home Jurisdiction.\n3. Delivery Ex-Premises.",
+    logoUrl: "",
+    signatureUrl: ""
+  };
+};
 
-  // Profiles State
+export default function SettingsModule({ activeClient, setActiveClient }) {
+  const [settingsTab, setSettingsTab] = useState("profile"); // 'profile' | 'coa'
+
+  // Multi-entity profiles
   const [profiles, setProfiles] = useState(() => {
     try {
       const saved = localStorage.getItem("c4_client_profiles");
@@ -81,10 +109,21 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
     }
   });
 
+  // Profile form state for the currently active client
+  const [currentForm, setCurrentForm] = useState(() => getFreshProfileState(activeClient, profiles));
+
+  // FIX 1: DYNAMICALLY SYNC PROFILE FORM AND COA WHEN ACTIVE CLIENT CHANGES IN SIDEBAR
   useEffect(() => {
     try {
-      const saved = localStorage.getItem(`c4_coa_${activeClient}`);
-      setClientCoa(saved ? JSON.parse(saved) : INITIAL_CLIENT_COA);
+      const savedProfiles = JSON.parse(localStorage.getItem("c4_client_profiles") || "{}");
+      setCurrentForm(getFreshProfileState(activeClient, savedProfiles));
+    } catch {
+      setCurrentForm(getFreshProfileState(activeClient, {}));
+    }
+
+    try {
+      const savedCoa = localStorage.getItem(`c4_coa_${activeClient}`);
+      setClientCoa(savedCoa ? JSON.parse(savedCoa) : INITIAL_CLIENT_COA);
     } catch {
       setClientCoa(INITIAL_CLIENT_COA);
     }
@@ -94,22 +133,10 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
   const [newLedgerCategory, setNewLedgerCategory] = useState(DEFAULT_PL_CATEGORIES[1]);
   const [isUploading, setIsUploading] = useState(false);
   const [notification, setNotification] = useState(null);
-  const fileInputRef = useRef(null);
 
-  const [currentForm, setCurrentForm] = useState(() => profiles[activeClient] || {
-    companyName: activeClient,
-    gstin: "",
-    pan: "",
-    address: "",
-    phone: "",
-    email: "",
-    bankName: "",
-    accountNo: "",
-    ifscCode: "",
-    branch: "",
-    terms: "1. Goods once sold will not be taken back.\n2. Subject to local Jurisdiction.",
-    logoUrl: ""
-  });
+  const logoInputRef = useRef(null);
+  const signatureInputRef = useRef(null);
+  const fileInputRef = useRef(null);
 
   useEffect(() => {
     localStorage.setItem("c4_client_profiles", JSON.stringify(profiles));
@@ -124,7 +151,42 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
     setTimeout(() => setNotification(null), 4000);
   };
 
-  // 1. ADD SINGLE LEDGER
+  // Image Upload Handlers (Logo & Signature)
+  const handleImageUpload = (e, field) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    if (file.size > 2 * 1024 * 1024) {
+      notify("Image size should be less than 2MB", "error");
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      setCurrentForm((prev) => ({ ...prev, [field]: reader.result }));
+      notify(`${field === "logoUrl" ? "Company Logo" : "Signature"} uploaded!`, "success");
+    };
+    reader.readAsDataURL(file);
+  };
+
+  // Save Profile Handler
+  const handleSaveProfile = () => {
+    if (!currentForm.companyName.trim()) {
+      notify("Please provide a Legal Company Name", "error");
+      return;
+    }
+    const targetName = currentForm.companyName.trim();
+    const updatedProfiles = {
+      ...profiles,
+      [targetName]: { ...currentForm, companyName: targetName }
+    };
+    setProfiles(updatedProfiles);
+    localStorage.setItem("c4_client_profiles", JSON.stringify(updatedProfiles));
+    setActiveClient(targetName);
+    notify(`Complete profile for "${targetName}" saved successfully!`, "success");
+  };
+
+  // Chart of Accounts Handlers
   const handleAddLedger = (e) => {
     e.preventDefault();
     if (!newLedgerName.trim()) {
@@ -132,7 +194,7 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
       return;
     }
 
-    if (clientCoa.some(l => l.name.toLowerCase() === newLedgerName.trim().toLowerCase())) {
+    if (clientCoa.some((l) => l.name.toLowerCase() === newLedgerName.trim().toLowerCase())) {
       notify(`Ledger "${newLedgerName}" already exists for this client!`, "error");
       return;
     }
@@ -143,19 +205,17 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
       category: newLedgerCategory
     };
 
-    setClientCoa(prev => [...prev, created]);
+    setClientCoa((prev) => [...prev, created]);
     setNewLedgerName("");
     notify(`Ledger "${created.name}" added to ${activeClient}!`, "success");
   };
 
-  // 2. DELETE SINGLE LEDGER
   const handleDeleteLedger = (id, name) => {
     if (!window.confirm(`Delete ledger "${name}" from this client's accounts?`)) return;
-    setClientCoa(prev => prev.filter(l => l.id !== id));
+    setClientCoa((prev) => prev.filter((l) => l.id !== id));
     notify(`Ledger "${name}" deleted.`, "info");
   };
 
-  // 3. DOWNLOAD SAMPLE TEMPLATE (EXCEL / CSV)
   const handleDownloadTemplate = async () => {
     try {
       const XLSX = await loadSheetJS();
@@ -197,7 +257,6 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
     }
   };
 
-  // 4. BULK UPLOAD HANDLER (.xlsx, .xls, .csv)
   const handleFileUpload = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -215,8 +274,8 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
 
           if (fileName.endsWith(".csv") || fileName.endsWith(".txt")) {
             const text = new TextDecoder().decode(event.target.result);
-            const lines = text.split(/\r\n|\n/).filter(l => l.trim().length > 0);
-            rawRows = lines.map(line => line.split(",").map(c => c.replace(/["']/g, "").trim()));
+            const lines = text.split(/\r\n|\n/).filter((l) => l.trim().length > 0);
+            rawRows = lines.map((line) => line.split(",").map((c) => c.replace(/["']/g, "").trim()));
           } else {
             const data = new Uint8Array(event.target.result);
             const workbook = XLSX.read(data, { type: "array" });
@@ -230,9 +289,9 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
             return;
           }
 
-          const headers = (rawRows[0] || []).map(h => String(h || "").trim().toLowerCase());
-          const nameIdx = headers.findIndex(h => h.includes("ledger") || h.includes("account") || h.includes("name"));
-          const catIdx = headers.findIndex(h => h.includes("category") || h.includes("group") || h.includes("head") || h.includes("p&l"));
+          const headers = (rawRows[0] || []).map((h) => String(h || "").trim().toLowerCase());
+          const nameIdx = headers.findIndex((h) => h.includes("ledger") || h.includes("account") || h.includes("name"));
+          const catIdx = headers.findIndex((h) => h.includes("category") || h.includes("group") || h.includes("head") || h.includes("p&l"));
 
           if (nameIdx === -1) {
             notify("Missing 'Ledger Name' column header in file.", "error");
@@ -247,9 +306,8 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
             if (!name) continue;
 
             let rawCat = catIdx !== -1 && row[catIdx] ? String(row[catIdx]).trim() : "";
-            
-            // Match to standard category or fallback to closest
-            let matchedCat = DEFAULT_PL_CATEGORIES.find(c => c.toLowerCase() === rawCat.toLowerCase());
+            let matchedCat = DEFAULT_PL_CATEGORIES.find((c) => c.toLowerCase() === rawCat.toLowerCase());
+
             if (!matchedCat) {
               const lower = rawCat.toLowerCase();
               if (lower.includes("cost") || lower.includes("cogs") || lower.includes("purchase") || lower.includes("direct")) {
@@ -265,7 +323,7 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
               } else if (lower.includes("depr") || lower.includes("amort") || lower.includes("asset")) {
                 matchedCat = DEFAULT_PL_CATEGORIES[6];
               } else {
-                matchedCat = DEFAULT_PL_CATEGORIES[3]; // Administrative & General
+                matchedCat = DEFAULT_PL_CATEGORIES[3];
               }
             }
 
@@ -282,7 +340,6 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
             return;
           }
 
-          // Offer Replace vs Append choice
           const replaceOption = window.confirm(
             `Extracted ${parsedLedgers.length} ledgers!\n\nClick OK to REPLACE the entire list for ${activeClient}.\nClick CANCEL to APPEND only new ledgers to current list.`
           );
@@ -291,10 +348,9 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
             setClientCoa(parsedLedgers);
             notify(`Replaced with ${parsedLedgers.length} ledgers for ${activeClient}!`, "success");
           } else {
-            // Append unique only
-            const existingNames = new Set(clientCoa.map(l => l.name.toLowerCase()));
-            const newOnly = parsedLedgers.filter(l => !existingNames.has(l.name.toLowerCase()));
-            setClientCoa(prev => [...prev, ...newOnly]);
+            const existingNames = new Set(clientCoa.map((l) => l.name.toLowerCase()));
+            const newOnly = parsedLedgers.filter((l) => !existingNames.has(l.name.toLowerCase()));
+            setClientCoa((prev) => [...prev, ...newOnly]);
             notify(`Appended ${newOnly.length} new ledgers (skipped ${parsedLedgers.length - newOnly.length} duplicates)!`, "success");
           }
         } catch (err) {
@@ -314,27 +370,15 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
     }
   };
 
-  const handleSaveProfile = () => {
-    if (!currentForm.companyName.trim()) {
-      notify("Please provide a Legal Company Name", "error");
-      return;
-    }
-    const targetName = currentForm.companyName.trim();
-    setProfiles(prev => ({
-      ...prev,
-      [targetName]: { ...currentForm, companyName: targetName }
-    }));
-    setActiveClient(targetName);
-    notify(`Profile for "${targetName}" saved successfully!`, "success");
-  };
-
   return (
     <div className="flex-1 flex flex-col h-full bg-[#F8FAFC] overflow-y-auto">
-      {/* HEADER BAR */}
+      {/* TOP HEADER BAR */}
       <header className="bg-white border-b border-slate-200 px-8 py-4 flex items-center justify-between shadow-sm shrink-0">
         <div>
           <h2 className="text-xl font-bold text-slate-900 tracking-tight">Client Settings & Masters</h2>
-          <p className="text-xs text-slate-500 font-medium">Configuring Profile & Custom P&L Chart of Accounts for: <strong className="text-slate-900">{activeClient}</strong></p>
+          <p className="text-xs text-slate-500 font-medium">
+            Configuring Masters for: <strong className="text-slate-900 font-bold">{activeClient}</strong>
+          </p>
         </div>
 
         <div className="flex items-center gap-2">
@@ -381,6 +425,15 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
       {/* SUB-TABS */}
       <div className="px-8 pt-3 pb-0 flex items-center gap-6 border-b border-slate-200 bg-white shrink-0">
         <button
+          onClick={() => setSettingsTab("profile")}
+          className={`pb-3 text-xs font-bold transition flex items-center gap-2 border-b-2 ${
+            settingsTab === "profile" ? "border-slate-900 text-slate-900" : "border-transparent text-slate-400 hover:text-slate-600"
+          }`}
+        >
+          <Building2 className="w-4 h-4" /> Client Profile, Brand & Bank
+        </button>
+
+        <button
           onClick={() => setSettingsTab("coa")}
           className={`pb-3 text-xs font-bold transition flex items-center gap-2 border-b-2 ${
             settingsTab === "coa" ? "border-slate-900 text-slate-900" : "border-transparent text-slate-400 hover:text-slate-600"
@@ -391,20 +444,285 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
             {clientCoa.length}
           </span>
         </button>
-
-        <button
-          onClick={() => setSettingsTab("profile")}
-          className={`pb-3 text-xs font-bold transition flex items-center gap-2 border-b-2 ${
-            settingsTab === "profile" ? "border-slate-900 text-slate-900" : "border-transparent text-slate-400 hover:text-slate-600"
-          }`}
-        >
-          <Building2 className="w-4 h-4" /> Client Profile & Bank
-        </button>
       </div>
 
       <div className="p-8 max-w-5xl mx-auto w-full space-y-6">
 
-        {/* TAB 1: CHART OF ACCOUNTS */}
+        {/* TAB 1: COMPLETE RESTORED CLIENT PROFILE, BRANDING & BANK */}
+        {settingsTab === "profile" && (
+          <div className="space-y-6">
+
+            {/* BRANDING: LOGO & AUTHORIZED SIGNATURE */}
+            <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm space-y-4">
+              <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                <ImageIcon className="w-4 h-4 text-slate-600" /> Entity Branding & Signatures (For Invoices)
+              </h3>
+
+              <div className="grid grid-cols-2 gap-6 pt-2">
+                {/* COMPANY LOGO */}
+                <div className="border border-dashed border-slate-300 rounded-xl p-4 flex flex-col items-center justify-center text-center bg-slate-50/50">
+                  {currentForm.logoUrl ? (
+                    <div className="relative group mb-3">
+                      <img
+                        src={currentForm.logoUrl}
+                        alt="Company Logo"
+                        className="max-h-24 max-w-full object-contain rounded border border-slate-200 bg-white p-1"
+                      />
+                      <button
+                        onClick={() => setCurrentForm((p) => ({ ...p, logoUrl: "" }))}
+                        className="absolute -top-2 -right-2 bg-rose-600 text-white rounded-full p-1 shadow hover:bg-rose-700"
+                        title="Remove Logo"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="w-16 h-16 rounded-full bg-slate-100 flex items-center justify-center text-slate-400 mb-2">
+                      <ImageIcon className="w-7 h-7" />
+                    </div>
+                  )}
+
+                  <input
+                    type="file"
+                    ref={logoInputRef}
+                    onChange={(e) => handleImageUpload(e, "logoUrl")}
+                    accept="image/*"
+                    className="hidden"
+                  />
+                  <button
+                    onClick={() => logoInputRef.current?.click()}
+                    className="px-3 py-1.5 bg-white border border-slate-300 hover:border-slate-400 rounded-lg text-xs font-semibold text-slate-700 transition"
+                  >
+                    {currentForm.logoUrl ? "Replace Logo" : "Upload Company Logo"}
+                  </button>
+                  <p className="text-[10px] text-slate-400 mt-1">PNG, JPG up to 2MB (Prints on top of Tax Invoice)</p>
+                </div>
+
+                {/* AUTHORIZED SIGNATORY STAMP */}
+                <div className="border border-dashed border-slate-300 rounded-xl p-4 flex flex-col items-center justify-center text-center bg-slate-50/50">
+                  {currentForm.signatureUrl ? (
+                    <div className="relative group mb-3">
+                      <img
+                        src={currentForm.signatureUrl}
+                        alt="Signature"
+                        className="max-h-24 max-w-full object-contain rounded border border-slate-200 bg-white p-1"
+                      />
+                      <button
+                        onClick={() => setCurrentForm((p) => ({ ...p, signatureUrl: "" }))}
+                        className="absolute -top-2 -right-2 bg-rose-600 text-white rounded-full p-1 shadow hover:bg-rose-700"
+                        title="Remove Signature"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="w-16 h-16 rounded-full bg-slate-100 flex items-center justify-center text-slate-400 mb-2">
+                      <PenTool className="w-7 h-7" />
+                    </div>
+                  )}
+
+                  <input
+                    type="file"
+                    ref={signatureInputRef}
+                    onChange={(e) => handleImageUpload(e, "signatureUrl")}
+                    accept="image/*"
+                    className="hidden"
+                  />
+                  <button
+                    onClick={() => signatureInputRef.current?.click()}
+                    className="px-3 py-1.5 bg-white border border-slate-300 hover:border-slate-400 rounded-lg text-xs font-semibold text-slate-700 transition"
+                  >
+                    {currentForm.signatureUrl ? "Replace Signature" : "Upload Authorized Signatory"}
+                  </button>
+                  <p className="text-[10px] text-slate-400 mt-1">Digital signature/stamp image (Prints on bottom right)</p>
+                </div>
+              </div>
+            </div>
+
+            {/* LEGAL & STATUTORY IDENTIFIERS */}
+            <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm space-y-4">
+              <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                <Building2 className="w-4 h-4 text-slate-600" /> Legal Entity & Statutory Data
+              </h3>
+
+              <div className="grid grid-cols-3 gap-4">
+                <div className="col-span-2">
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Company / Legal Trade Name</label>
+                  <input
+                    type="text"
+                    value={currentForm.companyName}
+                    onChange={(e) => setCurrentForm({ ...currentForm, companyName: e.target.value })}
+                    className="w-full text-xs font-bold border border-slate-300 rounded-lg p-2"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">GSTIN</label>
+                  <input
+                    type="text"
+                    placeholder="24ABCDE1234F1Z5"
+                    value={currentForm.gstin}
+                    onChange={(e) => setCurrentForm({ ...currentForm, gstin: e.target.value.toUpperCase() })}
+                    className="w-full text-xs font-mono font-bold border border-slate-300 rounded-lg p-2"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">PAN Number</label>
+                  <input
+                    type="text"
+                    placeholder="ABCDE1234F"
+                    value={currentForm.pan}
+                    onChange={(e) => setCurrentForm({ ...currentForm, pan: e.target.value.toUpperCase() })}
+                    className="w-full text-xs font-mono font-bold border border-slate-300 rounded-lg p-2"
+                  />
+                </div>
+
+                <div className="col-span-2">
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Registered Business Address</label>
+                  <input
+                    type="text"
+                    placeholder="Complete Registered Office Address"
+                    value={currentForm.address}
+                    onChange={(e) => setCurrentForm({ ...currentForm, address: e.target.value })}
+                    className="w-full text-xs border border-slate-300 rounded-lg p-2"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* CONTACT & COMMUNICATION */}
+            <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm space-y-4">
+              <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                <UserCheck className="w-4 h-4 text-slate-600" /> Contact & Communication
+              </h3>
+
+              <div className="grid grid-cols-4 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Contact Person Name</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Managing Director"
+                    value={currentForm.contactPerson}
+                    onChange={(e) => setCurrentForm({ ...currentForm, contactPerson: e.target.value })}
+                    className="w-full text-xs border border-slate-300 rounded-lg p-2"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Contact Phone</label>
+                  <input
+                    type="text"
+                    placeholder="+91 98250 XXXXX"
+                    value={currentForm.phone}
+                    onChange={(e) => setCurrentForm({ ...currentForm, phone: e.target.value })}
+                    className="w-full text-xs border border-slate-300 rounded-lg p-2"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Email Address</label>
+                  <input
+                    type="email"
+                    placeholder="accounts@company.com"
+                    value={currentForm.email}
+                    onChange={(e) => setCurrentForm({ ...currentForm, email: e.target.value })}
+                    className="w-full text-xs border border-slate-300 rounded-lg p-2"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Official Website</label>
+                  <input
+                    type="text"
+                    placeholder="https://company.com"
+                    value={currentForm.website}
+                    onChange={(e) => setCurrentForm({ ...currentForm, website: e.target.value })}
+                    className="w-full text-xs border border-slate-300 rounded-lg p-2"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* PRIMARY SETTLEMENT BANK */}
+            <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm space-y-4">
+              <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                <CreditCard className="w-4 h-4 text-slate-600" /> Primary Settlement Bank (Prints on Tax Invoices)
+              </h3>
+
+              <div className="grid grid-cols-4 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Bank Name</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. HDFC Bank"
+                    value={currentForm.bankName}
+                    onChange={(e) => setCurrentForm({ ...currentForm, bankName: e.target.value })}
+                    className="w-full text-xs border border-slate-300 rounded-lg p-2"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Account Number</label>
+                  <input
+                    type="text"
+                    placeholder="502000XXXXXX"
+                    value={currentForm.accountNo}
+                    onChange={(e) => setCurrentForm({ ...currentForm, accountNo: e.target.value })}
+                    className="w-full text-xs font-mono font-bold border border-slate-300 rounded-lg p-2"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">IFSC Code</label>
+                  <input
+                    type="text"
+                    placeholder="HDFC0000006"
+                    value={currentForm.ifscCode}
+                    onChange={(e) => setCurrentForm({ ...currentForm, ifscCode: e.target.value.toUpperCase() })}
+                    className="w-full text-xs font-mono font-bold border border-slate-300 rounded-lg p-2"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Branch</label>
+                  <input
+                    type="text"
+                    placeholder="Branch name & City"
+                    value={currentForm.branch}
+                    onChange={(e) => setCurrentForm({ ...currentForm, branch: e.target.value })}
+                    className="w-full text-xs border border-slate-300 rounded-lg p-2"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* DEFAULT TERMS & CONDITIONS */}
+            <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm space-y-2">
+              <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+                Default Terms & Conditions (Prints on Invoices)
+              </h3>
+              <textarea
+                rows={4}
+                value={currentForm.terms}
+                onChange={(e) => setCurrentForm({ ...currentForm, terms: e.target.value })}
+                className="w-full text-xs font-mono border border-slate-300 rounded-lg p-3 text-slate-700"
+              />
+            </div>
+
+            <div className="flex justify-end">
+              <button
+                onClick={handleSaveProfile}
+                className="flex items-center gap-1.5 px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-bold transition shadow-md"
+              >
+                <Save className="w-4 h-4" /> Save Profile & Brand Masters
+              </button>
+            </div>
+
+          </div>
+        )}
+
+        {/* TAB 2: CHART OF ACCOUNTS & P&L GROUP MAPPING */}
         {settingsTab === "coa" && (
           <div className="space-y-6">
             
@@ -440,7 +758,7 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
                     onChange={(e) => setNewLedgerCategory(e.target.value)}
                     className="w-full text-xs border border-slate-300 rounded-lg p-2 bg-white font-medium"
                   >
-                    {DEFAULT_PL_CATEGORIES.map(cat => (
+                    {DEFAULT_PL_CATEGORIES.map((cat) => (
                       <option key={cat} value={cat}>{cat}</option>
                     ))}
                   </select>
@@ -459,8 +777,8 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
 
             {/* MAPPED LEDGERS LIST GROUPED BY P&L CATEGORY */}
             <div className="space-y-4">
-              {DEFAULT_PL_CATEGORIES.map(category => {
-                const ledgersInCategory = clientCoa.filter(l => l.category === category);
+              {DEFAULT_PL_CATEGORIES.map((category) => {
+                const ledgersInCategory = clientCoa.filter((l) => l.category === category);
 
                 return (
                   <div key={category} className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
@@ -478,7 +796,7 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
                       <p className="p-4 text-xs text-slate-400 italic">No custom ledgers under this schedule head.</p>
                     ) : (
                       <div className="divide-y divide-slate-100">
-                        {ledgersInCategory.map(item => (
+                        {ledgersInCategory.map((item) => (
                           <div key={item.id} className="px-5 py-2.5 flex items-center justify-between hover:bg-slate-50/50 transition">
                             <span className="text-xs font-semibold text-slate-800">{item.name}</span>
                             <button
@@ -497,90 +815,6 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
               })}
             </div>
 
-          </div>
-        )}
-
-        {/* TAB 2: PROFILE MANAGEMENT */}
-        {settingsTab === "profile" && (
-          <div className="space-y-6">
-            <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm space-y-4">
-              <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-                <Building2 className="w-4 h-4 text-slate-600" /> Legal Profile & Statutory Info
-              </h3>
-              <div className="grid grid-cols-3 gap-4">
-                <div className="col-span-2">
-                  <label className="block text-xs font-bold text-slate-700 mb-1">Company / Trade Name</label>
-                  <input
-                    type="text"
-                    value={currentForm.companyName}
-                    onChange={(e) => setCurrentForm({ ...currentForm, companyName: e.target.value })}
-                    className="w-full text-xs font-bold border border-slate-300 rounded-lg p-2"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">GSTIN</label>
-                  <input
-                    type="text"
-                    value={currentForm.gstin}
-                    onChange={(e) => setCurrentForm({ ...currentForm, gstin: e.target.value.toUpperCase() })}
-                    className="w-full text-xs font-mono font-bold border border-slate-300 rounded-lg p-2"
-                  />
-                </div>
-                <div className="col-span-3">
-                  <label className="block text-xs font-bold text-slate-700 mb-1">Registered Address</label>
-                  <input
-                    type="text"
-                    value={currentForm.address}
-                    onChange={(e) => setCurrentForm({ ...currentForm, address: e.target.value })}
-                    className="w-full text-xs border border-slate-300 rounded-lg p-2"
-                  />
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm space-y-4">
-              <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-                <CreditCard className="w-4 h-4 text-slate-600" /> Primary Settlement Bank
-              </h3>
-              <div className="grid grid-cols-4 gap-4">
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">Bank Name</label>
-                  <input
-                    type="text"
-                    value={currentForm.bankName}
-                    onChange={(e) => setCurrentForm({ ...currentForm, bankName: e.target.value })}
-                    className="w-full text-xs border border-slate-300 rounded-lg p-2"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">Account Number</label>
-                  <input
-                    type="text"
-                    value={currentForm.accountNo}
-                    onChange={(e) => setCurrentForm({ ...currentForm, accountNo: e.target.value })}
-                    className="w-full text-xs font-mono font-bold border border-slate-300 rounded-lg p-2"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">IFSC Code</label>
-                  <input
-                    type="text"
-                    value={currentForm.ifscCode}
-                    onChange={(e) => setCurrentForm({ ...currentForm, ifscCode: e.target.value.toUpperCase() })}
-                    className="w-full text-xs font-mono font-bold border border-slate-300 rounded-lg p-2"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">Branch</label>
-                  <input
-                    type="text"
-                    value={currentForm.branch}
-                    onChange={(e) => setCurrentForm({ ...currentForm, branch: e.target.value })}
-                    className="w-full text-xs border border-slate-300 rounded-lg p-2"
-                  />
-                </div>
-              </div>
-            </div>
           </div>
         )}
 
