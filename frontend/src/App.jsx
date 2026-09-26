@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { 
   Building2, 
   FileText, 
@@ -13,8 +13,44 @@ import SalesModule from "./SalesModule";
 import SettingsModule from "./SettingsModule";
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState("sales"); // Set to sales to view immediately
-  const [activeClient, setActiveClient] = useState("Panasuria Confectionery");
+  const [activeTab, setActiveTab] = useState("sales");
+
+  // Read available client profiles to populate client dropdown
+  const [clientList, setClientList] = useState(() => {
+    try {
+      const saved = localStorage.getItem("c4_client_profiles");
+      const parsed = saved ? Object.keys(JSON.parse(saved)) : [];
+      return parsed.length > 0 ? parsed : ["Panasuria Confectionery"];
+    } catch {
+      return ["Panasuria Confectionery"];
+    }
+  });
+
+  const [activeClient, setActiveClient] = useState(() => {
+    return clientList[0] || "Panasuria Confectionery";
+  });
+
+  // Keep dropdown synchronized whenever profiles are added/deleted in Settings
+  useEffect(() => {
+    const handleStorageChange = () => {
+      try {
+        const saved = localStorage.getItem("c4_client_profiles");
+        const parsed = saved ? Object.keys(JSON.parse(saved)) : [];
+        if (parsed.length > 0) {
+          setClientList(parsed);
+          if (!parsed.includes(activeClient)) {
+            setActiveClient(parsed[0]);
+          }
+        }
+      } catch {}
+    };
+    window.addEventListener("storage", handleStorageChange);
+    return () => window.removeEventListener("storage", handleStorageChange);
+  }, [activeClient]);
+
+  const handleClientSwitch = (newClientName) => {
+    setActiveClient(newClientName);
+  };
 
   return (
     <div className="flex h-screen bg-[#F8FAFC] text-slate-800 font-sans">
@@ -30,13 +66,24 @@ export default function App() {
           </div>
         </div>
 
+        {/* POINT 1: ACTIVE CLIENT SCROLL / SELECT DROPDOWN */}
         <div className="my-5 px-1">
           <label className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 block mb-1.5">
-            Active Client
+            Active Client Entity
           </label>
-          <div className="flex items-center gap-2 p-2.5 rounded-lg border border-slate-200 bg-slate-50 text-sm font-medium text-slate-700">
-            <Building2 className="w-4 h-4 text-slate-500 shrink-0" />
-            <span className="truncate">{activeClient}</span>
+          <div className="relative">
+            <select
+              value={activeClient}
+              onChange={(e) => handleClientSwitch(e.target.value)}
+              className="w-full appearance-none bg-slate-50 border border-slate-300 hover:border-slate-400 p-2.5 pr-8 rounded-lg text-xs font-bold text-slate-800 focus:outline-none focus:ring-1 focus:ring-slate-900 cursor-pointer transition truncate"
+            >
+              {clientList.map((clientName) => (
+                <option key={clientName} value={clientName}>
+                  {clientName}
+                </option>
+              ))}
+            </select>
+            <Building2 className="w-4 h-4 text-slate-400 absolute right-2.5 top-2.5 pointer-events-none" />
           </div>
         </div>
 
@@ -99,20 +146,28 @@ export default function App() {
         </div>
       </aside>
 
-      {/* DYNAMIC MODULE VIEW */}
-     <main className="flex-1 flex flex-col overflow-hidden">
-  {activeTab === "purchase" && <PurchaseModule activeClient={activeClient} />}
-  {activeTab === "bank" && <BankModule activeClient={activeClient} />}
-  {activeTab === "sales" && <SalesModule activeClient={activeClient} />}
-  {activeTab === "settings" && (
-    <SettingsModule activeClient={activeClient} setActiveClient={setActiveClient} />
-  )}
-  {activeTab === "dashboard" && (
-    <div className="flex-1 flex items-center justify-center text-slate-400">
-      <p className="text-sm">Dashboard Overview Ready for Integration</p>
-    </div>
-  )}
-</main>
+      {/* DYNAMIC MODULE VIEW (KEYED BY CLIENT FOR INSTANT CLEAN ISOLATION) */}
+      <main className="flex-1 flex flex-col overflow-hidden">
+        {activeTab === "purchase" && <PurchaseModule key={`purch_${activeClient}`} activeClient={activeClient} />}
+        {activeTab === "bank" && <BankModule key={`bank_${activeClient}`} activeClient={activeClient} />}
+        {activeTab === "sales" && <SalesModule key={`sales_${activeClient}`} activeClient={activeClient} />}
+        {activeTab === "settings" && (
+          <SettingsModule 
+            activeClient={activeClient} 
+            setActiveClient={(newClient) => {
+              setActiveClient(newClient);
+              const saved = localStorage.getItem("c4_client_profiles");
+              const parsed = saved ? Object.keys(JSON.parse(saved)) : [];
+              setClientList(parsed);
+            }} 
+          />
+        )}
+        {activeTab === "dashboard" && (
+          <div className="flex-1 flex items-center justify-center text-slate-400">
+            <p className="text-sm">Dashboard Overview Ready for Integration</p>
+          </div>
+        )}
+      </main>
     </div>
   );
 }
