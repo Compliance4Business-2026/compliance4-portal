@@ -72,23 +72,14 @@ export default function DashboardModule({ activeClient = "Panasuria Confectioner
 
   // --- OTHER EXPENSES CLASSIFICATION ---
   const expenseBreakdown = useMemo(() => {
-    const summary = {
-      "Employee Benefit Expenses": 0,
-      "Rent & Occupancy Costs": 0,
-      "Administrative & Professional Overheads": 0,
-      "Selling & Marketing Expenses": 0,
-      "Finance & Banking Charges": 0,
-      "Depreciation & Non-Cash Book Entries": 0
-    };
+    const summary = {};
     let expenseCgst = 0, expenseSgst = 0, expenseIgst = 0;
 
     otherExpenses.forEach((exp) => {
       const netCost = parseFloat(exp.taxableAmount) || 0;
-      if (summary[exp.group] !== undefined) {
-        summary[exp.group] += netCost;
-      } else {
-        summary["Administrative & Professional Overheads"] += netCost;
-      }
+      const ledgerName = exp.expenseLedger || "Other Indirect Overheads";
+      summary[ledgerName] = (summary[ledgerName] || 0) + netCost;
+
       expenseCgst += parseFloat(exp.cgst) || 0;
       expenseSgst += parseFloat(exp.sgst) || 0;
       expenseIgst += parseFloat(exp.igst) || 0;
@@ -97,7 +88,6 @@ export default function DashboardModule({ activeClient = "Panasuria Confectioner
     const totalIndirectOverheads = Object.values(summary).reduce((a, b) => a + b, 0);
     return { summary, totalIndirectOverheads, expenseCgst, expenseSgst, expenseIgst };
   }, [otherExpenses]);
-
   // Total Input Tax Credit (Purchases + Eligible Services)
   const grandTotalInputTax = 
     (totalInputCgstPurchases + expenseBreakdown.expenseCgst) +
