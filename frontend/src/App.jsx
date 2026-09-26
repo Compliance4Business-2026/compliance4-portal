@@ -145,7 +145,6 @@ export default function App() {
   <Layers className="w-4 h-4" />
   Other Expenses
 </button>
- 
         </nav>
 
         <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg flex items-center justify-between">
