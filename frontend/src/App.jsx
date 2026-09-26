@@ -5,19 +5,20 @@ import {
   CreditCard, 
   TrendingUp, 
   Settings, 
-  FileSpreadsheet 
+  FileSpreadsheet,
+  Layers
 } from "lucide-react";
 import BankModule from "./BankModule";
 import PurchaseModule from "./PurchaseModule";
 import SalesModule from "./SalesModule";
-import SettingsModule from "./SettingsModule";
-import DashboardModule from "./DashboardModule";
 import ExpenseModule from "./ExpenseModule";
+import DashboardModule from "./DashboardModule";
+import SettingsModule from "./SettingsModule";
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState("sales");
+  const [activeTab, setActiveTab] = useState("dashboard");
 
-  // Read available client profiles to populate client dropdown
+  // Read available client profiles
   const [clientList, setClientList] = useState(() => {
     try {
       const saved = localStorage.getItem("c4_client_profiles");
@@ -32,7 +33,6 @@ export default function App() {
     return clientList[0] || "Panasuria Confectionery";
   });
 
-  // Keep dropdown synchronized whenever profiles are added/deleted in Settings
   useEffect(() => {
     const handleStorageChange = () => {
       try {
@@ -68,7 +68,7 @@ export default function App() {
           </div>
         </div>
 
-        {/* POINT 1: ACTIVE CLIENT SCROLL / SELECT DROPDOWN */}
+        {/* ACTIVE CLIENT SCROLL / SELECT DROPDOWN */}
         <div className="my-5 px-1">
           <label className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 block mb-1.5">
             Active Client Entity
@@ -99,24 +99,7 @@ export default function App() {
             <TrendingUp className="w-4 h-4" />
             Dashboard
           </button>
-          <button
-            onClick={() => setActiveTab("purchase")}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition ${
-              activeTab === "purchase" ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100"
-            }`}
-          >
-            <FileText className="w-4 h-4" />
-            Purchases
-          </button>
-          <button
-            onClick={() => setActiveTab("bank")}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition ${
-              activeTab === "bank" ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100"
-            }`}
-          >
-            <CreditCard className="w-4 h-4" />
-            Banking
-          </button>
+
           <button
             onClick={() => setActiveTab("sales")}
             className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition ${
@@ -126,6 +109,37 @@ export default function App() {
             <FileSpreadsheet className="w-4 h-4" />
             Sales
           </button>
+
+          <button
+            onClick={() => setActiveTab("purchase")}
+            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition ${
+              activeTab === "purchase" ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100"
+            }`}
+          >
+            <FileText className="w-4 h-4" />
+            Purchases
+          </button>
+
+          <button
+            onClick={() => setActiveTab("expenses")}
+            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition ${
+              activeTab === "expenses" ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100"
+            }`}
+          >
+            <Layers className="w-4 h-4" />
+            Other Expenses
+          </button>
+
+          <button
+            onClick={() => setActiveTab("bank")}
+            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition ${
+              activeTab === "bank" ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100"
+            }`}
+          >
+            <CreditCard className="w-4 h-4" />
+            Banking
+          </button>
+
           <button
             onClick={() => setActiveTab("settings")}
             className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition ${
@@ -135,17 +149,8 @@ export default function App() {
             <Settings className="w-4 h-4" />
             Settings
           </button>
-          <button
-            <button
-  onClick={() => setActiveTab("expenses")}
-  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition ${
-    activeTab === "expenses" ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100"
-  }`}
->
-  <Layers className="w-4 h-4" />
-  Other Expenses
-</button>
         </nav>
+
         <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg flex items-center justify-between">
           <div className="flex items-center gap-2">
             <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse"></span>
@@ -157,25 +162,34 @@ export default function App() {
         </div>
       </aside>
 
-      {/* DYNAMIC MODULE VIEW (KEYED BY CLIENT FOR INSTANT CLEAN ISOLATION) */}
+      {/* DYNAMIC MODULE VIEW (ISOLATED PER CLIENT) */}
       <main className="flex-1 flex flex-col overflow-hidden">
-        {activeTab === "purchase" && <PurchaseModule key={`purch_${activeClient}`} activeClient={activeClient} />}
-        {activeTab === "bank" && <BankModule key={`bank_${activeClient}`} activeClient={activeClient} />}
-        {activeTab === "sales" && <SalesModule key={`sales_${activeClient}`} activeClient={activeClient} />}
+        {activeTab === "dashboard" && (
+          <DashboardModule key={`dash_${activeClient}`} activeClient={activeClient} />
+        )}
+        {activeTab === "sales" && (
+          <SalesModule key={`sales_${activeClient}`} activeClient={activeClient} />
+        )}
+        {activeTab === "purchase" && (
+          <PurchaseModule key={`purch_${activeClient}`} activeClient={activeClient} />
+        )}
+        {activeTab === "expenses" && (
+          <ExpenseModule key={`exp_${activeClient}`} activeClient={activeClient} />
+        )}
+        {activeTab === "bank" && (
+          <BankModule key={`bank_${activeClient}`} activeClient={activeClient} />
+        )}
         {activeTab === "settings" && (
-          <SettingsModule 
-            activeClient={activeClient} 
+          <SettingsModule
+            activeClient={activeClient}
             setActiveClient={(newClient) => {
               setActiveClient(newClient);
               const saved = localStorage.getItem("c4_client_profiles");
               const parsed = saved ? Object.keys(JSON.parse(saved)) : [];
               setClientList(parsed);
-            }} 
+            }}
           />
         )}
-        {activeTab === "dashboard" && (
-  <DashboardModule key={`dash_${activeClient}`} activeClient={activeClient} />
-)}
       </main>
     </div>
   );
