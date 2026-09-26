@@ -146,22 +146,23 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
     }
   });
 
-  const [vendorProfile, setVendorProfile] = useState(() => {
-    try {
-      const vp = localStorage.getItem("c4_vendor_profile");
-      return vp ? JSON.parse(vp) : {
-        companyName: "Panasuria Confectionery",
-        gstin: "24AABCP1234F1Z9",
-        address: "GF-14, Titanium City Center, Anandnagar Road, Prahladnagar, Ahmedabad - 380015",
-        phone: "+91 98250 12345",
-        email: "accounts@panasuria.com",
-        pan: "AABCP1234F",
-        bankName: "HDFC Bank",
-        accountNo: "50200080509922",
-        ifscCode: "HDFC0000006",
-        branch: "Prahladnagar Branch, Ahmedabad",
-        terms: "1. Subject to our home Jurisdiction.\n2. Our Responsibility Ceases as soon as goods leaves our Premises.\n3. Goods once sold will not be taken back.\n4. Delivery Ex-Premises."
-      };
+  const getActiveVendorProfile = () => {
+  try {
+    const profiles = JSON.parse(localStorage.getItem("c4_client_profiles") || "{}");
+    return profiles[activeClient] || {
+      companyName: activeClient,
+      gstin: "24AABCP1234F1Z9",
+      address: "",
+      phone: "",
+      email: "",
+      bankName: "HDFC Bank",
+      accountNo: "",
+      ifscCode: ""
+    };
+  } catch {
+    return { companyName: activeClient };
+  }
+};
     } catch {
       return {};
     }
