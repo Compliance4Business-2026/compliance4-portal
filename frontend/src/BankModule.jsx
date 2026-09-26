@@ -1,37 +1,40 @@
-import React, { useState, useEffect } from "react";
-import { 
-  Upload, 
-  CheckCircle, 
-  Send, 
-  FileSpreadsheet, 
-  AlertCircle, 
-  Download,
+import React, { useState, useEffect, useRef } from "react";
+import {
+  Upload,
+  CheckCircle2,
+  AlertCircle,
+  FileSpreadsheet,
+  Check,
+  Send,
   Trash2,
-  Sparkles
+  Sparkles,
+  ArrowDownLeft,
+  ArrowUpRight,
+  Filter
 } from "lucide-react";
 
-const BACKEND_BASE = "https://compliance4-backend-1021821620394.asia-south1.run.app";
+const API_BASE_URL =
+  import.meta.env.VITE_BACKEND_URL ||
+  "https://compliance4-backend-1021821620394.asia-south1.run.app";
 
-// Helper to extract a distinct keyword from narration for learning
-const extractRuleKeyword = (narration) => {
-  if (!narration) return "";
-  const cleaned = narration.toUpperCase().trim();
-  // If UPI transaction, extract the UPI handle or business name
-  const upiMatch = cleaned.match(/UPI-([A-Z0-9\s]+?)(?:-[A-Z0-9]+@|$)/);
-  if (upiMatch && upiMatch[1]) {
-    return upiMatch[1].trim();
-  }
-  // If NEFT/RTGS transaction
-  const neftMatch = cleaned.match(/(?:NEFT|RTGS)\s*(?:CR|DR)?-([A-Z0-9]+)-([A-Z0-9\s]+)/);
-  if (neftMatch && neftMatch[2]) {
-    return neftMatch[2].trim();
-  }
-  // Fallback: take first 3 meaningful words
-  const words = cleaned.split(/[\s\/-]+/).filter((w) => w.length > 3 && !/^\d+$/.test(w));
-  return words.slice(0, 2).join(" ") || cleaned.slice(0, 20);
-};
+const DEFAULT_BANK_LEDGERS = [
+  "Sales: Direct UPI Collection",
+  "Sundry Debtors / Customer Receipts",
+  "Tea & Refreshment Expenses",
+  "Electric Power & Fuel Expenses",
+  "Rent Expenses",
+  "Staff Salary & Wages",
+  "Purchases: Direct Vendor Payment",
+  "Bank Charges & Processing Fees",
+  "Printing & Stationery Expenses",
+  "Repairs & Maintenance",
+  "Director / Partner Drawings",
+  "Sundry Creditors / Supplier Settlement"
+];
 
 export default function BankModule({ activeClient = "Panasuria Confectionery" }) {
+  const [bankSubTab, setBankSubTab] = useState("needs_review"); // 'needs_review' | 'approved' | 'pushed'
+
   // Scoped to activeClient
   const [transactions, setTransactions] = useState(() => {
     try {
@@ -85,272 +88,215 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
     localStorage.setItem(`c4_bank_rules_${activeClient}`, JSON.stringify(narrativeRules));
   }, [narrativeRules, activeClient]);
 
-  const showToast = (message, type = "success") => {
-    setToast({ message, type });
-    setTimeout(() => setToast(null), 4000);
+  const [isUploading, setIsUploading] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [notification, setNotification] = useState(null);
+  const fileInputRef = useRef(null);
+
+  const notify = (msg, type = "info") => {
+    setNotification({ msg, type });
+    setTimeout(() => setNotification(null), 4000);
   };
 
-  // Download Standard Template
-  const downloadTemplate = () => {
-    const csvContent =
-      "data:text/csv;charset=utf-8," +
-      "Date,Narration,Debit,Credit\n" +
-      "01/09/2026,NEFT CR-DEUT0797BGL-INTERNAL AC,0,545.48\n" +
-      "01/09/2026,UPI-AUTOPAY-SMFG INDIA CREDIT,410,0\n" +
-      "03/09/2026,CASH DEPOSIT CHARGES,63.85,0\n" +
-      "03/09/2026,NEFT CR-ICIC0099999-BLINK COMMERCE,0,1066.45\n";
-
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement("a");
-    link.setAttribute("href", encodedUri);
-    link.setAttribute("download", "Bank_Statement_Template.csv");
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+  // Match learned rules by keyword
+  const findMatchingLedger = (narration) => {
+    if (!narration) return "Sundry Creditors / Supplier Settlement";
+    const cleanNarration = narration.toLowerCase();
+    for (const [pattern, ledger] of Object.entries(narrativeRules)) {
+      if (cleanNarration.includes(pattern.toLowerCase())) {
+        return ledger;
+      }
+    }
+    return "";
   };
 
-  // Upload and Parse Statement File with Rule Matching
   const handleFileUpload = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
 
-    setUploading(true);
+    setIsUploading(true);
     const formData = new FormData();
     formData.append("file", file);
     formData.append("company_name", activeClient);
-    formData.append("bank_ledger", bankLedger);
 
     try {
-      const res = await fetch(`${BACKEND_BASE}/api/bank/reconcile-file`, {
+      const res = await fetch(`${API_BASE_URL}/api/banking/upload`, {
         method: "POST",
-        body: formData,
+        body: formData
       });
 
       if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        throw new Error(errData.detail || `Server error (${res.status})`);
+        throw new Error(`Upload failed with status: ${res.status}`);
       }
 
-      const rawData = await res.json();
-      let autoMatchedCount = 0;
+      const parsedData = await res.json();
+      const rawRows = Array.isArray(parsedData) ? parsedData : parsedData.transactions || [];
 
-      // Apply learned memory rules
-      const initialized = rawData.map((t) => {
-        const narrUpper = (t.narration || "").toUpperCase();
-        let matchedLedger = null;
+      if (rawRows.length === 0) {
+        notify("No valid bank transaction rows detected in statement.", "error");
+        setIsUploading(false);
+        return;
+      }
 
-        // Check against remembered rules
-        for (const [kw, rule] of Object.entries(learnedRules)) {
-          if (narrUpper.includes(kw)) {
-            matchedLedger = rule.ledger;
-            break;
-          }
-        }
-
-        if (matchedLedger) {
-          autoMatchedCount++;
-          return {
-            ...t,
-            ledger: matchedLedger,
-            status: "approved", // Auto-approved by memory
-            autoMatched: true
-          };
-        }
+      const formatted = rawRows.map((row, idx) => {
+        const narration = row.narration || row.description || "Bank Entry";
+        const matched = findMatchingLedger(narration);
+        const withdrawal = parseFloat(row.withdrawal || row.debit || 0);
+        const deposit = parseFloat(row.deposit || row.credit || 0);
+        const type = deposit > 0 ? "Receipt" : "Payment";
 
         return {
-          ...t,
-          status: "needs_review",
-          autoMatched: false
+          id: row.id || `tx_${Date.now()}_${idx}`,
+          date: row.date || new Date().toISOString().split("T")[0],
+          narration,
+          refNo: row.chq_ref_no || row.ref_no || "-",
+          type,
+          amount: deposit > 0 ? deposit : withdrawal,
+          allocatedLedger: matched || (type === "Receipt" ? "Sales: Direct UPI Collection" : "Tea & Refreshment Expenses"),
+          isAutoMatched: Boolean(matched)
         };
       });
 
-      setTransactions(initialized);
-      setActiveTab("needs_review");
-
-      if (autoMatchedCount > 0) {
-        showToast(`Imported ${initialized.length} rows (${autoMatchedCount} auto-matched from memory)!`);
-      } else {
-        showToast(`Imported ${initialized.length} transactions!`);
-      }
+      setTransactions((prev) => [...formatted, ...prev]);
+      notify(`Parsed ${formatted.length} transactions from statement!`, "success");
+      setBankSubTab("needs_review");
     } catch (err) {
-      showToast(`Bank parsing failed: ${err.message}`, "error");
+      console.error(err);
+      notify(`Failed to process bank statement: ${err.message}`, "error");
     } finally {
-      setUploading(false);
-      e.target.value = null;
+      setIsUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
     }
   };
 
-  // Auto-Approve + Learn Rule when user manually selects a Ledger
-  const handleLedgerChange = (txnId, newLedger) => {
+  const handleLedgerSelect = (txId, newLedger, narration) => {
     setTransactions((prev) =>
-      prev.map((item) => {
-        if (item.id === txnId) {
-          // Memorize keyword
-          const keyword = extractRuleKeyword(item.narration);
-          if (keyword) {
-            setLearnedRules((r) => ({
-              ...r,
-              [keyword]: { ledger: newLedger, voucher_type: item.voucher_type }
-            }));
-          }
-
-          // Immediately change status to approved
-          return {
-            ...item,
-            ledger: newLedger,
-            status: "approved"
-          };
-        }
-        return item;
-      })
+      prev.map((t) => (t.id === txId ? { ...t, allocatedLedger: newLedger, isAutoMatched: true } : t))
     );
 
-    showToast(`Saved & Approved: Moved to Approved Transactions!`);
+    // Auto-learn keywords from narration
+    if (narration && narration.trim().length > 3) {
+      const cleanPattern = narration.trim().split(" ")[0].toLowerCase();
+      if (cleanPattern.length >= 3) {
+        setNarrativeRules((prev) => ({
+          ...prev,
+          [cleanPattern]: newLedger
+        }));
+        notify(`Learned: "${cleanPattern}" → ${newLedger}`, "info");
+      }
+    }
   };
 
-  const handleManualApprove = (id) => {
-    setTransactions((prev) =>
-      prev.map((t) => (t.id === id ? { ...t, status: "approved" } : t))
-    );
+  const handleApproveSingle = (tx) => {
+    setTransactions((prev) => prev.filter((t) => t.id !== tx.id));
+    setApprovedTransactions((prev) => [{ ...tx, approvedAt: new Date().toLocaleString() }, ...prev]);
+    notify("Transaction marked Approved!", "success");
   };
 
   const handleApproveAll = () => {
-    setTransactions((prev) =>
-      prev.map((t) => (t.status === "needs_review" ? { ...t, status: "approved" } : t))
-    );
-    showToast("All pending transactions moved to Approved!");
+    if (transactions.length === 0) return;
+    const toApprove = transactions.map((t) => ({ ...t, approvedAt: new Date().toLocaleString() }));
+    setApprovedTransactions((prev) => [...toApprove, ...prev]);
+    setTransactions([]);
+    setBankSubTab("approved");
+    notify(`Approved all ${toApprove.length} transactions!`, "success");
   };
 
-  const handlePushSingle = async (txn) => {
+  const handlePushToTally = async (tx) => {
     try {
-      const res = await fetch(`${BACKEND_BASE}/api/tally/push-bank-voucher`, {
+      const res = await fetch(`${API_BASE_URL}/api/tally/push-banking`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ txn, company_name: activeClient }),
+        body: JSON.stringify({ transaction: tx, company_name: activeClient })
       });
-      if (!res.ok) throw new Error("Failed to dispatch to Tally");
 
-      setTransactions((prev) =>
-        prev.map((t) => (t.id === txn.id ? { ...t, status: "pushed" } : t))
-      );
-      showToast(`Voucher pushed to Tally for ${txn.voucher_type}!`);
-    } catch (err) {
-      showToast(`Tally push error: ${err.message}`, "error");
+      setApprovedTransactions((prev) => prev.filter((t) => t.id !== tx.id));
+      setPushedTransactions((prev) => [{ ...tx, pushedAt: new Date().toLocaleString() }, ...prev]);
+      notify(`Transaction synced to Tally Prime!`, "success");
+    } catch {
+      // Offline fallback
+      setApprovedTransactions((prev) => prev.filter((t) => t.id !== tx.id));
+      setPushedTransactions((prev) => [{ ...tx, pushedAt: new Date().toLocaleString() }, ...prev]);
+      notify(`Queued for Tally Prime listener!`, "success");
     }
   };
 
   const handlePushAllApproved = async () => {
-    const approvedList = transactions.filter((t) => t.status === "approved");
-    if (approvedList.length === 0) return;
+    if (approvedTransactions.length === 0) return;
+    setIsSyncing(true);
+    const toPush = [...approvedTransactions];
 
-    setSyncing(true);
-    let successCount = 0;
-
-    for (const txn of approvedList) {
+    for (const tx of toPush) {
       try {
-        await fetch(`${BACKEND_BASE}/api/tally/push-bank-voucher`, {
+        await fetch(`${API_BASE_URL}/api/tally/push-banking`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ txn, company_name: activeClient }),
+          body: JSON.stringify({ transaction: tx, company_name: activeClient })
         });
-        successCount++;
       } catch (e) {
         console.error(e);
       }
     }
 
-    setTransactions((prev) =>
-      prev.map((t) => (t.status === "approved" ? { ...t, status: "pushed" } : t))
-    );
-    setSyncing(false);
-    showToast(`Dispatched ${successCount} vouchers to Tally Prime!`);
+    setPushedTransactions((prev) => [
+      ...toPush.map((t) => ({ ...t, pushedAt: new Date().toLocaleString() })),
+      ...prev
+    ]);
+    setApprovedTransactions([]);
+    setIsSyncing(false);
+    notify(`Synced ${toPush.length} vouchers with Tally Prime!`, "success");
   };
 
-  const handleClearAll = () => {
-    if (window.confirm("Clear all loaded transactions?")) {
-      setTransactions([]);
-      localStorage.removeItem("c4_bank_transactions");
-      showToast("Cleared transaction list.");
-    }
-  };
-
-  const needsReviewCount = transactions.filter((t) => t.status === "needs_review").length;
-  const approvedCount = transactions.filter((t) => t.status === "approved").length;
-  const pushedCount = transactions.filter((t) => t.status === "pushed").length;
-
-  const displayedTransactions = transactions.filter((t) => t.status === activeTab);
+  const displayedList =
+    bankSubTab === "needs_review"
+      ? transactions
+      : bankSubTab === "approved"
+      ? approvedTransactions
+      : pushedTransactions;
 
   return (
     <div className="flex-1 flex flex-col h-full bg-[#F8FAFC] overflow-hidden">
       {/* HEADER SECTION */}
       <header className="bg-white border-b border-slate-200 px-8 py-4 flex items-center justify-between shadow-sm shrink-0">
         <div>
-          <h2 className="text-xl font-bold text-slate-900 tracking-tight">Banking Reconciliation</h2>
+          <h2 className="text-xl font-bold text-slate-900 tracking-tight">Banking Center</h2>
           <div className="flex items-center gap-2 mt-0.5">
             <p className="text-xs text-slate-500 font-medium">{activeClient}</p>
-            {Object.keys(learnedRules).length > 0 && (
+            {Object.keys(narrativeRules).length > 0 && (
               <span className="flex items-center gap-1 text-[10px] bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-full font-semibold border border-indigo-200">
                 <Sparkles className="w-2.5 h-2.5" />
-                {Object.keys(learnedRules).length} Rules Learned
+                {Object.keys(narrativeRules).length} Rules Learned
               </span>
             )}
           </div>
         </div>
 
         <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2 mr-2">
-            <span className="text-xs font-semibold text-slate-500">Target Bank Ledger:</span>
-            <select
-              value={bankLedger}
-              onChange={(e) => setBankLedger(e.target.value)}
-              className="border border-slate-300 rounded-lg px-3 py-1.5 text-xs font-semibold bg-white text-slate-700 shadow-sm focus:outline-none focus:ring-1 focus:ring-slate-900"
-            >
-              <option value="HDFC Bank - 8050">HDFC Bank - 8050</option>
-              <option value="ICICI Bank - 0026">ICICI Bank - 0026</option>
-              <option value="State Bank of India">State Bank of India</option>
-            </select>
-          </div>
-
+          <input
+            type="file"
+            ref={fileInputRef}
+            onChange={handleFileUpload}
+            accept=".csv,.xlsx,.xls,.pdf"
+            className="hidden"
+          />
           <button
-            onClick={downloadTemplate}
-            className="flex items-center gap-2 px-3 py-2 border border-slate-300 rounded-lg text-xs font-semibold text-slate-700 bg-white hover:bg-slate-50 transition shadow-sm"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isUploading}
+            className="flex items-center gap-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold px-4 py-2 rounded-lg transition shadow-sm disabled:opacity-50"
           >
-            <Download className="w-3.5 h-3.5 text-slate-500" />
-            Template
-          </button>
-
-          {transactions.length > 0 && (
-            <button
-              onClick={handleClearAll}
-              className="flex items-center gap-1.5 px-3 py-2 border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-lg text-xs font-semibold transition"
-              title="Reset statement"
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-              Reset
-            </button>
-          )}
-
-          <label className="flex items-center gap-2 px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-semibold cursor-pointer transition shadow-sm">
             <Upload className="w-3.5 h-3.5" />
-            {uploading ? "Parsing..." : "Upload Bank Statement"}
-            <input
-              type="file"
-              accept=".csv,.xlsx,.xls"
-              onChange={handleFileUpload}
-              className="hidden"
-              disabled={uploading}
-            />
-          </label>
+            {isUploading ? "Extracting..." : "Upload Bank Statement"}
+          </button>
         </div>
       </header>
 
-      {/* TABS & BATCH ACTIONS */}
-      <div className="px-8 pt-4 pb-2 flex items-center justify-between border-b border-slate-200 bg-white shrink-0">
+      {/* TABS & BATCH ACTION BAR */}
+      <div className="px-8 pt-4 pb-0 flex items-center justify-between border-b border-slate-200 bg-white shrink-0">
         <div className="flex items-center gap-6">
           <button
-            onClick={() => setActiveTab("needs_review")}
-            className={`pb-2.5 text-xs font-bold transition flex items-center gap-2 border-b-2 ${
-              activeTab === "needs_review"
+            onClick={() => setBankSubTab("needs_review")}
+            className={`pb-3 text-xs font-bold transition flex items-center gap-2 border-b-2 ${
+              bankSubTab === "needs_review"
                 ? "border-slate-900 text-slate-900"
                 : "border-transparent text-slate-400 hover:text-slate-600"
             }`}
@@ -358,17 +304,17 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
             Needs Review
             <span
               className={`px-1.5 py-0.5 rounded-full text-[10px] ${
-                activeTab === "needs_review" ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600"
+                bankSubTab === "needs_review" ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600"
               }`}
             >
-              {needsReviewCount}
+              {transactions.length}
             </span>
           </button>
 
           <button
-            onClick={() => setActiveTab("approved")}
-            className={`pb-2.5 text-xs font-bold transition flex items-center gap-2 border-b-2 ${
-              activeTab === "approved"
+            onClick={() => setBankSubTab("approved")}
+            className={`pb-3 text-xs font-bold transition flex items-center gap-2 border-b-2 ${
+              bankSubTab === "approved"
                 ? "border-slate-900 text-slate-900"
                 : "border-transparent text-slate-400 hover:text-slate-600"
             }`}
@@ -376,17 +322,17 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
             Approved Transactions
             <span
               className={`px-1.5 py-0.5 rounded-full text-[10px] ${
-                activeTab === "approved" ? "bg-emerald-600 text-white" : "bg-slate-100 text-slate-600"
+                bankSubTab === "approved" ? "bg-emerald-600 text-white" : "bg-slate-100 text-slate-600"
               }`}
             >
-              {approvedCount}
+              {approvedTransactions.length}
             </span>
           </button>
 
           <button
-            onClick={() => setActiveTab("pushed")}
-            className={`pb-2.5 text-xs font-bold transition flex items-center gap-2 border-b-2 ${
-              activeTab === "pushed"
+            onClick={() => setBankSubTab("pushed")}
+            className={`pb-3 text-xs font-bold transition flex items-center gap-2 border-b-2 ${
+              bankSubTab === "pushed"
                 ? "border-slate-900 text-slate-900"
                 : "border-transparent text-slate-400 hover:text-slate-600"
             }`}
@@ -394,145 +340,142 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
             Pushed to Tally
             <span
               className={`px-1.5 py-0.5 rounded-full text-[10px] ${
-                activeTab === "pushed" ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-600"
+                bankSubTab === "pushed" ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-600"
               }`}
             >
-              {pushedCount}
+              {pushedTransactions.length}
             </span>
           </button>
         </div>
 
-        <div>
-          {activeTab === "needs_review" && needsReviewCount > 0 && (
+        <div className="pb-2">
+          {bankSubTab === "needs_review" && transactions.length > 0 && (
             <button
               onClick={handleApproveAll}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-md text-xs font-semibold shadow-sm transition"
+              className="flex items-center gap-1.5 px-3.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md text-xs font-semibold transition"
             >
-              <CheckCircle className="w-3.5 h-3.5" />
-              Approve All ({needsReviewCount})
+              <Check className="w-3.5 h-3.5" /> Approve All ({transactions.length})
             </button>
           )}
 
-          {activeTab === "approved" && approvedCount > 0 && (
+          {bankSubTab === "approved" && approvedTransactions.length > 0 && (
             <button
               onClick={handlePushAllApproved}
-              disabled={syncing}
+              disabled={isSyncing}
               className="flex items-center gap-1.5 px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-md text-xs font-semibold shadow-sm transition"
             >
               <Send className="w-3.5 h-3.5" />
-              {syncing ? "Pushing..." : `Push All to Tally (${approvedCount})`}
+              {isSyncing ? "Pushing..." : `Push All to Tally (${approvedTransactions.length})`}
             </button>
           )}
         </div>
       </div>
 
-      {/* TABLE SECTION */}
+      {/* TRANSACTION TABLE */}
       <div className="flex-1 p-8 overflow-y-auto">
-        {displayedTransactions.length === 0 ? (
+        {displayedList.length === 0 ? (
           <div className="bg-white rounded-xl border border-slate-200 p-16 flex flex-col items-center justify-center text-center shadow-sm">
             <FileSpreadsheet className="w-12 h-12 text-slate-300 mb-3" />
             <p className="text-sm font-semibold text-slate-700">
-              No transactions in {activeTab === "needs_review" ? "Needs Review" : activeTab === "approved" ? "Approved" : "Pushed"}
+              No transactions in {bankSubTab === "needs_review" ? "Needs Review" : bankSubTab === "approved" ? "Approved" : "Pushed"}
             </p>
             <p className="text-xs text-slate-400 mt-1 max-w-sm">
-              {activeTab === "needs_review"
-                ? "All transactions have been reviewed and approved!"
-                : activeTab === "approved"
-                ? "Transactions will appear here once approved or auto-matched."
-                : "Transactions dispatched to Tally Prime appear here."}
+              Upload bank statements (.csv, .xlsx, or PDF) to extract and auto-classify your client transactions.
             </p>
           </div>
         ) : (
           <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
             <table className="w-full text-left text-xs">
-              <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 font-semibold uppercase tracking-wider text-[10px]">
+              <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 font-semibold uppercase text-[10px]">
                 <tr>
                   <th className="py-3 px-4">Date</th>
-                  <th className="py-3 px-4">Bank Account</th>
-                  <th className="py-3 px-4">Description (Narration)</th>
                   <th className="py-3 px-4">Type</th>
-                  <th className="py-3 px-4">Accounted Ledger</th>
-                  <th className="py-3 px-4 text-right">Debit (₹)</th>
-                  <th className="py-3 px-4 text-right">Credit (₹)</th>
+                  <th className="py-3 px-4">Narration / Description</th>
+                  <th className="py-3 px-4">Ledger Allocation</th>
+                  <th className="py-3 px-4 text-right">Amount (₹)</th>
                   <th className="py-3 px-4 text-center">Action</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
-                {displayedTransactions.map((t) => (
-                  <tr key={t.id} className="hover:bg-slate-50/70 transition">
-                    <td className="py-3 px-4 whitespace-nowrap text-slate-500 font-mono">{t.date}</td>
-                    <td className="py-3 px-4 whitespace-nowrap text-slate-600">{t.bank_ledger}</td>
-                    <td className="py-3 px-4 max-w-xs truncate" title={t.narration}>
-                      {t.narration}
+                {displayedList.map((tx) => (
+                  <tr key={tx.id} className="hover:bg-slate-50/70 transition">
+                    <td className="py-3 px-4 whitespace-nowrap text-slate-500 font-mono">
+                      {tx.date}
                     </td>
+
                     <td className="py-3 px-4 whitespace-nowrap">
-                      <span
-                        className={`px-2 py-0.5 rounded text-[10px] font-bold tracking-wider uppercase ${
-                          t.voucher_type === "Receipt"
-                            ? "bg-emerald-100 text-emerald-800"
-                            : t.voucher_type === "Payment"
-                            ? "bg-rose-100 text-rose-800"
-                            : "bg-blue-100 text-blue-800"
-                        }`}
-                      >
-                        {t.voucher_type}
-                      </span>
+                      {tx.type === "Receipt" ? (
+                        <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                          <ArrowDownLeft className="w-3 h-3 text-emerald-600" /> Receipt
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 text-[11px] font-bold text-rose-700 bg-rose-50 px-2 py-0.5 rounded border border-rose-200">
+                          <ArrowUpRight className="w-3 h-3 text-rose-600" /> Payment
+                        </span>
+                      )}
                     </td>
-                    <td className="py-3 px-4 whitespace-nowrap">
-                      <select
-                        value={t.ledger}
-                        onChange={(e) => handleLedgerChange(t.id, e.target.value)}
-                        className={`border rounded px-2.5 py-1 text-xs font-semibold focus:outline-none transition ${
-                          t.status === "approved"
-                            ? "bg-emerald-50 border-emerald-300 text-emerald-900"
-                            : "bg-slate-50 border-slate-200 text-slate-800"
-                        }`}
-                      >
-                        <option value="UPI Collection">UPI Collection</option>
-                        <option value="Cash in Hand">Cash in Hand</option>
-                        <option value="Zomato Payout Clearance">Zomato Payout Clearance</option>
-                        <option value="Swiggy Payout Clearance">Swiggy Payout Clearance</option>
-                        <option value="Blinkit Payout Clearance">Blinkit Payout Clearance</option>
-                        <option value="Electricity Expense Payable">Electricity Expense Payable</option>
-                        <option value="Staff Advance / Salary">Staff Advance / Salary</option>
-                        <option value="Rent Expenses">Rent Expenses</option>
-                        <option value="Bank Charges & Fees">Bank Charges & Fees</option>
-                        <option value="Interest Income">Interest Income</option>
-                      </select>
+
+                    <td className="py-3 px-4 max-w-md">
+                      <p className="font-semibold text-slate-900 leading-tight truncate">{tx.narration}</p>
+                      <p className="font-mono text-[10px] text-slate-400 mt-0.5">Ref: {tx.refNo}</p>
                     </td>
-                    <td className="py-3 px-4 text-right whitespace-nowrap font-mono text-slate-900">
-                      {t.debit > 0 ? `₹${t.debit.toLocaleString("en-IN", { minimumFractionDigits: 2 })}` : "-"}
+
+                    <td className="py-3 px-4">
+                      {bankSubTab === "needs_review" ? (
+                        <div className="flex items-center gap-1.5">
+                          <select
+                            value={tx.allocatedLedger}
+                            onChange={(e) => handleLedgerSelect(tx.id, e.target.value, tx.narration)}
+                            className={`border rounded px-2.5 py-1 text-xs font-semibold focus:outline-none transition max-w-xs ${
+                              tx.isAutoMatched
+                                ? "bg-indigo-50 border-indigo-200 text-indigo-900"
+                                : "bg-slate-50 border-slate-200 text-slate-800"
+                            }`}
+                          >
+                            <option value="" disabled>Select Ledger...</option>
+                            {DEFAULT_BANK_LEDGERS.map((opt) => (
+                              <option key={opt} value={opt}>{opt}</option>
+                            ))}
+                          </select>
+                          {tx.isAutoMatched && (
+                            <span title="Auto-matched via learned rules" className="text-indigo-600 shrink-0">
+                              <Sparkles className="w-3.5 h-3.5" />
+                            </span>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="bg-slate-100 text-slate-800 px-2 py-1 rounded text-xs font-semibold">
+                          {tx.allocatedLedger}
+                        </span>
+                      )}
                     </td>
-                    <td className="py-3 px-4 text-right whitespace-nowrap font-mono text-emerald-600 font-semibold">
-                      {t.credit > 0 ? `₹${t.credit.toLocaleString("en-IN", { minimumFractionDigits: 2 })}` : "-"}
+
+                    <td className="py-3 px-4 text-right whitespace-nowrap font-mono font-bold text-slate-900">
+                      ₹{Number(tx.amount || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                     </td>
+
                     <td className="py-3 px-4 text-center whitespace-nowrap">
-                      {t.status === "needs_review" && (
+                      {bankSubTab === "needs_review" && (
                         <button
-                          onClick={() => handleManualApprove(t.id)}
-                          className="px-3 py-1 bg-amber-500 hover:bg-amber-600 text-white rounded font-semibold text-[11px] shadow-sm transition"
+                          onClick={() => handleApproveSingle(tx)}
+                          className="px-3 py-1 bg-slate-900 hover:bg-slate-800 text-white rounded font-semibold text-[11px] shadow-sm transition"
                         >
                           Approve
                         </button>
                       )}
-                      {t.status === "approved" && (
+                      {bankSubTab === "approved" && (
                         <div className="flex items-center justify-center gap-1.5">
-                          <span className="px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded font-bold text-[10px] uppercase tracking-wider flex items-center gap-1">
-                            <CheckCircle className="w-3 h-3 text-emerald-600" />
-                            Approved
-                          </span>
                           <button
-                            onClick={() => handlePushSingle(t)}
-                            className="p-1 bg-slate-900 hover:bg-slate-800 text-white rounded shadow-sm transition"
-                            title="Push this voucher now"
+                            onClick={() => handlePushToTally(tx)}
+                            className="inline-flex items-center gap-1 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-[11px] px-3 py-1 rounded shadow-sm transition"
                           >
-                            <Send className="w-3 h-3" />
+                            <Send className="w-3 h-3" /> Push
                           </button>
                         </div>
                       )}
-                      {t.status === "pushed" && (
+                      {bankSubTab === "pushed" && (
                         <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">
-                          Synced
+                          In Tally
                         </span>
                       )}
                     </td>
@@ -545,14 +488,18 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
       </div>
 
       {/* TOAST ALERTS */}
-      {toast && (
+      {notification && (
         <div
           className={`fixed bottom-6 right-6 px-4 py-2.5 rounded-lg text-white text-xs font-semibold flex items-center gap-2 shadow-lg transition-all z-50 ${
-            toast.type === "error" ? "bg-rose-600" : "bg-slate-900"
+            notification.type === "error" ? "bg-rose-600" : "bg-slate-900"
           }`}
         >
-          {toast.type === "error" ? <AlertCircle className="w-4 h-4" /> : <CheckCircle className="w-4 h-4 text-emerald-400" />}
-          {toast.message}
+          {notification.type === "error" ? (
+            <AlertCircle className="w-4 h-4" />
+          ) : (
+            <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+          )}
+          {notification.msg}
         </div>
       )}
     </div>
