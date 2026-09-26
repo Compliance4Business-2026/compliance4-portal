@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect } from "react";
 import { 
   Plus, 
   Trash2, 
@@ -6,26 +6,15 @@ import {
   CheckCircle2, 
   FileText, 
   AlertCircle, 
-  Building, 
-  Calendar, 
-  Hash, 
   ShieldCheck, 
   ShieldAlert, 
-  Download, 
   Printer,
   FileSpreadsheet,
   X,
-  Search,
   UserPlus,
   PackagePlus,
-  Percent,
-  Truck,
-  Image as ImageIcon
+  Percent
 } from "lucide-react";
-
-const API_BASE_URL = 
-  import.meta.env.VITE_BACKEND_URL || 
-  "https://compliance4-backend-1021821620394.asia-south1.run.app";
 
 const GST_STATE_CODES = {
   "01": "Jammu & Kashmir", "02": "Himachal Pradesh", "03": "Punjab", "04": "Chandigarh",
@@ -88,10 +77,9 @@ function validateGSTIN(gstin) {
 }
 
 export default function SalesModule({ activeClient = "Panasuria Confectionery" }) {
-  const [activeCategory, setActiveCategory] = useState("normal_sales"); // 'normal_sales' | 'pos_sales'
-  const [salesSubTab, setSalesSubTab] = useState("create"); // 'create' | 'invoices'
+  const [activeCategory, setActiveCategory] = useState("normal_sales");
+  const [salesSubTab, setSalesSubTab] = useState("create");
 
-  // Persistent Stores
   const [savedInvoices, setSavedInvoices] = useState(() => {
     try {
       const s = localStorage.getItem("c4_normal_sales_invoices");
@@ -104,20 +92,7 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
   const [customers, setCustomers] = useState(() => {
     try {
       const c = localStorage.getItem("c4_customers");
-      return c ? JSON.parse(c) : [
-        {
-          id: "cust_1",
-          name: "Taj Skyline Ahmedabad",
-          gstin: "24AAACT2727Q1ZB",
-          address: "Sindhu Bhavan Road, Bodakdev",
-          pincode: "380054",
-          state: "Gujarat",
-          country: "India",
-          phone: "9876543210",
-          email: "procurement@tajhotels.com",
-          discountPercent: 10
-        }
-      ];
+      return c ? JSON.parse(c) : [];
     } catch {
       return [];
     }
@@ -136,7 +111,6 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
     }
   });
 
-  // Vendor Bank & Business Profile Setup
   const [vendorProfile, setVendorProfile] = useState(() => {
     try {
       const vp = localStorage.getItem("c4_vendor_profile");
@@ -177,20 +151,19 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
   const [notification, setNotification] = useState(null);
   const [isPushing, setIsPushing] = useState(false);
 
-  // Modals
   const [showAddCustomerModal, setShowAddCustomerModal] = useState(false);
   const [showAddItemModal, setShowAddItemModal] = useState(false);
   const [showPrintModal, setShowPrintModal] = useState(false);
   const [selectedInvoiceForPrint, setSelectedInvoiceForPrint] = useState(null);
 
-  // Invoice Form State
-  const [invoiceType, setInvoiceType] = useState("Tax Invoice"); // 'Tax Invoice' | 'Bill of Supply' | 'Export Invoice'
+  const [invoiceType, setInvoiceType] = useState("Tax Invoice");
   const [lutNumber, setLutNumber] = useState("AD240326001290U");
   const [hasConsignee, setHasConsignee] = useState(false);
 
   const [invoiceHeader, setInvoiceHeader] = useState({
     invoiceNumber: `PC/26-27/${String(savedInvoices.length + 1).padStart(3, "0")}`,
     invoiceDate: new Date().toISOString().split("T")[0],
+    poNumber: "",
     customerId: "",
     customerName: "",
     customerGstin: "",
@@ -219,7 +192,6 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
 
   const [roundOff, setRoundOff] = useState(0.00);
 
-  // New Customer Modal Form State
   const [newCust, setNewCust] = useState({
     gstin: "",
     name: "",
@@ -232,7 +204,6 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
     discountPercent: 0
   });
 
-  // New Catalog Item Modal Form State
   const [newItem, setNewItem] = useState({
     itemName: "",
     hsnCode: "1905",
@@ -247,7 +218,6 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
     setTimeout(() => setNotification(null), 4500);
   };
 
-  // Autocomplete GSTIN on Customer Add
   const handleCustGstinChange = (val) => {
     const cleanGst = val.toUpperCase().trim();
     const check = validateGSTIN(cleanGst);
@@ -263,27 +233,13 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
       notify("Customer Name is required", "error");
       return;
     }
-    const created = {
-      ...newCust,
-      id: `cust_${Date.now()}`
-    };
+    const created = { ...newCust, id: `cust_${Date.now()}` };
     setCustomers(prev => [created, ...prev]);
     setShowAddCustomerModal(false);
-    
-    // Auto-select on active form
     selectCustomer(created);
     notify(`Customer "${created.name}" created!`, "success");
-
     setNewCust({
-      gstin: "",
-      name: "",
-      address: "",
-      pincode: "",
-      state: "Gujarat",
-      country: "India",
-      phone: "",
-      email: "",
-      discountPercent: 0
+      gstin: "", name: "", address: "", pincode: "", state: "Gujarat", country: "India", phone: "", email: "", discountPercent: 0
     });
   };
 
@@ -300,13 +256,11 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
       discountPercent: parseFloat(c.discountPercent) || 0
     }));
 
-    // Auto-apply customer-specific discount to existing lines
     if (parseFloat(c.discountPercent) > 0) {
       setLines(prev => prev.map(l => ({ ...l, discountPercent: parseFloat(c.discountPercent) })));
     }
   };
 
-  // Bidirectional Pricing for New Item Modal
   const handlePriceExclChange = (val, taxRate) => {
     const excl = parseFloat(val) || 0;
     const incl = excl + (excl * (parseFloat(taxRate) || 0)) / 100;
@@ -325,14 +279,9 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
       notify("Item Name is required", "error");
       return;
     }
-    const created = {
-      ...newItem,
-      id: `item_${Date.now()}`
-    };
+    const created = { ...newItem, id: `item_${Date.now()}` };
     setItemCatalog(prev => [created, ...prev]);
     setShowAddItemModal(false);
-
-    // Append to current invoice lines
     setLines(prev => [
       ...prev,
       {
@@ -350,7 +299,6 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
     setNewItem({ itemName: "", hsnCode: "1905", uom: "Boxes", taxRate: 5, priceExcl: 0, priceIncl: 0 });
   };
 
-  // Line Item Calculations
   const isInterstate = !invoiceHeader.placeOfSupply.toLowerCase().includes("gujarat") &&
                       !invoiceHeader.placeOfSupply.startsWith("24");
 
@@ -383,7 +331,6 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
   const totalIgst = computedItems.reduce((acc, it) => acc + it.igst, 0);
   const grandTotal = totalTaxable + totalCgst + totalSgst + totalIgst + (parseFloat(roundOff) || 0);
 
-  // Line Handlers
   const handleAddLine = () => {
     setLines(prev => [
       ...prev,
@@ -428,7 +375,6 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
     }
   };
 
-  // Save Final Invoice
   const handleSaveInvoice = () => {
     if (!invoiceHeader.customerName.trim()) {
       notify("Customer Name is required", "error");
@@ -440,6 +386,7 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
       invoiceType,
       lutNumber: invoiceType === "Export Invoice" ? lutNumber : "",
       invoiceNumber: invoiceHeader.invoiceNumber,
+      poNumber: invoiceHeader.poNumber || "",
       invoiceDate: invoiceHeader.invoiceDate,
       customerName: invoiceHeader.customerName,
       customerGstin: invoiceHeader.customerGstin,
@@ -468,14 +415,13 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
     setSavedInvoices(prev => [newInv, ...prev]);
     notify(`Invoice #${invoiceHeader.invoiceNumber} recorded successfully!`, "success");
 
-    // Open print preview directly
     setSelectedInvoiceForPrint(newInv);
     setShowPrintModal(true);
 
-    // Reset for next
     setInvoiceHeader({
       invoiceNumber: `PC/26-27/${String(savedInvoices.length + 2).padStart(3, "0")}`,
       invoiceDate: new Date().toISOString().split("T")[0],
+      poNumber: "",
       customerId: "",
       customerName: "",
       customerGstin: "",
@@ -511,7 +457,7 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
             <VOUCHERTYPENAME>Sales</VOUCHERTYPENAME>
             <REFERENCE>${inv.invoiceNumber}</REFERENCE>
             <PARTYLEDGERNAME>${inv.customerName}</PARTYLEDGERNAME>
-            <NARRATION>${inv.invoiceType} #${inv.invoiceNumber} ${inv.lutNumber ? `LUT: ${inv.lutNumber}` : ""} synced via Compliance4 Hub</NARRATION>
+            <NARRATION>${inv.invoiceType} #${inv.invoiceNumber} ${inv.poNumber ? `PO: ${inv.poNumber}` : ""} ${inv.lutNumber ? `LUT: ${inv.lutNumber}` : ""} synced via Compliance4 Hub</NARRATION>
             <ALLLEDGERENTRIES.LIST>
               <LEDGERNAME>${inv.customerName}</LEDGERNAME>
               <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
@@ -552,6 +498,42 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
 
   return (
     <div className="flex-1 flex flex-col h-full bg-[#F8FAFC] overflow-hidden">
+      {/* INJECT PRINT STYLES FOR FULL A4 COVERAGE */}
+      <style>{`
+        @media print {
+          @page {
+            size: A4 portrait;
+            margin: 8mm 10mm;
+          }
+          body * {
+            visibility: hidden;
+          }
+          #print-invoice-sheet, #print-invoice-sheet * {
+            visibility: visible;
+          }
+          #print-invoice-sheet {
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 100% !important;
+            max-width: 100% !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            border: 1.5px solid #0f172a !important;
+          }
+          .print-header-center {
+            text-align: center !important;
+            font-size: 16px !important;
+            font-weight: 900 !important;
+            letter-spacing: 0.15em !important;
+            text-transform: uppercase !important;
+          }
+          .no-print {
+            display: none !important;
+          }
+        }
+      `}</style>
+
       {/* MODULE HEADER BAR */}
       <header className="bg-white border-b border-slate-200 px-8 py-4 flex items-center justify-between shadow-sm shrink-0">
         <div>
@@ -559,7 +541,6 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
           <p className="text-xs text-slate-500 font-medium">{activeClient}</p>
         </div>
 
-        {/* PRIMARY SPLIT */}
         <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200">
           <button
             onClick={() => setActiveCategory("normal_sales")}
@@ -638,7 +619,7 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
             <div className="flex-1 p-8 overflow-y-auto">
               <div className="max-w-5xl mx-auto bg-white rounded-xl border border-slate-200 shadow-sm p-6 space-y-6">
                 
-                {/* POINT 1 & 7: INVOICE TYPE & EXPORT / LUT */}
+                {/* INVOICE TYPE SELECTOR */}
                 <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between gap-4">
                   <div className="flex items-center gap-4">
                     <span className="text-xs font-bold text-slate-700">Document Type:</span>
@@ -672,8 +653,8 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
                   )}
                 </div>
 
-                {/* INVOICE NUMBER, DATE, PLACE OF SUPPLY */}
-                <div className="grid grid-cols-3 gap-4">
+                {/* INVOICE NUMBER, DATE, PO NUMBER & PLACE OF SUPPLY */}
+                <div className="grid grid-cols-4 gap-4">
                   <div>
                     <label className="block text-xs font-bold text-slate-700 mb-1">Invoice Number</label>
                     <input
@@ -693,6 +674,16 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
                     />
                   </div>
                   <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">Purchase Order (PO) No.</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. PO-89210 (Optional)"
+                      value={invoiceHeader.poNumber}
+                      onChange={(e) => setInvoiceHeader({ ...invoiceHeader, poNumber: e.target.value })}
+                      className="w-full text-xs font-mono border border-slate-300 rounded-lg p-2"
+                    />
+                  </div>
+                  <div>
                     <label className="block text-xs font-bold text-slate-700 mb-1">Place of Supply (State)</label>
                     <select
                       value={invoiceHeader.placeOfSupply}
@@ -703,12 +694,13 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
                       <option value="Maharashtra (27)">Maharashtra (27) — Interstate (IGST)</option>
                       <option value="Rajasthan (08)">Rajasthan (08) — Interstate (IGST)</option>
                       <option value="Delhi (07)">Delhi (07) — Interstate (IGST)</option>
+                      <option value="Uttar Pradesh (09)">Uttar Pradesh (09) — Interstate (IGST)</option>
                       <option value="Madhya Pradesh (23)">Madhya Pradesh (23) — Interstate (IGST)</option>
                     </select>
                   </div>
                 </div>
 
-                {/* POINT 2: CUSTOMER SELECTION & PRE-LOADED DISCOUNT */}
+                {/* CUSTOMER DETAILS */}
                 <div className="border-t border-slate-100 pt-4 space-y-4">
                   <div className="flex items-center justify-between">
                     <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">
@@ -800,8 +792,8 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
                     </div>
                   </div>
 
-                  {/* POINT 8: CONSIGNEE / SHIPPED TO OPTION */}
-                  <div className="pt-2">
+                  {/* CONSIGNEE TOGGLE */}
+                  <div className="pt-1">
                     <label className="flex items-center gap-2 text-xs font-bold text-slate-700 cursor-pointer">
                       <input
                         type="checkbox"
@@ -822,7 +814,7 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
                               value={invoiceHeader.consigneeName}
                               onChange={(e) => setInvoiceHeader({ ...invoiceHeader, consigneeName: e.target.value })}
                               className="w-full text-xs border border-slate-300 rounded p-1.5 bg-white"
-                              placeholder="e.g. Taj Skyline Kitchen Receiving Dock"
+                              placeholder="e.g. Indbuy Receiving Warehouse"
                             />
                           </div>
                           <div>
@@ -832,7 +824,7 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
                               value={invoiceHeader.consigneeGstin}
                               onChange={(e) => setInvoiceHeader({ ...invoiceHeader, consigneeGstin: e.target.value.toUpperCase() })}
                               className="w-full text-xs font-mono border border-slate-300 rounded p-1.5 bg-white"
-                              placeholder="24ABCDE1234F1Z5"
+                              placeholder="09ABCDE1234F1Z5"
                             />
                           </div>
                           <div className="col-span-2">
@@ -842,7 +834,7 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
                               value={invoiceHeader.consigneeAddress}
                               onChange={(e) => setInvoiceHeader({ ...invoiceHeader, consigneeAddress: e.target.value })}
                               className="w-full text-xs border border-slate-300 rounded p-1.5 bg-white"
-                              placeholder="Complete warehouse or delivery site address"
+                              placeholder="Complete shipping address"
                             />
                           </div>
                         </div>
@@ -851,7 +843,7 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
                   </div>
                 </div>
 
-                {/* POINT 3, 4, 6: LINE ITEMS WITH TYPEAHEAD, UOM, DISCOUNT, TAX */}
+                {/* LINE ITEMS TABLE */}
                 <div className="border-t border-slate-100 pt-5 space-y-3">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
@@ -889,7 +881,6 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
                       <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
                         {computedItems.map((it) => (
                           <tr key={it.id} className="hover:bg-slate-50/60">
-                            {/* Typeahead Searchable Input */}
                             <td className="p-2">
                               <input
                                 list={`items-list-${it.id}`}
@@ -992,9 +983,8 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
                   </div>
                 </div>
 
-                {/* POINT 5: BANK DETAILS & TERMS (LEFT) + TOTALS & SIGNATURE (RIGHT) */}
+                {/* BOTTOM SUMMARY STRIP */}
                 <div className="border-t border-slate-100 pt-6 grid grid-cols-2 gap-8">
-                  {/* LEFT: BANK & TERMS */}
                   <div className="space-y-4">
                     <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-2 text-xs">
                       <p className="font-bold text-slate-800 uppercase tracking-wider text-[11px]">
@@ -1025,7 +1015,6 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
                     </div>
                   </div>
 
-                  {/* RIGHT: TAX TOTALS & SIGNATURE BOX */}
                   <div className="space-y-4">
                     <div className="space-y-2 text-xs">
                       <div className="flex justify-between text-slate-600 font-medium">
@@ -1074,7 +1063,6 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
                       </div>
                     </div>
 
-                    {/* SIGNATORY BLOCK */}
                     <div className="border border-slate-300 rounded-xl p-3 text-right bg-white space-y-8">
                       <p className="text-xs font-bold text-slate-800">
                         For {vendorProfile.companyName}
@@ -1088,7 +1076,6 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
                   </div>
                 </div>
 
-                {/* SAVE ACTION */}
                 <div className="border-t border-slate-100 pt-4 flex justify-end gap-3">
                   <button
                     onClick={handleSaveInvoice}
@@ -1119,6 +1106,7 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
                     <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 font-semibold uppercase text-[10px]">
                       <tr>
                         <th className="py-3 px-4">Invoice No & Type</th>
+                        <th className="py-3 px-4">PO No.</th>
                         <th className="py-3 px-4">Date</th>
                         <th className="py-3 px-4">Customer Name & GSTIN</th>
                         <th className="py-3 px-4 text-right">Qty</th>
@@ -1135,6 +1123,9 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
                             <span className="text-[10px] text-slate-400 font-sans font-semibold">
                               {inv.invoiceType || "Tax Invoice"}
                             </span>
+                          </td>
+                          <td className="py-3 px-4 font-mono text-slate-600 whitespace-nowrap">
+                            {inv.poNumber || "-"}
                           </td>
                           <td className="py-3 px-4 font-mono text-slate-500 whitespace-nowrap">
                             {inv.invoiceDate}
@@ -1189,7 +1180,7 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
         </div>
       )}
 
-      {/* SECTION 2: POS CONSOLIDATED SALES PLACEHOLDER */}
+      {/* POS CONSOLIDATED SALES PLACEHOLDER */}
       {activeCategory === "pos_sales" && (
         <div className="flex-1 p-8 flex flex-col items-center justify-center text-center">
           <div className="bg-white border border-slate-200 rounded-xl p-12 max-w-lg shadow-sm">
@@ -1202,7 +1193,7 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
         </div>
       )}
 
-      {/* MODAL 1: ADD NEW CUSTOMER WITH GSTIN AUTOFILL */}
+      {/* MODAL 1: ADD NEW CUSTOMER */}
       {showAddCustomerModal && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full p-6 space-y-4">
@@ -1317,7 +1308,7 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
         </div>
       )}
 
-      {/* MODAL 2: ADD NEW PRODUCT TO CATALOG WITH BIDIRECTIONAL PRICING */}
+      {/* MODAL 2: ADD NEW PRODUCT TO CATALOG */}
       {showAddItemModal && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full p-6 space-y-4">
@@ -1379,7 +1370,6 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
                 </select>
               </div>
 
-              {/* POINT 3: BIDIRECTIONAL PRICING CALCULATOR */}
               <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-[11px] font-bold text-slate-700 mb-1">
@@ -1426,22 +1416,20 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
         </div>
       )}
 
-      {/* MODAL 3: PRINTABLE STATUTORY TAX INVOICE & PDF DOWNLOAD */}
+      {/* MODAL 3: FULL-WIDTH PRINTABLE A4 STATUTORY TAX INVOICE */}
       {showPrintModal && selectedInvoiceForPrint && (
         <div className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
-          <div className="bg-white rounded-xl shadow-2xl max-w-4xl w-full p-8 my-8 text-slate-900 font-sans print:p-0 print:shadow-none">
+          <div className="bg-white rounded-xl shadow-2xl max-w-4xl w-full p-8 my-8 text-slate-900 font-sans print:p-0 print:shadow-none print:max-w-none">
             
             {/* TOOLBAR */}
-            <div className="flex items-center justify-between border-b pb-4 mb-6 print:hidden">
-              <div className="flex items-center gap-2">
-                <span className="font-bold text-sm">Invoice Preview: #{selectedInvoiceForPrint.invoiceNumber}</span>
-              </div>
+            <div className="flex items-center justify-between border-b pb-4 mb-6 no-print">
+              <span className="font-bold text-sm">Invoice Preview: #{selectedInvoiceForPrint.invoiceNumber}</span>
               <div className="flex items-center gap-3">
                 <button
                   onClick={() => window.print()}
-                  className="flex items-center gap-1.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold px-4 py-2 rounded-lg transition"
+                  className="flex items-center gap-1.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold px-5 py-2.5 rounded-lg transition shadow-sm"
                 >
-                  <Printer className="w-3.5 h-3.5" /> Print / Save as PDF
+                  <Printer className="w-4 h-4" /> Print / Save as PDF
                 </button>
                 <button
                   onClick={() => setShowPrintModal(false)}
@@ -1452,104 +1440,135 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
               </div>
             </div>
 
-            {/* PRINTABLE SHEET */}
-            <div className="border border-slate-300 p-6 rounded-lg text-xs space-y-4">
-              {/* HEADER */}
-              <div className="flex justify-between items-start border-b border-slate-200 pb-4">
-                <div>
-                  <h1 className="text-xl font-bold tracking-tight text-slate-900">{selectedInvoiceForPrint.vendorProfile?.companyName}</h1>
-                  <p className="text-[11px] text-slate-500 max-w-sm mt-0.5">{selectedInvoiceForPrint.vendorProfile?.address}</p>
-                  <p className="text-[11px] font-mono font-bold mt-1">GSTIN: {selectedInvoiceForPrint.vendorProfile?.gstin}</p>
-                  <p className="text-[11px] text-slate-600">Email: {selectedInvoiceForPrint.vendorProfile?.email} | Tel: {selectedInvoiceForPrint.vendorProfile?.phone}</p>
+            {/* PRINTABLE A4 SHEET CONTAINER */}
+            <div id="print-invoice-sheet" className="border-2 border-slate-900 p-6 text-xs space-y-4 bg-white text-slate-900">
+              
+              {/* POINT 2: PROMINENT CENTERED DOCUMENT TYPE HEADER */}
+              <div className="text-center border-b-2 border-slate-900 pb-2 mb-2">
+                <h1 className="text-lg font-black tracking-widest uppercase text-slate-900">
+                  {selectedInvoiceForPrint.invoiceType || "TAX INVOICE"}
+                </h1>
+                {selectedInvoiceForPrint.lutNumber && (
+                  <p className="text-[10px] font-mono font-bold text-slate-600 mt-0.5">
+                    SUPPLY MEANT FOR EXPORT UNDER BOND OR LETTER OF UNDERTAKING WITHOUT PAYMENT OF INTEGRATED TAX (LUT: {selectedInvoiceForPrint.lutNumber})
+                  </p>
+                )}
+              </div>
+
+              {/* SELLER DETAILS (LEFT) & INVOICE / PO METADATA (RIGHT) */}
+              <div className="flex justify-between items-start border-b border-slate-300 pb-4">
+                <div className="max-w-md">
+                  <h2 className="text-base font-black tracking-tight text-slate-900 uppercase">
+                    {selectedInvoiceForPrint.vendorProfile?.companyName}
+                  </h2>
+                  <p className="text-[11px] text-slate-600 leading-relaxed mt-0.5">
+                    {selectedInvoiceForPrint.vendorProfile?.address}
+                  </p>
+                  <p className="text-[11px] font-mono font-bold text-slate-900 mt-1">
+                    GSTIN: {selectedInvoiceForPrint.vendorProfile?.gstin}
+                  </p>
+                  <p className="text-[11px] text-slate-600">
+                    Email: {selectedInvoiceForPrint.vendorProfile?.email} | Tel: {selectedInvoiceForPrint.vendorProfile?.phone}
+                  </p>
                 </div>
-                <div className="text-right">
-                  <span className="px-3 py-1 bg-slate-100 rounded text-xs font-bold uppercase tracking-wider text-slate-800">
-                    {selectedInvoiceForPrint.invoiceType}
-                  </span>
-                  <p className="text-sm font-mono font-bold mt-2">#{selectedInvoiceForPrint.invoiceNumber}</p>
-                  <p className="text-xs text-slate-500">Date: {selectedInvoiceForPrint.invoiceDate}</p>
-                  {selectedInvoiceForPrint.lutNumber && (
-                    <p className="text-[11px] font-mono font-bold text-indigo-700 mt-1">LUT: {selectedInvoiceForPrint.lutNumber}</p>
+
+                {/* POINT 3: INVOICE NO, DATE, AND PO NUMBER */}
+                <div className="text-right space-y-1 bg-slate-50 border border-slate-200 p-2.5 rounded min-w-[210px]">
+                  <div>
+                    <span className="text-[10px] uppercase font-bold text-slate-400 block">Invoice Number</span>
+                    <span className="text-sm font-mono font-black text-slate-900">#{selectedInvoiceForPrint.invoiceNumber}</span>
+                  </div>
+                  <div>
+                    <span className="text-[10px] uppercase font-bold text-slate-400 block">Invoice Date</span>
+                    <span className="text-xs font-mono font-semibold text-slate-700">{selectedInvoiceForPrint.invoiceDate}</span>
+                  </div>
+                  {selectedInvoiceForPrint.poNumber && (
+                    <div className="border-t border-slate-200 pt-1 mt-1">
+                      <span className="text-[10px] uppercase font-bold text-indigo-700 block">Purchase Order (PO) No.</span>
+                      <span className="text-xs font-mono font-bold text-indigo-900">{selectedInvoiceForPrint.poNumber}</span>
+                    </div>
                   )}
                 </div>
               </div>
 
               {/* BILLED TO vs SHIPPED TO */}
-              <div className="grid grid-cols-2 gap-4 border-b border-slate-200 pb-4">
-                <div className="p-3 bg-slate-50 rounded border border-slate-100">
-                  <p className="font-bold text-[10px] uppercase tracking-wider text-slate-400 mb-1">Billed To (Customer)</p>
+              <div className="grid grid-cols-2 gap-4 border-b border-slate-300 pb-4">
+                <div className="p-3 bg-slate-50/60 rounded border border-slate-200">
+                  <p className="font-black text-[10px] uppercase tracking-wider text-slate-500 mb-1">Billed To (Customer)</p>
                   <p className="font-bold text-slate-900 text-sm">{selectedInvoiceForPrint.customerName}</p>
-                  <p className="text-slate-600 mt-0.5">{selectedInvoiceForPrint.billingAddress}</p>
-                  <p className="font-mono font-bold mt-1">GSTIN: {selectedInvoiceForPrint.customerGstin || "Unregistered"}</p>
-                  <p className="text-slate-500">Place of Supply: {selectedInvoiceForPrint.placeOfSupply}</p>
+                  <p className="text-slate-600 text-[11px] leading-relaxed mt-0.5">{selectedInvoiceForPrint.billingAddress}</p>
+                  <p className="font-mono font-bold text-[11px] mt-1 text-slate-900">GSTIN: {selectedInvoiceForPrint.customerGstin || "Unregistered"}</p>
+                  <p className="text-slate-500 text-[11px]">Place of Supply: {selectedInvoiceForPrint.placeOfSupply}</p>
                 </div>
 
-                <div className="p-3 bg-slate-50 rounded border border-slate-100">
-                  <p className="font-bold text-[10px] uppercase tracking-wider text-slate-400 mb-1">Shipped To (Consignee)</p>
+                <div className="p-3 bg-slate-50/60 rounded border border-slate-200">
+                  <p className="font-black text-[10px] uppercase tracking-wider text-slate-500 mb-1">Shipped To (Consignee)</p>
                   <p className="font-bold text-slate-900 text-sm">
                     {selectedInvoiceForPrint.hasConsignee ? selectedInvoiceForPrint.consigneeName : selectedInvoiceForPrint.customerName}
                   </p>
-                  <p className="text-slate-600 mt-0.5">
+                  <p className="text-slate-600 text-[11px] leading-relaxed mt-0.5">
                     {selectedInvoiceForPrint.hasConsignee ? selectedInvoiceForPrint.consigneeAddress : selectedInvoiceForPrint.billingAddress}
                   </p>
                   {selectedInvoiceForPrint.consigneeGstin && (
-                    <p className="font-mono font-bold mt-1">GSTIN: {selectedInvoiceForPrint.consigneeGstin}</p>
+                    <p className="font-mono font-bold text-[11px] mt-1 text-slate-900">GSTIN: {selectedInvoiceForPrint.consigneeGstin}</p>
                   )}
                 </div>
               </div>
 
-              {/* ITEMS TABLE */}
-              <table className="w-full text-left text-xs border border-slate-200">
-                <thead className="bg-slate-100 border-b border-slate-200 font-bold uppercase text-[10px] text-slate-700">
-                  <tr>
-                    <th className="p-2 border-r">#</th>
-                    <th className="p-2 border-r">Item Description</th>
-                    <th className="p-2 border-r">HSN</th>
-                    <th className="p-2 border-r text-right">Qty</th>
-                    <th className="p-2 border-r">UOM</th>
-                    <th className="p-2 border-r text-right">Rate (₹)</th>
-                    <th className="p-2 border-r text-right">Disc %</th>
-                    <th className="p-2 border-r text-right">Taxable (₹)</th>
-                    <th className="p-2 text-right">Total (₹)</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-200 font-medium">
-                  {selectedInvoiceForPrint.items?.map((it, idx) => (
-                    <tr key={idx}>
-                      <td className="p-2 border-r text-slate-400">{idx + 1}</td>
-                      <td className="p-2 border-r font-semibold text-slate-900">{it.itemName}</td>
-                      <td className="p-2 border-r font-mono">{it.hsnCode}</td>
-                      <td className="p-2 border-r text-right font-mono font-bold">{it.qty}</td>
-                      <td className="p-2 border-r">{it.uom}</td>
-                      <td className="p-2 border-r text-right font-mono">₹{it.rate?.toFixed(2)}</td>
-                      <td className="p-2 border-r text-right font-mono">{it.discountPercent || 0}%</td>
-                      <td className="p-2 border-r text-right font-mono">₹{it.taxable?.toFixed(2)}</td>
-                      <td className="p-2 text-right font-mono font-bold text-slate-900">₹{it.total?.toFixed(2)}</td>
+              {/* LINE ITEMS FULL WIDTH TABLE */}
+              <div className="border border-slate-300 rounded overflow-hidden">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-slate-100 border-b border-slate-300 font-black uppercase text-[10px] text-slate-800">
+                    <tr>
+                      <th className="p-2 border-r border-slate-300 text-center w-8">#</th>
+                      <th className="p-2 border-r border-slate-300">Item Description</th>
+                      <th className="p-2 border-r border-slate-300 text-center w-16">HSN</th>
+                      <th className="p-2 border-r border-slate-300 text-right w-12">Qty</th>
+                      <th className="p-2 border-r border-slate-300 text-center w-14">UOM</th>
+                      <th className="p-2 border-r border-slate-300 text-right w-20">Rate (₹)</th>
+                      <th className="p-2 border-r border-slate-300 text-right w-16">Disc %</th>
+                      <th className="p-2 border-r border-slate-300 text-right w-20">Taxable</th>
+                      <th className="p-2 text-right w-24">Total (₹)</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody className="divide-y divide-slate-200 font-medium text-slate-800">
+                    {selectedInvoiceForPrint.items?.map((it, idx) => (
+                      <tr key={idx}>
+                        <td className="p-2 border-r border-slate-200 text-center text-slate-400 font-mono">{idx + 1}</td>
+                        <td className="p-2 border-r border-slate-200 font-bold text-slate-900">{it.itemName}</td>
+                        <td className="p-2 border-r border-slate-200 text-center font-mono text-slate-600">{it.hsnCode}</td>
+                        <td className="p-2 border-r border-slate-200 text-right font-mono font-black">{it.qty}</td>
+                        <td className="p-2 border-r border-slate-200 text-center text-slate-600">{it.uom}</td>
+                        <td className="p-2 border-r border-slate-200 text-right font-mono">₹{it.rate?.toFixed(2)}</td>
+                        <td className="p-2 border-r border-slate-200 text-right font-mono text-amber-700">{it.discountPercent || 0}%</td>
+                        <td className="p-2 border-r border-slate-200 text-right font-mono">₹{it.taxable?.toFixed(2)}</td>
+                        <td className="p-2 text-right font-mono font-black text-slate-900">₹{it.total?.toFixed(2)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
 
-              {/* TOTALS & SIGNATURE */}
-              <div className="grid grid-cols-2 gap-6 pt-3">
+              {/* TOTALS & STATUTORY SIGNATURE BLOCK */}
+              <div className="grid grid-cols-2 gap-6 pt-2">
                 <div className="space-y-3">
                   <div className="p-3 bg-slate-50 border border-slate-200 rounded text-[11px] space-y-1">
-                    <p className="font-bold text-slate-800">Bank Details for NEFT / RTGS</p>
+                    <p className="font-bold text-slate-800 uppercase tracking-wider text-[10px]">Bank Settlement Details</p>
                     <p>Bank: <strong>{selectedInvoiceForPrint.vendorProfile?.bankName}</strong></p>
-                    <p>A/c No: <strong>{selectedInvoiceForPrint.vendorProfile?.accountNo}</strong></p>
-                    <p>IFSC: <strong>{selectedInvoiceForPrint.vendorProfile?.ifscCode}</strong></p>
+                    <p>A/c No: <strong className="font-mono">{selectedInvoiceForPrint.vendorProfile?.accountNo}</strong></p>
+                    <p>IFSC: <strong className="font-mono">{selectedInvoiceForPrint.vendorProfile?.ifscCode}</strong></p>
                   </div>
                   <div>
                     <p className="font-bold text-[10px] uppercase tracking-wider text-slate-400">Terms & Conditions</p>
-                    <p className="text-[10px] text-slate-500 whitespace-pre-line mt-0.5">{selectedInvoiceForPrint.vendorProfile?.terms}</p>
+                    <p className="text-[10px] text-slate-600 whitespace-pre-line leading-relaxed mt-0.5">{selectedInvoiceForPrint.vendorProfile?.terms}</p>
                   </div>
                 </div>
 
                 <div className="space-y-2">
-                  <div className="space-y-1 text-xs">
+                  <div className="space-y-1 text-xs border border-slate-200 p-3 rounded bg-slate-50/50">
                     <div className="flex justify-between text-slate-600 font-medium">
-                      <span>Total Quantity:</span>
-                      <span className="font-mono font-bold">{selectedInvoiceForPrint.totalQuantity}</span>
+                      <span>Total Items Quantity:</span>
+                      <span className="font-mono font-black text-slate-900">{selectedInvoiceForPrint.totalQuantity}</span>
                     </div>
                     <div className="flex justify-between text-slate-600 font-medium">
                       <span>Total Taxable Amount:</span>
@@ -1577,18 +1596,25 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
                       <span>Round Off:</span>
                       <span className="font-mono">₹{selectedInvoiceForPrint.roundOff?.toFixed(2)}</span>
                     </div>
-                    <div className="flex justify-between items-center text-sm font-bold text-slate-900 border-t pt-1">
-                      <span>Invoice Total:</span>
-                      <span className="font-mono text-base">₹{selectedInvoiceForPrint.grandTotal?.toFixed(2)}</span>
+                    <div className="flex justify-between items-center text-sm font-black text-slate-900 border-t border-slate-300 pt-1.5 mt-1">
+                      <span>Grand Total:</span>
+                      <span className="font-mono text-base font-black text-emerald-800">
+                        ₹{selectedInvoiceForPrint.grandTotal?.toFixed(2)}
+                      </span>
                     </div>
                   </div>
 
-                  <div className="border border-slate-300 rounded p-4 text-right space-y-6 mt-4">
-                    <p className="text-xs font-bold">For {selectedInvoiceForPrint.vendorProfile?.companyName}</p>
-                    <p className="text-[10px] font-bold uppercase tracking-wider text-slate-700">Authorised Signatory</p>
+                  <div className="border-2 border-slate-900 rounded p-4 text-right space-y-8 bg-white mt-3">
+                    <p className="text-xs font-bold text-slate-900">
+                      For {selectedInvoiceForPrint.vendorProfile?.companyName}
+                    </p>
+                    <p className="text-[10px] font-black uppercase tracking-wider text-slate-800">
+                      Authorised Signatory
+                    </p>
                   </div>
                 </div>
               </div>
+
             </div>
           </div>
         </div>
