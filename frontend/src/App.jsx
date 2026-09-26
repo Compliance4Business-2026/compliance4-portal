@@ -135,6 +135,15 @@ export default function App() {
             <Settings className="w-4 h-4" />
             Settings
           </button>
+          <button
+ onClick={() => setActiveTab("expenses")}
+  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition ${
+    activeTab === "expenses" ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100"
+  }`}
+>
+  <Layers className="w-4 h-4" />
+  Other Expenses
+</button>
         </nav>
 
         <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg flex items-center justify-between">
