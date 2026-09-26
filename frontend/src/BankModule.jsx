@@ -32,40 +32,58 @@ const extractRuleKeyword = (narration) => {
 };
 
 export default function BankModule({ activeClient = "Panasuria Confectionery" }) {
-  const [bankLedger, setBankLedger] = useState("HDFC Bank - 8050");
-  
-  // 1. Stored Transactions
+  // Scoped to activeClient
   const [transactions, setTransactions] = useState(() => {
     try {
-      const saved = localStorage.getItem("c4_bank_transactions");
+      const saved = localStorage.getItem(`c4_bank_transactions_${activeClient}`);
       return saved ? JSON.parse(saved) : [];
     } catch {
       return [];
     }
   });
 
-  // 2. Learned Memory Rules: { [keyword]: { ledger, voucher_type } }
-  const [learnedRules, setLearnedRules] = useState(() => {
+  const [approvedTransactions, setApprovedTransactions] = useState(() => {
     try {
-      const savedRules = localStorage.getItem("c4_bank_learned_rules");
-      return savedRules ? JSON.parse(savedRules) : {};
+      const saved = localStorage.getItem(`c4_bank_approved_${activeClient}`);
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const [pushedTransactions, setPushedTransactions] = useState(() => {
+    try {
+      const saved = localStorage.getItem(`c4_bank_pushed_${activeClient}`);
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const [narrativeRules, setNarrativeRules] = useState(() => {
+    try {
+      const saved = localStorage.getItem(`c4_bank_rules_${activeClient}`);
+      return saved ? JSON.parse(saved) : {};
     } catch {
       return {};
     }
   });
 
-  const [activeTab, setActiveTab] = useState("needs_review"); // 'needs_review' | 'approved' | 'pushed'
-  const [uploading, setUploading] = useState(false);
-  const [syncing, setSyncing] = useState(false);
-  const [toast, setToast] = useState(null);
+  useEffect(() => {
+    localStorage.setItem(`c4_bank_transactions_${activeClient}`, JSON.stringify(transactions));
+  }, [transactions, activeClient]);
 
   useEffect(() => {
-    localStorage.setItem("c4_bank_transactions", JSON.stringify(transactions));
-  }, [transactions]);
+    localStorage.setItem(`c4_bank_approved_${activeClient}`, JSON.stringify(approvedTransactions));
+  }, [approvedTransactions, activeClient]);
 
   useEffect(() => {
-    localStorage.setItem("c4_bank_learned_rules", JSON.stringify(learnedRules));
-  }, [learnedRules]);
+    localStorage.setItem(`c4_bank_pushed_${activeClient}`, JSON.stringify(pushedTransactions));
+  }, [pushedTransactions, activeClient]);
+
+  useEffect(() => {
+    localStorage.setItem(`c4_bank_rules_${activeClient}`, JSON.stringify(narrativeRules));
+  }, [narrativeRules, activeClient]);
 
   const showToast = (message, type = "success") => {
     setToast({ message, type });
