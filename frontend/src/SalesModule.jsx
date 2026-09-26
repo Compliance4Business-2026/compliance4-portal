@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect } from "react";
 import { 
   Plus, 
   Trash2, 
@@ -64,7 +64,7 @@ function numberToWords(num) {
   }
 
   const rounded = Math.round(num);
-  if (rounded === 0) return "Zero Rupees Only";
+  if (rounded === 0) return "ZERO RUPEES ONLY";
   return (inWords(rounded).trim() + " Rupees Only").toUpperCase();
 }
 
@@ -135,11 +135,12 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
         address: "GF-14, Titanium City Center, Anandnagar Road, Prahladnagar, Ahmedabad - 380015",
         phone: "+91 98250 12345",
         email: "accounts@panasuria.com",
+        pan: "AABCP1234F",
         bankName: "HDFC Bank",
         accountNo: "50200080509922",
         ifscCode: "HDFC0000006",
         branch: "Prahladnagar Branch, Ahmedabad",
-        terms: "1. Goods once sold will not be taken back.\n2. Payment strictly due within 15 days of invoice date.\n3. Subject to Ahmedabad Jurisdiction only."
+        terms: "1. Subject to our home Jurisdiction.\n2. Our Responsibility Ceases as soon as goods leaves our Premises.\n3. Goods once sold will not be taken back.\n4. Delivery Ex-Premises."
       };
     } catch {
       return {};
@@ -174,7 +175,7 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
   const [lutNumber, setLutNumber] = useState("");
   const [hasConsignee, setHasConsignee] = useState(false);
 
-  // COMPLETELY BLANK FORM STATE
+  // Blank Form State
   const [invoiceHeader, setInvoiceHeader] = useState({
     invoiceNumber: `PC/26-27/${String(savedInvoices.length + 1).padStart(3, "0")}`,
     invoiceDate: new Date().toISOString().split("T")[0],
@@ -330,7 +331,7 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
   const totalSgst = computedItems.reduce((acc, it) => acc + it.sgst, 0);
   const totalIgst = computedItems.reduce((acc, it) => acc + it.igst, 0);
 
-  // AUTOMATIC ROUND-OFF TO NEAREST RUPEE
+  // Auto round-off
   const rawSubTotal = totalTaxable + totalCgst + totalSgst + totalIgst;
   const roundedGrandTotal = Math.round(rawSubTotal);
   const autoRoundOff = parseFloat((roundedGrandTotal - rawSubTotal).toFixed(2));
@@ -422,7 +423,6 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
     setSelectedInvoiceForPrint(newInv);
     setShowPrintModal(true);
 
-    // Reset with blank slate
     setInvoiceHeader({
       invoiceNumber: `PC/26-27/${String(savedInvoices.length + 2).padStart(3, "0")}`,
       invoiceDate: new Date().toISOString().split("T")[0],
@@ -446,7 +446,7 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
     setSalesSubTab("invoices");
   };
 
-  // TRUE FULL-PAGE A4 PRINT DISPATCH VIA HIDDEN IFRAME
+  // TRUE FULL-PAGE A4 SIZING (EXACT TO REFERENCE)
   const triggerFullPagePrint = (invoice) => {
     const iframe = document.createElement("iframe");
     iframe.style.position = "fixed";
@@ -469,60 +469,44 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
         <style>
           @page {
             size: A4 portrait;
-            margin: 8mm;
+            margin: 6mm;
           }
           * {
             box-sizing: border-box;
-            font-family: Arial, Helvetica, sans-serif;
+            font-family: Arial, "Helvetica Neue", Helvetica, sans-serif;
             color: #000;
           }
-          body {
+          html, body {
             margin: 0;
             padding: 0;
-            font-size: 11px;
-            line-height: 1.3;
-          }
-          .invoice-box {
             width: 100%;
-            border: 1.5px solid #000;
+            height: 100%;
+            background: #fff;
           }
+          .a4-container {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            border: 1.5px solid #2b6cb0;
+          }
+          .border-b { border-bottom: 1.5px solid #2b6cb0; }
+          .border-r { border-right: 1.5px solid #2b6cb0; }
+          .border-t { border-top: 1.5px solid #2b6cb0; }
           .text-center { text-align: center; }
           .text-right { text-align: right; }
           .font-bold { font-weight: bold; }
           .font-black { font-weight: 900; }
-          .border-b { border-bottom: 1px solid #000; }
-          .border-r { border-right: 1px solid #000; }
-          .border-t { border-top: 1px solid #000; }
-          .p-1 { padding: 4px 6px; }
-          .p-2 { padding: 6px 8px; }
-          
-          .banner-title {
-            background-color: #f1f5f9;
-            padding: 6px;
+
+          .title-banner {
+            background-color: #ebf8ff;
+            color: #2b6cb0;
             font-size: 14px;
-            letter-spacing: 0.12em;
             font-weight: 900;
+            letter-spacing: 0.15em;
             text-align: center;
-            border-bottom: 1.5px solid #000;
-          }
-          .table-grid {
-            width: 100%;
-            border-collapse: collapse;
-          }
-          .table-grid th {
-            background-color: #f8fafc;
-            border-bottom: 1px solid #000;
-            border-right: 1px solid #000;
-            padding: 5px 4px;
-            font-size: 10px;
-          }
-          .table-grid td {
-            border-right: 1px solid #000;
-            padding: 5px 4px;
-            font-size: 10.5px;
-          }
-          .table-grid th:last-child, .table-grid td:last-child {
-            border-right: none;
+            padding: 5px 0;
+            border-bottom: 1.5px solid #2b6cb0;
           }
           .two-col {
             display: flex;
@@ -531,159 +515,228 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
           .col-half {
             width: 50%;
           }
+          .table-wrapper {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+          }
+          table.items-table {
+            width: 100%;
+            border-collapse: collapse;
+            flex: 1;
+          }
+          table.items-table th {
+            background-color: #f7fafc;
+            border-bottom: 1.5px solid #2b6cb0;
+            border-right: 1px solid #2b6cb0;
+            padding: 5px 4px;
+            font-size: 9.5px;
+            font-weight: bold;
+            color: #1a202c;
+          }
+          table.items-table td {
+            border-right: 1px solid #2b6cb0;
+            padding: 4px 6px;
+            font-size: 10px;
+            vertical-align: top;
+          }
+          table.items-table th:last-child, table.items-table td:last-child {
+            border-right: none;
+          }
+          .fill-remaining-space {
+            height: 100%;
+          }
         </style>
       </head>
       <body>
-        <div class="invoice-box">
+        <div class="a4-container">
+          
           <!-- TOP SELLER HEADER -->
-          <div style="padding: 10px 14px; border-bottom: 1px solid #000; display: flex; justify-content: space-between; align-items: flex-start;">
-            <div>
-              <div style="font-size: 17px; font-weight: 900; letter-spacing: -0.02em;">${invoice.vendorProfile?.companyName || "Panasuria Confectionery"}</div>
-              <div style="font-size: 10px; color: #333; margin-top: 2px;">${invoice.vendorProfile?.address || ""}</div>
-              <div style="font-size: 10px; margin-top: 2px;"><strong>GSTIN:</strong> ${invoice.vendorProfile?.gstin || ""}</div>
-              <div style="font-size: 10px; color: #333;"><strong>Email:</strong> ${invoice.vendorProfile?.email || ""} | <strong>Phone:</strong> ${invoice.vendorProfile?.phone || ""}</div>
+          <div class="two-col border-b" style="padding: 10px 14px; align-items: center; justify-content: space-between;">
+            <div style="display: flex; align-items: center; gap: 12px;">
+              <div style="width: 44px; height: 44px; background: #2b6cb0; color: #fff; font-weight: 900; font-size: 20px; display: flex; align-items: center; justify-content: center; border-radius: 4px;">
+                C4
+              </div>
+              <div>
+                <div style="font-size: 16px; font-weight: 900; color: #1a202c; text-transform: uppercase;">${invoice.vendorProfile?.companyName || "Panasuria Confectionery"}</div>
+                <div style="font-size: 9.5px; color: #4a5568; margin-top: 1px;">${invoice.vendorProfile?.address || ""}</div>
+                <div style="font-size: 9.5px; margin-top: 2px;"><strong>GSTIN:</strong> ${invoice.vendorProfile?.gstin || ""}</div>
+              </div>
             </div>
-            <div style="text-align: right; min-width: 180px;">
-              <div style="font-size: 11px;"><strong>ORIGINAL FOR RECIPIENT</strong></div>
-              <div style="font-size: 13px; font-weight: 900; margin-top: 4px;">#${invoice.invoiceNumber}</div>
-              <div style="font-size: 10.5px; color: #333;">Date: ${invoice.invoiceDate}</div>
-              ${invoice.poNumber ? `<div style="font-size: 10.5px; margin-top: 2px;"><strong>PO No:</strong> ${invoice.poNumber}</div>` : ""}
+            <div style="text-align: right; font-size: 9.5px; line-height: 1.4;">
+              <div><strong>Name :</strong> ${invoice.vendorProfile?.companyName || "Panasuria Confectionery"}</div>
+              <div><strong>Phone :</strong> ${invoice.vendorProfile?.phone || ""}</div>
+              <div><strong>Email :</strong> ${invoice.vendorProfile?.email || ""}</div>
+              <div><strong>PAN :</strong> ${invoice.vendorProfile?.pan || "AABCP1234F"}</div>
             </div>
           </div>
 
-          <!-- CENTER TITLE BANNER -->
-          <div class="banner-title">
-            ${headerTitle}
+          <!-- GSTIN / LUT / TITLE BANNER -->
+          <div class="two-col border-b" style="background: #f7fafc; padding: 4px 10px; font-size: 9px; font-weight: bold; justify-content: space-between;">
+            <div>GSTIN : ${invoice.vendorProfile?.gstin || ""} ${invoice.lutNumber ? `| LUT NO : ${invoice.lutNumber}` : ""}</div>
+            <div style="color: #2b6cb0; font-weight: 900;">${invoice.invoiceType ? invoice.invoiceType.toUpperCase() : "TAX INVOICE"}</div>
+            <div>ORIGINAL FOR RECIPIENT</div>
           </div>
-          ${invoice.lutNumber ? `<div style="font-size: 9px; text-align: center; padding: 3px; background: #fafafa; border-bottom: 1px solid #000;">SUPPLY MEANT FOR EXPORT UNDER BOND OR LETTER OF UNDERTAKING WITHOUT PAYMENT OF INTEGRATED TAX (LUT NO: ${invoice.lutNumber})</div>` : ""}
 
-          <!-- BILLED TO & SHIPPED TO -->
+          ${invoice.lutNumber ? `
+            <div style="background: #ebf8ff; color: #2b6cb0; font-size: 8.5px; text-align: center; font-weight: bold; padding: 3px 0; border-bottom: 1.5px solid #2b6cb0;">
+              Supply Meant For Export Under Bond or Letter of Undertaking without Payment of Integrated Tax (IGST)
+            </div>
+          ` : ""}
+
+          <!-- 4-BOX BUYER & CONSIGNEE INFO -->
           <div class="two-col border-b">
-            <div class="col-half border-r p-2" style="background: #fafafa;">
-              <div style="font-size: 9px; font-weight: 900; color: #555; text-transform: uppercase;">Details of Buyer (Billed to):</div>
-              <div style="font-size: 12px; font-weight: 900; margin-top: 2px;">${invoice.customerName}</div>
-              <div style="font-size: 10px; margin-top: 2px;">${invoice.billingAddress || ""}</div>
-              <div style="font-size: 10.5px; font-weight: bold; margin-top: 3px;">GSTIN: ${invoice.customerGstin || "Unregistered"}</div>
-              <div style="font-size: 10px;">Place of Supply: ${invoice.placeOfSupply}</div>
+            <!-- BUYER -->
+            <div class="col-half border-r" style="padding: 6px 10px; font-size: 9.5px; line-height: 1.35;">
+              <div style="font-weight: 900; font-size: 9px; text-transform: uppercase; color: #4a5568; margin-bottom: 3px;">Details of Buyer | Billed to :</div>
+              <div style="display: flex;"><span style="width: 70px; font-weight: bold;">Name</span>: <span style="font-weight: 900; text-transform: uppercase;">${invoice.customerName}</span></div>
+              <div style="display: flex;"><span style="width: 70px; font-weight: bold;">Address</span>: <span>${invoice.billingAddress || "-"}</span></div>
+              <div style="display: flex;"><span style="width: 70px; font-weight: bold;">Phone</span>: <span>${invoice.customerPhone || "-"}</span></div>
+              <div style="display: flex;"><span style="width: 70px; font-weight: bold;">GSTIN</span>: <span style="font-weight: bold;">${invoice.customerGstin || "-"}</span></div>
+              <div style="display: flex;"><span style="width: 70px; font-weight: bold;">Place of Supply</span>: <span>${invoice.placeOfSupply}</span></div>
             </div>
-            <div class="col-half p-2" style="background: #fafafa;">
-              <div style="font-size: 9px; font-weight: 900; color: #555; text-transform: uppercase;">Details of Consignee (Shipped to):</div>
-              <div style="font-size: 12px; font-weight: 900; margin-top: 2px;">${invoice.hasConsignee ? invoice.consigneeName : invoice.customerName}</div>
-              <div style="font-size: 10px; margin-top: 2px;">${invoice.hasConsignee ? invoice.consigneeAddress : invoice.billingAddress}</div>
-              ${invoice.consigneeGstin ? `<div style="font-size: 10.5px; font-weight: bold; margin-top: 3px;">GSTIN: ${invoice.consigneeGstin}</div>` : ""}
+
+            <!-- CONSIGNEE & INVOICE META -->
+            <div class="col-half" style="display: flex; flex-direction: column;">
+              <div class="two-col border-b" style="background: #f7fafc; padding: 4px 8px; font-size: 9.5px;">
+                <div style="width: 50%;"><strong>Invoice No.</strong> : <span style="font-weight: 900;">${invoice.invoiceNumber}</span></div>
+                <div style="width: 50%;"><strong>Invoice Date</strong> : <span>${invoice.invoiceDate}</span></div>
+              </div>
+              ${invoice.poNumber ? `
+                <div style="padding: 3px 8px; font-size: 9.5px; border-bottom: 1px solid #2b6cb0; background: #fff;">
+                  <strong>Purchase Order (PO) No.</strong> : <span style="font-weight: bold;">${invoice.poNumber}</span>
+                </div>
+              ` : ""}
+              <div style="padding: 6px 10px; font-size: 9.5px; line-height: 1.35; flex: 1;">
+                <div style="font-weight: 900; font-size: 9px; text-transform: uppercase; color: #4a5568; margin-bottom: 3px;">Details of Consignee | Shipped to :</div>
+                <div style="display: flex;"><span style="width: 65px; font-weight: bold;">Name</span>: <span>${invoice.hasConsignee ? invoice.consigneeName : invoice.customerName}</span></div>
+                <div style="display: flex;"><span style="width: 65px; font-weight: bold;">Address</span>: <span>${invoice.hasConsignee ? invoice.consigneeAddress : invoice.billingAddress}</span></div>
+                ${invoice.consigneeGstin ? `<div style="display: flex;"><span style="width: 65px; font-weight: bold;">GSTIN</span>: <span>${invoice.consigneeGstin}</span></div>` : ""}
+              </div>
             </div>
           </div>
 
-          <!-- LINE ITEMS TABLE -->
-          <table class="table-grid">
-            <thead>
-              <tr>
-                <th style="width: 25px;">#</th>
-                <th style="text-align: left;">Name of Product / Service</th>
-                <th style="width: 50px;">HSN/SAC</th>
-                <th style="width: 40px; text-align: right;">Qty</th>
-                <th style="width: 45px;">UOM</th>
-                <th style="width: 60px; text-align: right;">Rate (₹)</th>
-                <th style="width: 45px; text-align: right;">Disc %</th>
-                <th style="width: 70px; text-align: right;">Taxable (₹)</th>
-                <th style="width: 75px; text-align: right;">Total (₹)</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${invoice.items?.map((it, idx) => `
+          <!-- FULL-HEIGHT EXPANDING ITEMS TABLE -->
+          <div class="table-wrapper">
+            <table class="items-table">
+              <thead>
                 <tr>
-                  <td class="text-center" style="color: #666;">${idx + 1}</td>
-                  <td class="font-bold">${it.itemName}</td>
-                  <td class="text-center">${it.hsnCode || "-"}</td>
-                  <td class="text-right font-bold">${it.qty || 0}</td>
-                  <td class="text-center">${it.uom || "PCs"}</td>
-                  <td class="text-right">${Number(it.rate || 0).toFixed(2)}</td>
-                  <td class="text-right">${it.discountPercent || 0}%</td>
-                  <td class="text-right">${Number(it.taxable || 0).toFixed(2)}</td>
-                  <td class="text-right font-bold">${Number(it.total || 0).toFixed(2)}</td>
+                  <th style="width: 30px;">Sr.<br/>No.</th>
+                  <th style="text-align: left;">Name of Product / Service</th>
+                  <th style="width: 65px;">HSN / SAC</th>
+                  <th style="width: 45px; text-align: right;">Qty</th>
+                  <th style="width: 45px;">UOM</th>
+                  <th style="width: 65px; text-align: right;">Rate (₹)</th>
+                  <th style="width: 45px; text-align: right;">Disc %</th>
+                  <th style="width: 75px; text-align: right;">Taxable (₹)</th>
+                  <th style="width: 85px; text-align: right;">Total (₹)</th>
                 </tr>
-              `).join("")}
-              ${Array.from({ length: Math.max(0, 7 - (invoice.items?.length || 0)) }).map(() => `
-                <tr style="height: 22px;">
+              </thead>
+              <tbody>
+                ${invoice.items?.map((it, idx) => `
+                  <tr>
+                    <td class="text-center" style="color: #666;">${idx + 1}</td>
+                    <td class="font-bold">${it.itemName}</td>
+                    <td class="text-center">${it.hsnCode || "-"}</td>
+                    <td class="text-right font-bold">${it.qty || 0}</td>
+                    <td class="text-center">${it.uom || "PCs"}</td>
+                    <td class="text-right">${Number(it.rate || 0).toFixed(2)}</td>
+                    <td class="text-right">${it.discountPercent || 0}%</td>
+                    <td class="text-right">${Number(it.taxable || 0).toFixed(2)}</td>
+                    <td class="text-right font-bold">${Number(it.total || 0).toFixed(2)}</td>
+                  </tr>
+                `).join("")}
+                <tr class="fill-remaining-space">
                   <td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td>
                 </tr>
-              `).join("")}
-            </tbody>
-            <tfoot>
-              <tr class="border-t font-black" style="background: #f8fafc;">
-                <td colspan="3" class="text-right p-1 font-bold">Total</td>
-                <td class="text-right p-1 font-black">${invoice.totalQuantity || 0}</td>
-                <td></td>
-                <td colspan="3" class="text-right p-1 font-bold">Taxable Amount:</td>
-                <td class="text-right p-1 font-black">₹${Number(invoice.taxableAmount || 0).toFixed(2)}</td>
-              </tr>
-            </tfoot>
-          </table>
+              </tbody>
+              <tfoot>
+                <tr class="border-t font-black" style="background: #f7fafc;">
+                  <td colspan="3" class="text-right font-bold" style="padding: 4px 6px;">Total</td>
+                  <td class="text-right font-black" style="padding: 4px 6px;">${invoice.totalQuantity || 0}</td>
+                  <td></td>
+                  <td colspan="3" class="text-right font-bold" style="padding: 4px 6px;">Taxable Total:</td>
+                  <td class="text-right font-black" style="padding: 4px 6px;">₹${Number(invoice.taxableAmount || 0).toFixed(2)}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
 
-          <!-- TOTAL IN WORDS & SUMMARY BOX -->
+          <!-- WORDS & STATUTORY TOTALS -->
           <div class="two-col border-t border-b">
-            <div class="col-half border-r p-2" style="display: flex; flex-direction: column; justify-content: space-between;">
+            <div class="col-half border-r" style="padding: 6px 10px; display: flex; flex-direction: column; justify-content: space-between;">
               <div>
-                <div style="font-size: 9px; font-weight: 900; color: #555; text-transform: uppercase;">Amount in Words:</div>
-                <div style="font-size: 10px; font-weight: bold; margin-top: 3px; line-height: 1.4;">${numberToWords(invoice.grandTotal)}</div>
+                <div style="font-size: 8.5px; font-weight: 900; color: #4a5568; text-transform: uppercase;">Total in words :</div>
+                <div style="font-size: 10px; font-weight: 900; margin-top: 3px; line-height: 1.35;">${numberToWords(invoice.grandTotal)}</div>
               </div>
-              <div style="margin-top: 10px; padding: 6px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 4px;">
-                <div style="font-size: 9px; font-weight: 900; text-transform: uppercase;">Bank Account Settlement Details:</div>
-                <div style="font-size: 10px; margin-top: 2px;">Bank Name: <strong>${invoice.vendorProfile?.bankName || "HDFC Bank"}</strong></div>
-                <div style="font-size: 10px;">A/c No: <strong>${invoice.vendorProfile?.accountNo || ""}</strong></div>
-                <div style="font-size: 10px;">IFSC Code: <strong>${invoice.vendorProfile?.ifscCode || ""}</strong></div>
+              <div style="margin-top: 8px;">
+                <div style="background: #ebf8ff; border: 1px solid #bee3f8; padding: 4px 8px; font-size: 8.5px; font-weight: 900; color: #2b6cb0; text-align: center; margin-bottom: 4px;">
+                  Bank Details
+                </div>
+                <div style="font-size: 9.5px; line-height: 1.35;">
+                  <div><strong>Name</strong> : ${invoice.vendorProfile?.bankName || "HDFC Bank"}</div>
+                  <div><strong>Branch</strong> : ${invoice.vendorProfile?.branch || ""}</div>
+                  <div><strong>Acc. Name</strong> : ${invoice.vendorProfile?.companyName || ""}</div>
+                  <div><strong>Acc. Number</strong> : <strong style="font-size: 10.5px;">${invoice.vendorProfile?.accountNo || ""}</strong></div>
+                  <div><strong>IFSC Code</strong> : <strong>${invoice.vendorProfile?.ifscCode || ""}</strong></div>
+                </div>
               </div>
             </div>
-            
-            <div class="col-half p-2">
-              <table style="width: 100%; font-size: 10.5px; border-collapse: collapse;">
+
+            <div class="col-half" style="padding: 6px 10px;">
+              <table style="width: 100%; font-size: 10px; border-collapse: collapse; line-height: 1.5;">
                 <tr>
-                  <td class="p-1">Taxable Value:</td>
-                  <td class="p-1 text-right font-bold">₹${Number(invoice.taxableAmount || 0).toFixed(2)}</td>
+                  <td>Total Taxable Value :</td>
+                  <td class="text-right font-bold">₹${Number(invoice.taxableAmount || 0).toFixed(2)}</td>
                 </tr>
                 ${invoice.cgst > 0 ? `
                   <tr>
-                    <td class="p-1">Output CGST:</td>
-                    <td class="p-1 text-right font-bold">₹${Number(invoice.cgst).toFixed(2)}</td>
+                    <td>CGST :</td>
+                    <td class="text-right font-bold">₹${Number(invoice.cgst).toFixed(2)}</td>
                   </tr>
                 ` : ""}
                 ${invoice.sgst > 0 ? `
                   <tr>
-                    <td class="p-1">Output SGST:</td>
-                    <td class="p-1 text-right font-bold">₹${Number(invoice.sgst).toFixed(2)}</td>
+                    <td>SGST :</td>
+                    <td class="text-right font-bold">₹${Number(invoice.sgst).toFixed(2)}</td>
                   </tr>
                 ` : ""}
                 ${invoice.igst > 0 ? `
                   <tr>
-                    <td class="p-1">Output IGST:</td>
-                    <td class="p-1 text-right font-bold">₹${Number(invoice.igst).toFixed(2)}</td>
+                    <td>IGST :</td>
+                    <td class="text-right font-bold">₹${Number(invoice.igst).toFixed(2)}</td>
                   </tr>
                 ` : ""}
                 <tr>
-                  <td class="p-1">Round Off (+/-):</td>
-                  <td class="p-1 text-right font-bold">${Number(invoice.roundOff || 0) >= 0 ? "+" : ""}${Number(invoice.roundOff || 0).toFixed(2)}</td>
+                  <td>Round Off (+/-) :</td>
+                  <td class="text-right font-bold">${Number(invoice.roundOff || 0) >= 0 ? "+" : ""}${Number(invoice.roundOff || 0).toFixed(2)}</td>
                 </tr>
-                <tr style="border-top: 1.5px solid #000;">
-                  <td class="p-1" style="font-size: 13px; font-weight: 900;">Grand Total (₹):</td>
-                  <td class="p-1 text-right" style="font-size: 14px; font-weight: 900;">₹${Number(invoice.grandTotal || 0).toFixed(2)}</td>
+                <tr style="border-top: 1.5px solid #2b6cb0; background: #ebf8ff;">
+                  <td style="font-size: 12px; font-weight: 900; padding: 4px 0;">Total Amount (₹) :</td>
+                  <td class="text-right font-black" style="font-size: 13.5px; padding: 4px 0;">₹${Number(invoice.grandTotal || 0).toFixed(2)}</td>
+                </tr>
+                <tr>
+                  <td colspan="2" class="text-right" style="font-size: 8px; color: #718096;">(E & O.E.)</td>
                 </tr>
               </table>
             </div>
           </div>
 
-          <!-- TERMS & AUTHORISED SIGNATORY -->
+          <!-- TERMS & SIGNATURE -->
           <div class="two-col" style="min-height: 85px;">
-            <div class="col-half border-r p-2" style="font-size: 9px; color: #444;">
-              <div style="font-weight: 900; text-transform: uppercase; color: #000;">Terms and Conditions:</div>
-              <div style="white-space: pre-line; margin-top: 3px;">${invoice.vendorProfile?.terms || ""}</div>
+            <div class="col-half border-r" style="padding: 6px 10px; font-size: 8.5px; color: #4a5568;">
+              <div style="font-weight: 900; text-transform: uppercase; color: #2d3748; margin-bottom: 3px;">Terms and Conditions :</div>
+              <div style="white-space: pre-line; line-height: 1.35;">${invoice.vendorProfile?.terms || ""}</div>
             </div>
-            <div class="col-half p-2 text-right" style="display: flex; flex-direction: column; justify-content: space-between;">
-              <div style="font-size: 10px; font-weight: bold;">For ${invoice.vendorProfile?.companyName || "Panasuria Confectionery"}</div>
-              <div style="margin-top: 35px; font-size: 9.5px; font-weight: 900; text-transform: uppercase; border-top: 1px solid #ccc; display: inline-block; padding-top: 2px;">
+            <div class="col-half" style="padding: 6px 10px; text-align: center; display: flex; flex-direction: column; justify-content: space-between;">
+              <div style="font-size: 8px; color: #718096;">Certified that the particulars given above are true and correct.</div>
+              <div style="font-size: 10px; font-weight: bold; margin-top: 2px;">For ${invoice.vendorProfile?.companyName || "Panasuria Confectionery"}</div>
+              <div style="margin-top: 35px; font-size: 9px; font-weight: 900; text-transform: uppercase; border-top: 1px solid #cbd5e0; padding-top: 2px;">
                 Authorised Signatory
               </div>
             </div>
           </div>
+
         </div>
       </body>
       </html>
@@ -696,8 +749,8 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
     setTimeout(() => {
       iframe.contentWindow.focus();
       iframe.contentWindow.print();
-      setTimeout(() => document.body.removeChild(iframe), 2000);
-    }, 300);
+      setTimeout(() => document.body.removeChild(iframe), 2500);
+    }, 400);
   };
 
   const gstCheck = validateGSTIN(invoiceHeader.customerGstin);
@@ -1329,7 +1382,7 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
                                   disabled={isPushing}
                                   className="inline-flex items-center gap-1 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-[11px] px-3 py-1.5 rounded transition shadow-sm"
                                 >
-                                  <Send className="w-3.5 h-3.5" /> Push
+                                  <Send className="w-3 h-3" /> Push
                                 </button>
                               )}
                             </div>
@@ -1581,10 +1634,10 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
         </div>
       )}
 
-      {/* MODAL 3: INVOICE PREVIEW WITH FLOATING CLOSE BUTTON */}
+      {/* MODAL 3: INVOICE PREVIEW WITH FULL-PAGE EXACT A4 PRINT */}
       {showPrintModal && selectedInvoiceForPrint && (
         <div className="fixed inset-0 z-50 bg-slate-900/80 backdrop-blur-sm flex items-start justify-center p-4 overflow-y-auto">
-          {/* FLOATING TOP-RIGHT CLOSE BUTTON */}
+          {/* FLOATING CLOSE BUTTON */}
           <button
             onClick={() => setShowPrintModal(false)}
             className="fixed top-4 right-6 z-[60] bg-white hover:bg-rose-50 text-slate-700 hover:text-rose-600 p-2.5 rounded-full shadow-2xl border border-slate-200 transition"
@@ -1593,7 +1646,7 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
             <X className="w-5 h-5 stroke-[2.5]" />
           </button>
 
-          <div className="bg-white rounded-xl shadow-2xl max-w-3xl w-full p-6 my-6 text-slate-900 font-sans">
+          <div className="bg-white rounded-xl shadow-2xl max-w-4xl w-full p-6 my-6 text-slate-900 font-sans">
             {/* TOOLBAR */}
             <div className="flex items-center justify-between border-b pb-4 mb-5">
               <div>
@@ -1605,94 +1658,171 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
                   onClick={() => triggerFullPagePrint(selectedInvoiceForPrint)}
                   className="flex items-center gap-1.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold px-5 py-2.5 rounded-lg transition shadow-md"
                 >
-                  <Printer className="w-4 h-4" /> Print / Save A4 PDF
+                  <Printer className="w-4 h-4" /> Print / Save Full-Page A4 PDF
                 </button>
               </div>
             </div>
 
-            {/* PREVIEW CONTAINER */}
-            <div className="border border-slate-300 p-4 rounded-lg text-xs space-y-3 bg-white">
-              <div className="text-center font-black text-sm tracking-wider uppercase border-b pb-2">
-                {selectedInvoiceForPrint.invoiceType}
+            {/* PREVIEW CONTAINER ON SCREEN */}
+            <div className="border-2 border-[#2b6cb0] text-xs bg-white">
+              <div className="flex justify-between items-center p-3 border-b border-[#2b6cb0]">
+                <div>
+                  <h3 className="text-base font-black text-slate-900 uppercase">{selectedInvoiceForPrint.vendorProfile?.companyName}</h3>
+                  <p className="text-[11px] text-slate-600">{selectedInvoiceForPrint.vendorProfile?.address}</p>
+                  <p className="text-[11px] font-mono font-bold mt-0.5">GSTIN: {selectedInvoiceForPrint.vendorProfile?.gstin}</p>
+                </div>
+                <div className="text-right text-[11px] leading-tight">
+                  <p><strong>Name :</strong> {selectedInvoiceForPrint.vendorProfile?.companyName}</p>
+                  <p><strong>Phone :</strong> {selectedInvoiceForPrint.vendorProfile?.phone}</p>
+                  <p><strong>Email :</strong> {selectedInvoiceForPrint.vendorProfile?.email}</p>
+                  <p><strong>PAN :</strong> {selectedInvoiceForPrint.vendorProfile?.pan || "AABCP1234F"}</p>
+                </div>
               </div>
 
-              <div className="flex justify-between items-start border-b pb-3">
-                <div>
-                  <h3 className="font-bold text-slate-900">{selectedInvoiceForPrint.vendorProfile?.companyName}</h3>
-                  <p className="text-[11px] text-slate-500">{selectedInvoiceForPrint.vendorProfile?.address}</p>
-                  <p className="text-[11px] font-mono font-bold mt-1">GSTIN: {selectedInvoiceForPrint.vendorProfile?.gstin}</p>
+              <div className="bg-[#f7fafc] px-3 py-1 font-bold text-[10px] flex justify-between border-b border-[#2b6cb0]">
+                <span>GSTIN : {selectedInvoiceForPrint.vendorProfile?.gstin}</span>
+                <span className="text-[#2b6cb0] font-black uppercase tracking-wider">{selectedInvoiceForPrint.invoiceType}</span>
+                <span>ORIGINAL FOR RECIPIENT</span>
+              </div>
+
+              <div className="grid grid-cols-2 border-b border-[#2b6cb0]">
+                <div className="p-3 border-r border-[#2b6cb0] space-y-0.5 text-[10.5px]">
+                  <p className="font-bold text-[9px] uppercase text-slate-500 mb-1">Details of Buyer | Billed to :</p>
+                  <p><strong>Name</strong>: <span className="font-bold">{selectedInvoiceForPrint.customerName}</span></p>
+                  <p><strong>Address</strong>: {selectedInvoiceForPrint.billingAddress}</p>
+                  <p><strong>Phone</strong>: {selectedInvoiceForPrint.customerPhone || "-"}</p>
+                  <p><strong>GSTIN</strong>: <span className="font-bold">{selectedInvoiceForPrint.customerGstin || "Unregistered"}</span></p>
+                  <p><strong>Place of Supply</strong>: {selectedInvoiceForPrint.placeOfSupply}</p>
                 </div>
-                <div className="text-right">
-                  <p className="font-mono font-bold">#{selectedInvoiceForPrint.invoiceNumber}</p>
-                  <p className="text-[11px] text-slate-500">Date: {selectedInvoiceForPrint.invoiceDate}</p>
+
+                <div>
+                  <div className="grid grid-cols-2 p-2 bg-slate-50 border-b border-[#2b6cb0] font-mono text-[10.5px]">
+                    <div><strong>Invoice No.</strong> : <strong>{selectedInvoiceForPrint.invoiceNumber}</strong></div>
+                    <div><strong>Date</strong> : {selectedInvoiceForPrint.invoiceDate}</div>
+                  </div>
                   {selectedInvoiceForPrint.poNumber && (
-                    <p className="text-[11px] font-mono text-indigo-700">PO: {selectedInvoiceForPrint.poNumber}</p>
+                    <div className="p-2 border-b border-[#2b6cb0] text-[10.5px]">
+                      <strong>PO No.</strong> : <span className="font-bold">{selectedInvoiceForPrint.poNumber}</span>
+                    </div>
                   )}
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4 border-b pb-3">
-                <div>
-                  <p className="font-bold text-[10px] text-slate-400 uppercase">Billed To</p>
-                  <p className="font-bold text-slate-900">{selectedInvoiceForPrint.customerName}</p>
-                  <p className="text-[11px] text-slate-600">{selectedInvoiceForPrint.billingAddress}</p>
-                  <p className="text-[11px] font-mono">GSTIN: {selectedInvoiceForPrint.customerGstin || "Unregistered"}</p>
-                </div>
-                <div>
-                  <p className="font-bold text-[10px] text-slate-400 uppercase">Shipped To</p>
-                  <p className="font-bold text-slate-900">
-                    {selectedInvoiceForPrint.hasConsignee ? selectedInvoiceForPrint.consigneeName : selectedInvoiceForPrint.customerName}
-                  </p>
-                  <p className="text-[11px] text-slate-600">
-                    {selectedInvoiceForPrint.hasConsignee ? selectedInvoiceForPrint.consigneeAddress : selectedInvoiceForPrint.billingAddress}
-                  </p>
+                  <div className="p-3 space-y-0.5 text-[10.5px]">
+                    <p className="font-bold text-[9px] uppercase text-slate-500 mb-1">Details of Consignee | Shipped to :</p>
+                    <p><strong>Name</strong>: {selectedInvoiceForPrint.hasConsignee ? selectedInvoiceForPrint.consigneeName : selectedInvoiceForPrint.customerName}</p>
+                    <p><strong>Address</strong>: {selectedInvoiceForPrint.hasConsignee ? selectedInvoiceForPrint.consigneeAddress : selectedInvoiceForPrint.billingAddress}</p>
+                    {selectedInvoiceForPrint.consigneeGstin && <p><strong>GSTIN</strong>: {selectedInvoiceForPrint.consigneeGstin}</p>}
+                  </div>
                 </div>
               </div>
 
               {/* TABLE */}
-              <table className="w-full text-left text-[11px] border border-slate-200">
-                <thead className="bg-slate-50 border-b font-bold uppercase text-[9px]">
+              <table className="w-full text-left text-[10.5px]">
+                <thead className="bg-[#f7fafc] border-b border-[#2b6cb0] font-bold text-[10px]">
                   <tr>
-                    <th className="p-1.5 border-r">Item</th>
-                    <th className="p-1.5 border-r text-center">HSN</th>
-                    <th className="p-1.5 border-r text-right">Qty</th>
-                    <th className="p-1.5 border-r text-center">UOM</th>
-                    <th className="p-1.5 border-r text-right">Rate</th>
-                    <th className="p-1.5 border-r text-right">Disc%</th>
-                    <th className="p-1.5 text-right">Total</th>
+                    <th className="p-1.5 border-r border-[#2b6cb0] text-center w-8">#</th>
+                    <th className="p-1.5 border-r border-[#2b6cb0]">Name of Product / Service</th>
+                    <th className="p-1.5 border-r border-[#2b6cb0] text-center w-16">HSN</th>
+                    <th className="p-1.5 border-r border-[#2b6cb0] text-right w-12">Qty</th>
+                    <th className="p-1.5 border-r border-[#2b6cb0] text-center w-14">UOM</th>
+                    <th className="p-1.5 border-r border-[#2b6cb0] text-right w-20">Rate</th>
+                    <th className="p-1.5 border-r border-[#2b6cb0] text-right w-14">Disc%</th>
+                    <th className="p-1.5 border-r border-[#2b6cb0] text-right w-20">Taxable</th>
+                    <th className="p-1.5 text-right w-24">Total</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-100">
+                <tbody className="divide-y divide-[#2b6cb0]/40">
                   {selectedInvoiceForPrint.items?.map((it, idx) => (
                     <tr key={idx}>
-                      <td className="p-1.5 border-r font-semibold">{it.itemName}</td>
-                      <td className="p-1.5 border-r text-center font-mono">{it.hsnCode}</td>
-                      <td className="p-1.5 border-r text-right font-mono font-bold">{it.qty}</td>
-                      <td className="p-1.5 border-r text-center">{it.uom}</td>
-                      <td className="p-1.5 border-r text-right font-mono">₹{it.rate}</td>
-                      <td className="p-1.5 border-r text-right font-mono">{it.discountPercent}%</td>
-                      <td className="p-1.5 text-right font-mono font-bold">₹{it.total?.toFixed(2)}</td>
+                      <td className="p-1.5 border-r border-[#2b6cb0] text-center">{idx + 1}</td>
+                      <td className="p-1.5 border-r border-[#2b6cb0] font-bold">{it.itemName}</td>
+                      <td className="p-1.5 border-r border-[#2b6cb0] text-center font-mono">{it.hsnCode}</td>
+                      <td className="p-1.5 border-r border-[#2b6cb0] text-right font-bold">{it.qty}</td>
+                      <td className="p-1.5 border-r border-[#2b6cb0] text-center">{it.uom}</td>
+                      <td className="p-1.5 border-r border-[#2b6cb0] text-right">₹{Number(it.rate).toFixed(2)}</td>
+                      <td className="p-1.5 border-r border-[#2b6cb0] text-right">{it.discountPercent}%</td>
+                      <td className="p-1.5 border-r border-[#2b6cb0] text-right">₹{Number(it.taxable).toFixed(2)}</td>
+                      <td className="p-1.5 text-right font-bold">₹{Number(it.total).toFixed(2)}</td>
                     </tr>
                   ))}
                 </tbody>
                 <tfoot>
-                  <tr className="border-t bg-slate-50 font-bold">
-                    <td colSpan="2" className="p-1.5 text-right">Total:</td>
-                    <td className="p-1.5 text-right font-mono font-black">{selectedInvoiceForPrint.totalQuantity}</td>
-                    <td colSpan="3" className="p-1.5 text-right">Grand Total:</td>
-                    <td className="p-1.5 text-right font-mono font-black text-emerald-700">₹{selectedInvoiceForPrint.grandTotal?.toFixed(2)}</td>
+                  <tr className="border-t border-[#2b6cb0] bg-[#f7fafc] font-bold">
+                    <td colSpan="3" className="p-1.5 text-right">Total:</td>
+                    <td className="p-1.5 text-right font-black">{selectedInvoiceForPrint.totalQuantity}</td>
+                    <td></td>
+                    <td colSpan="3" className="p-1.5 text-right">Taxable Total:</td>
+                    <td className="p-1.5 text-right font-black">₹{Number(selectedInvoiceForPrint.taxableAmount).toFixed(2)}</td>
                   </tr>
                 </tfoot>
               </table>
 
-              <div className="flex justify-end pt-2">
-                <button
-                  onClick={() => triggerFullPagePrint(selectedInvoiceForPrint)}
-                  className="flex items-center gap-1.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold px-4 py-2 rounded-lg transition"
-                >
-                  <Printer className="w-3.5 h-3.5" /> Print Invoice
-                </button>
+              <div className="grid grid-cols-2 border-t border-[#2b6cb0]">
+                <div className="p-3 border-r border-[#2b6cb0] space-y-3">
+                  <div>
+                    <p className="font-bold text-[9px] uppercase text-slate-500">Total in words :</p>
+                    <p className="font-bold text-[10px] mt-0.5">{numberToWords(selectedInvoiceForPrint.grandTotal)}</p>
+                  </div>
+                  <div className="p-2 bg-[#f7fafc] border border-[#2b6cb0]/40 rounded text-[10px] space-y-0.5">
+                    <p className="font-bold text-[#2b6cb0] uppercase text-[9px]">Bank Details</p>
+                    <p><strong>Bank</strong>: {selectedInvoiceForPrint.vendorProfile?.bankName}</p>
+                    <p><strong>A/c No</strong>: <strong>{selectedInvoiceForPrint.vendorProfile?.accountNo}</strong></p>
+                    <p><strong>IFSC</strong>: <strong>{selectedInvoiceForPrint.vendorProfile?.ifscCode}</strong></p>
+                  </div>
+                </div>
+
+                <div className="p-3 space-y-1 text-[10.5px]">
+                  <div className="flex justify-between">
+                    <span>Taxable Value :</span>
+                    <span className="font-bold">₹{Number(selectedInvoiceForPrint.taxableAmount).toFixed(2)}</span>
+                  </div>
+                  {selectedInvoiceForPrint.cgst > 0 && (
+                    <div className="flex justify-between">
+                      <span>Output CGST :</span>
+                      <span className="font-bold">₹{Number(selectedInvoiceForPrint.cgst).toFixed(2)}</span>
+                    </div>
+                  )}
+                  {selectedInvoiceForPrint.sgst > 0 && (
+                    <div className="flex justify-between">
+                      <span>Output SGST :</span>
+                      <span className="font-bold">₹{Number(selectedInvoiceForPrint.sgst).toFixed(2)}</span>
+                    </div>
+                  )}
+                  {selectedInvoiceForPrint.igst > 0 && (
+                    <div className="flex justify-between">
+                      <span>Output IGST :</span>
+                      <span className="font-bold">₹{Number(selectedInvoiceForPrint.igst).toFixed(2)}</span>
+                    </div>
+                  )}
+                  <div className="flex justify-between">
+                    <span>Round Off (+/-) :</span>
+                    <span className="font-bold">{Number(selectedInvoiceForPrint.roundOff) >= 0 ? "+" : ""}{Number(selectedInvoiceForPrint.roundOff).toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between items-center text-sm font-black pt-1 border-t border-[#2b6cb0] bg-[#ebf8ff] p-1 mt-1">
+                    <span>Total Amount (₹) :</span>
+                    <span className="font-black text-base">₹{Number(selectedInvoiceForPrint.grandTotal).toFixed(2)}</span>
+                  </div>
+                </div>
               </div>
+
+              <div className="grid grid-cols-2 border-t border-[#2b6cb0] text-[9px]">
+                <div className="p-3 border-r border-[#2b6cb0] text-slate-600">
+                  <p className="font-bold text-slate-800 uppercase mb-0.5">Terms and Conditions :</p>
+                  <p className="whitespace-pre-line">{selectedInvoiceForPrint.vendorProfile?.terms}</p>
+                </div>
+                <div className="p-3 text-center flex flex-col justify-between">
+                  <p className="text-[8px] text-slate-500">Certified that the particulars given above are true and correct.</p>
+                  <p className="font-bold mt-1">For {selectedInvoiceForPrint.vendorProfile?.companyName}</p>
+                  <p className="font-black uppercase text-[9px] mt-8 border-t border-slate-300 pt-1">Authorised Signatory</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex justify-end pt-4">
+              <button
+                onClick={() => triggerFullPagePrint(selectedInvoiceForPrint)}
+                className="flex items-center gap-1.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold px-5 py-2.5 rounded-lg transition shadow-md"
+              >
+                <Printer className="w-4 h-4" /> Print / Save Full-Page A4 PDF
+              </button>
             </div>
           </div>
         </div>
