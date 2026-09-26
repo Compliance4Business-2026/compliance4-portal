@@ -146,7 +146,6 @@ export default function App() {
   Other Expenses
 </button>
         </nav>
-
         <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg flex items-center justify-between">
           <div className="flex items-center gap-2">
             <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse"></span>
