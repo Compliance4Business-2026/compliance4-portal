@@ -7,8 +7,9 @@ import {
   Settings, 
   FileSpreadsheet 
 } from "lucide-react";
-import PurchaseModule from "./PurchaseModule";
 import BankModule from "./BankModule";
+import PurchaseModule from "./PurchaseModule";
+import SalesModule from "./SalesModule";
 
 export default function App() {
   const [activeTab, setActiveTab] = useState("bank"); // Default to banking to test immediately
