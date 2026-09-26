@@ -11,6 +11,7 @@ import BankModule from "./BankModule";
 import PurchaseModule from "./PurchaseModule";
 import SalesModule from "./SalesModule";
 import SettingsModule from "./SettingsModule";
+import DashboardModule from "./DashboardModule";
 
 export default function App() {
   const [activeTab, setActiveTab] = useState("sales");
@@ -163,10 +164,8 @@ export default function App() {
           />
         )}
         {activeTab === "dashboard" && (
-          <div className="flex-1 flex items-center justify-center text-slate-400">
-            <p className="text-sm">Dashboard Overview Ready for Integration</p>
-          </div>
-        )}
+  <DashboardModule key={`dash_${activeClient}`} activeClient={activeClient} />
+)}
       </main>
     </div>
   );
