@@ -12,6 +12,7 @@ import PurchaseModule from "./PurchaseModule";
 import SalesModule from "./SalesModule";
 import SettingsModule from "./SettingsModule";
 import DashboardModule from "./DashboardModule";
+import ExpenseModule from "./ExpenseModule";
 
 export default function App() {
   const [activeTab, setActiveTab] = useState("sales");
