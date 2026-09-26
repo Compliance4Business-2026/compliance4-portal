@@ -19,38 +19,9 @@ import {
   UserCheck,
   Users,
   ChevronRight,
-  ArrowLeft
+  ArrowLeft,
+  Filter
 } from "lucide-react";
-
-export const DEFAULT_PL_CATEGORIES = [
-  "Direct Costs / Cost of Goods Sold (COGS)",
-  "Employee Benefit Expenses",
-  "Rent & Occupancy Costs",
-  "Administrative & General Expenses",
-  "Selling & Distribution Expenses",
-  "Finance & Banking Charges",
-  "Depreciation & Non-Cash Entries"
-];
-
-export const INITIAL_CLIENT_COA = [
-  { id: "coa_1", name: "Purchases: Food Ingredients & Raw Material", category: "Direct Costs / Cost of Goods Sold (COGS)" },
-  { id: "coa_2", name: "Packaging Material & Cartons", category: "Direct Costs / Cost of Goods Sold (COGS)" },
-  { id: "coa_3", name: "Staff Salary & Wages", category: "Employee Benefit Expenses" },
-  { id: "coa_4", name: "Director Remuneration", category: "Employee Benefit Expenses" },
-  { id: "coa_5", name: "Staff Welfare & Refreshment", category: "Employee Benefit Expenses" },
-  { id: "coa_6", name: "Commercial Office / Shop Rent", category: "Rent & Occupancy Costs" },
-  { id: "coa_7", name: "Electricity & Fuel Charges", category: "Rent & Occupancy Costs" },
-  { id: "coa_8", name: "Water & Maintenance Charges", category: "Rent & Occupancy Costs" },
-  { id: "coa_9", name: "Legal & Statutory Audit Fees", category: "Administrative & General Expenses" },
-  { id: "coa_10", name: "Software Subscriptions & Cloud Hosting", category: "Administrative & General Expenses" },
-  { id: "coa_11", name: "Printing, Stationery & Postage", category: "Administrative & General Expenses" },
-  { id: "coa_12", name: "Digital Marketing & Advertisements", category: "Selling & Distribution Expenses" },
-  { id: "coa_13", name: "Delivery Commissions & Aggregator Charges", category: "Selling & Distribution Expenses" },
-  { id: "coa_14", name: "Bank Service Charges & Processing Fees", category: "Finance & Banking Charges" },
-  { id: "coa_15", name: "Loan Interest & Overdraft Interest", category: "Finance & Banking Charges" },
-  { id: "coa_16", name: "Depreciation on Machinery & Equipment", category: "Depreciation & Non-Cash Entries" },
-  { id: "coa_17", name: "Depreciation on Furniture & Fixtures", category: "Depreciation & Non-Cash Entries" }
-];
 
 const loadSheetJS = () => {
   return new Promise((resolve, reject) => {
@@ -83,39 +54,26 @@ const getFreshProfileState = (clientName, savedProfiles) => {
     accountNo: "",
     ifscCode: "",
     branch: "",
-    terms: "1. Goods once sold will not be taken back.\n2. Subject to our home Jurisdiction.",
+    terms: "1. Goods once sold will not be taken back.\n2. Subject to local Jurisdiction.",
     logoUrl: "",
     signatureUrl: ""
   };
 };
 
 export default function SettingsModule({ activeClient, setActiveClient }) {
-  // Navigation Flow: 'directory' (Default List) | 'manage' (Client Details)
-  const [viewMode, setViewMode] = useState("directory");
-  // Sub-tabs inside manage view: 'profile' | 'coa'
-  const [manageSubTab, setManageSubTab] = useState("profile");
+  const [viewMode, setViewMode] = useState("directory"); // 'directory' | 'manage'
+  const [manageSubTab, setManageSubTab] = useState("profile"); // 'profile' | 'coa'
 
   const [profiles, setProfiles] = useState(() => {
     try {
       const saved = localStorage.getItem("c4_client_profiles");
       if (saved) return JSON.parse(saved);
       return {
-        "Pansuria Confectionery & Food": {
-          companyName: "Pansuria Confectionery & Food",
-          gstin: "24BILPP3143F1ZD",
-          pan: "BILPP3143F",
-          contactPerson: "Sanjay",
-          phone: "+91 98250 12345",
-          email: "accounts@pansuria.com",
-          website: "",
-          address: "19, Pahelgav Bungalows, Off Judges Bungalow Road, Ahmedabad - 380015",
-          bankName: "HDFC Bank",
-          accountNo: "50200080509922",
-          ifscCode: "HDFC0000006",
-          branch: "Bodakdev, Ahmedabad",
-          terms: "1. Subject to Ahmedabad Jurisdiction.\n2. Delivery Ex-Premises.",
-          logoUrl: "",
-          signatureUrl: ""
+        [activeClient]: {
+          companyName: activeClient,
+          gstin: "",
+          pan: "",
+          address: ""
         }
       };
     } catch {
@@ -123,16 +81,18 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
     }
   });
 
+  // Client-scoped COA
   const [clientCoa, setClientCoa] = useState(() => {
     try {
       const saved = localStorage.getItem(`c4_coa_${activeClient}`);
-      return saved ? JSON.parse(saved) : INITIAL_CLIENT_COA;
+      return saved ? JSON.parse(saved) : [];
     } catch {
-      return INITIAL_CLIENT_COA;
+      return [];
     }
   });
 
   const [currentForm, setCurrentForm] = useState(() => getFreshProfileState(activeClient, profiles));
+  const [coaFilter, setCoaFilter] = useState("ALL"); // 'ALL' | 'P&L' | 'Balance Sheet'
 
   useEffect(() => {
     try {
@@ -144,14 +104,17 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
 
     try {
       const savedCoa = localStorage.getItem(`c4_coa_${activeClient}`);
-      setClientCoa(savedCoa ? JSON.parse(savedCoa) : INITIAL_CLIENT_COA);
+      setClientCoa(savedCoa ? JSON.parse(savedCoa) : []);
     } catch {
-      setClientCoa(INITIAL_CLIENT_COA);
+      setClientCoa([]);
     }
   }, [activeClient]);
 
+  // Form State for Adding Single Ledger
   const [newLedgerName, setNewLedgerName] = useState("");
-  const [newLedgerCategory, setNewLedgerCategory] = useState(DEFAULT_PL_CATEGORIES[1]);
+  const [newStatementType, setNewStatementType] = useState("P&L");
+  const [newLedgerCategory, setNewLedgerCategory] = useState("");
+
   const [isUploading, setIsUploading] = useState(false);
   const [notification, setNotification] = useState(null);
 
@@ -172,7 +135,6 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
     setTimeout(() => setNotification(null), 4000);
   };
 
-  // Image Upload Handlers
   const handleImageUpload = (e, field) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -190,7 +152,6 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
     reader.readAsDataURL(file);
   };
 
-  // ROUTE EXCLUSIVELY VIA MANAGE CLIENT & COA
   const handleOpenClient = (clientName) => {
     setActiveClient(clientName);
     const savedProfiles = JSON.parse(localStorage.getItem("c4_client_profiles") || "{}");
@@ -199,7 +160,6 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
     setManageSubTab("profile");
   };
 
-  // Add New Client
   const handleAddNewClient = () => {
     const newClientName = window.prompt("Enter Legal or Trade Name for the New Client:");
     if (!newClientName || !newClientName.trim()) return;
@@ -224,7 +184,7 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
       accountNo: "",
       ifscCode: "",
       branch: "",
-      terms: "1. Goods once sold will not be taken back.\n2. Subject to our home Jurisdiction.",
+      terms: "1. Goods once sold will not be taken back.\n2. Subject to local Jurisdiction.",
       logoUrl: "",
       signatureUrl: ""
     };
@@ -232,18 +192,17 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
     const updated = { ...profiles, [trimmed]: newProfile };
     setProfiles(updated);
     localStorage.setItem("c4_client_profiles", JSON.stringify(updated));
-    localStorage.setItem(`c4_coa_${trimmed}`, JSON.stringify(INITIAL_CLIENT_COA));
+    localStorage.setItem(`c4_coa_${trimmed}`, JSON.stringify([]));
 
     setActiveClient(trimmed);
     setCurrentForm(newProfile);
-    setClientCoa(INITIAL_CLIENT_COA);
+    setClientCoa([]);
     setViewMode("manage");
     setManageSubTab("profile");
 
-    notify(`Client "${trimmed}" created! Please enter statutory and banking details.`, "success");
+    notify(`Client "${trimmed}" created!`, "success");
   };
 
-  // Delete Client
   const handleDeleteClient = (clientNameToDelete, e) => {
     e.stopPropagation();
     const clientKeys = Object.keys(profiles);
@@ -252,9 +211,7 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
       return;
     }
 
-    if (!window.confirm(`Are you sure you want to delete "${clientNameToDelete}"? All its localized records will be unlinked.`)) {
-      return;
-    }
+    if (!window.confirm(`Are you sure you want to delete "${clientNameToDelete}"?`)) return;
 
     const updated = { ...profiles };
     delete updated[clientNameToDelete];
@@ -269,7 +226,6 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
     notify(`Client "${clientNameToDelete}" removed.`, "info");
   };
 
-  // Save Profile Handler
   const handleSaveProfile = () => {
     if (!currentForm.companyName.trim()) {
       notify("Please provide a Legal Company Name", "error");
@@ -283,14 +239,18 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
     setProfiles(updatedProfiles);
     localStorage.setItem("c4_client_profiles", JSON.stringify(updatedProfiles));
     setActiveClient(targetName);
-    notify(`Profile for "${targetName}" saved successfully!`, "success");
+    notify(`Complete profile for "${targetName}" saved successfully!`, "success");
   };
 
-  // Chart of Accounts Handlers
+  // Add Single Ledger
   const handleAddLedger = (e) => {
     e.preventDefault();
     if (!newLedgerName.trim()) {
       notify("Ledger Name cannot be blank", "error");
+      return;
+    }
+    if (!newLedgerCategory.trim()) {
+      notify("Please assign a Category name", "error");
       return;
     }
 
@@ -302,50 +262,56 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
     const created = {
       id: `coa_${Date.now()}`,
       name: newLedgerName.trim(),
-      category: newLedgerCategory
+      statementType: newStatementType,
+      category: newLedgerCategory.trim()
     };
 
     setClientCoa((prev) => [...prev, created]);
     setNewLedgerName("");
-    notify(`Ledger "${created.name}" added to ${activeClient}!`, "success");
+    setNewLedgerCategory("");
+    notify(`Ledger "${created.name}" saved under ${created.category}!`, "success");
   };
 
   const handleDeleteLedger = (id, name) => {
-    if (!window.confirm(`Delete ledger "${name}" from this client's accounts?`)) return;
+    if (!window.confirm(`Delete ledger "${name}"?`)) return;
     setClientCoa((prev) => prev.filter((l) => l.id !== id));
     notify(`Ledger "${name}" deleted.`, "info");
   };
 
+  // 3-COLUMN TEMPLATE (LEDGER NAME, STATEMENT TYPE, CATEGORY)
   const handleDownloadTemplate = async () => {
     try {
       const XLSX = await loadSheetJS();
       const templateData = [
-        ["Ledger Name", "Category"],
-        ["Purchases: Food Ingredients & Raw Material", "Direct Costs / Cost of Goods Sold (COGS)"],
-        ["Staff Salary & Wages", "Employee Benefit Expenses"],
-        ["Commercial Office / Shop Rent", "Rent & Occupancy Costs"],
-        ["Electricity & Fuel Charges", "Rent & Occupancy Costs"],
-        ["Legal & Statutory Audit Fees", "Administrative & General Expenses"],
-        ["Digital Marketing & Advertisements", "Selling & Distribution Expenses"],
-        ["Bank Service Charges & Fees", "Finance & Banking Charges"],
-        ["Depreciation on Machinery & Equipment", "Depreciation & Non-Cash Entries"]
+        ["Ledger Name", "Statement Type", "Category"],
+        ["Swiggy - Commission", "P&L", "Selling & Distribution Expenses"],
+        ["Electricity Expense", "P&L", "Rent & Occupancy Costs"],
+        ["Staff Salary & Wages", "P&L", "Employee Benefit Expenses"],
+        ["Purchases - Dairy Products", "P&L", "Cost of Goods Sold (COGS)"],
+        ["Sales - In-Store", "P&L", "Revenue from Operations"],
+        ["HDFC Bank A/c - 5010", "Balance Sheet", "Cash & Bank Balances"],
+        ["Electricity Expense Payable", "Balance Sheet", "Current Liabilities & Provisions"],
+        ["TDS Payable - Contractor", "Balance Sheet", "Duties & Taxes"],
+        ["Coffee Machine", "Balance Sheet", "Fixed Assets"]
       ];
 
       const ws = XLSX.utils.aoa_to_sheet(templateData);
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, "Chart_of_Accounts");
       XLSX.writeFile(wb, `COA_Template_${activeClient.replace(/\s+/g, "_")}.xlsx`);
-      notify("COA Excel template downloaded!", "success");
+      notify("COA Template downloaded!", "success");
     } catch {
       const csvContent =
-        "Ledger Name,Category\n" +
-        "Purchases: Food Ingredients & Raw Material,Direct Costs / Cost of Goods Sold (COGS)\n" +
-        "Staff Salary & Wages,Employee Benefit Expenses\n" +
-        "Commercial Office / Shop Rent,Rent & Occupancy Costs\n" +
-        "Legal & Statutory Audit Fees,Administrative & General Expenses\n" +
-        "Digital Marketing & Advertisements,Selling & Distribution Expenses\n" +
-        "Bank Service Charges & Fees,Finance & Banking Charges\n" +
-        "Depreciation on Machinery & Equipment,Depreciation & Non-Cash Entries\n";
+        "Ledger Name,Statement Type,Category\n" +
+        "Swiggy - Commission,P&L,Selling & Distribution Expenses\n" +
+        "Electricity Expense,P&L,Rent & Occupancy Costs\n" +
+        "Staff Salary & Wages,P&L,Employee Benefit Expenses\n" +
+        "Purchases - Dairy Products,P&L,Cost of Goods Sold (COGS)\n" +
+        "Sales - In-Store,P&L,Revenue from Operations\n" +
+        "HDFC Bank A/c - 5010,Balance Sheet,Cash & Bank Balances\n" +
+        "Electricity Expense Payable,Balance Sheet,Current Liabilities & Provisions\n" +
+        "TDS Payable - Contractor,Balance Sheet,Duties & Taxes\n" +
+        "Coffee Machine,Balance Sheet,Fixed Assets\n";
       const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
@@ -357,6 +323,7 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
     }
   };
 
+  // FULLY DYNAMIC IMPORT (PRESERVES EXACT CATEGORIES)
   const handleFileUpload = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -391,10 +358,11 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
 
           const headers = (rawRows[0] || []).map((h) => String(h || "").trim().toLowerCase());
           const nameIdx = headers.findIndex((h) => h.includes("ledger") || h.includes("account") || h.includes("name"));
-          const catIdx = headers.findIndex((h) => h.includes("category") || h.includes("group") || h.includes("head") || h.includes("p&l"));
+          const typeIdx = headers.findIndex((h) => h.includes("statement") || h.includes("type") || h.includes("sheet") || h.includes("p&l"));
+          const catIdx = headers.findIndex((h) => h.includes("category") || h.includes("group") || h.includes("head"));
 
           if (nameIdx === -1) {
-            notify("Missing 'Ledger Name' column header in file.", "error");
+            notify("Missing 'Ledger Name' column in header.", "error");
             setIsUploading(false);
             return;
           }
@@ -405,57 +373,57 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
             const name = String(row[nameIdx] || "").trim();
             if (!name) continue;
 
-            let rawCat = catIdx !== -1 && row[catIdx] ? String(row[catIdx]).trim() : "";
-            let matchedCat = DEFAULT_PL_CATEGORIES.find((c) => c.toLowerCase() === rawCat.toLowerCase());
-
-            if (!matchedCat) {
-              const lower = rawCat.toLowerCase();
-              if (lower.includes("cost") || lower.includes("cogs") || lower.includes("purchase") || lower.includes("direct")) {
-                matchedCat = DEFAULT_PL_CATEGORIES[0];
-              } else if (lower.includes("employee") || lower.includes("salary") || lower.includes("wage") || lower.includes("staff")) {
-                matchedCat = DEFAULT_PL_CATEGORIES[1];
-              } else if (lower.includes("rent") || lower.includes("electricity") || lower.includes("power") || lower.includes("occupancy")) {
-                matchedCat = DEFAULT_PL_CATEGORIES[2];
-              } else if (lower.includes("selling") || lower.includes("market") || lower.includes("delivery") || lower.includes("ad")) {
-                matchedCat = DEFAULT_PL_CATEGORIES[4];
-              } else if (lower.includes("bank") || lower.includes("finance") || lower.includes("interest")) {
-                matchedCat = DEFAULT_PL_CATEGORIES[5];
-              } else if (lower.includes("depr") || lower.includes("amort") || lower.includes("asset")) {
-                matchedCat = DEFAULT_PL_CATEGORIES[6];
-              } else {
-                matchedCat = DEFAULT_PL_CATEGORIES[3];
+            let statementType = "P&L";
+            if (typeIdx !== -1 && row[typeIdx]) {
+              const rawType = String(row[typeIdx]).trim().toLowerCase();
+              if (rawType.includes("balance") || rawType.includes("bs") || rawType.includes("asset") || rawType.includes("liab")) {
+                statementType = "Balance Sheet";
+              }
+            } else {
+              // Contextual check if column is omitted
+              const lower = name.toLowerCase();
+              if (lower.includes("payable") || lower.includes("bank") || lower.includes("cash") || lower.includes("deposit") || lower.includes("tds") || lower.includes("gst payable") || lower.includes("advance") || lower.includes("machine") || lower.includes("equipment")) {
+                statementType = "Balance Sheet";
               }
             }
 
+            let category = "General Overheads";
+            if (catIdx !== -1 && row[catIdx] && String(row[catIdx]).trim().length > 0) {
+              category = String(row[catIdx]).trim();
+            } else {
+              category = statementType === "Balance Sheet" ? "Balance Sheet Items" : "Operational Expenses";
+            }
+
             parsedLedgers.push({
-              id: `coa_${Date.now()}_${i}`,
+              id: `coa_${Date.now()}_${i}_${Math.random().toString(36).substr(2, 4)}`,
               name,
-              category: matchedCat
+              statementType,
+              category
             });
           }
 
           if (parsedLedgers.length === 0) {
-            notify("No valid ledger rows found in file.", "error");
+            notify("No valid ledgers detected in spreadsheet.", "error");
             setIsUploading(false);
             return;
           }
 
           const replaceOption = window.confirm(
-            `Extracted ${parsedLedgers.length} ledgers!\n\nClick OK to REPLACE the entire list for ${activeClient}.\nClick CANCEL to APPEND only new ledgers to current list.`
+            `Found ${parsedLedgers.length} ledgers!\n\nClick OK to REPLACE the entire Chart of Accounts for ${activeClient}.\nClick CANCEL to APPEND new ledgers.`
           );
 
           if (replaceOption) {
             setClientCoa(parsedLedgers);
-            notify(`Replaced with ${parsedLedgers.length} ledgers for ${activeClient}!`, "success");
+            notify(`Uploaded ${parsedLedgers.length} ledgers for ${activeClient}!`, "success");
           } else {
             const existingNames = new Set(clientCoa.map((l) => l.name.toLowerCase()));
             const newOnly = parsedLedgers.filter((l) => !existingNames.has(l.name.toLowerCase()));
             setClientCoa((prev) => [...prev, ...newOnly]);
-            notify(`Appended ${newOnly.length} new ledgers (skipped ${parsedLedgers.length - newOnly.length} duplicates)!`, "success");
+            notify(`Appended ${newOnly.length} new ledgers!`, "success");
           }
         } catch (err) {
           console.error(err);
-          notify("Failed to parse file. Check template format.", "error");
+          notify("Failed to parse spreadsheet file.", "error");
         } finally {
           setIsUploading(false);
           if (fileInputRef.current) fileInputRef.current.value = "";
@@ -470,11 +438,24 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
     }
   };
 
+  // Group client COA dynamically by Category
+  const filteredCoa = clientCoa.filter((l) => {
+    if (coaFilter === "ALL") return true;
+    return l.statementType === coaFilter;
+  });
+
+  const categoriesGrouped = filteredCoa.reduce((acc, item) => {
+    const cat = item.category || "Uncategorized";
+    if (!acc[cat]) acc[cat] = [];
+    acc[cat].push(item);
+    return acc;
+  }, {});
+
   const clientListKeys = Object.keys(profiles);
 
   return (
     <div className="flex-1 flex flex-col h-full bg-[#F8FAFC] overflow-y-auto">
-      {/* TOP HEADER BAR */}
+      {/* HEADER BAR */}
       <header className="bg-white border-b border-slate-200 px-8 py-4 flex items-center justify-between shadow-sm shrink-0">
         <div>
           <div className="flex items-center gap-3">
@@ -493,7 +474,7 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
           <p className="text-xs text-slate-500 font-medium mt-0.5">
             {viewMode === "directory"
               ? "All registered entities on this Compliance4 portal"
-              : "Configuring verified legal profile, branding, bank accounts, and Chart of Accounts"}
+              : "Configuring legal profile, branding, bank accounts, and custom Chart of Accounts"}
           </p>
         </div>
 
@@ -521,7 +502,7 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
               <button
                 onClick={handleDownloadTemplate}
                 className="flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold px-3.5 py-2 rounded-lg transition"
-                title="Download Sample COA Excel Template"
+                title="Download 3-column Template (Ledger Name, Statement Type, Category)"
               >
                 <Download className="w-3.5 h-3.5" /> Download Template
               </button>
@@ -540,14 +521,14 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
                 className="flex items-center gap-1.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold px-4 py-2 rounded-lg transition shadow-sm disabled:opacity-50"
               >
                 <Upload className="w-3.5 h-3.5" />
-                {isUploading ? "Importing..." : "Bulk Upload COA (.xlsx / .csv)"}
+                {isUploading ? "Uploading..." : "Bulk Upload COA (.xlsx / .csv)"}
               </button>
             </div>
           )}
         </div>
       </header>
 
-      {/* SUB-TABS: RENDERED ONLY INSIDE MANAGE VIEW */}
+      {/* MANAGE TABS */}
       {viewMode === "manage" && (
         <div className="px-8 pt-3 pb-0 flex items-center gap-6 border-b border-slate-200 bg-white shrink-0">
           <button
@@ -565,25 +546,22 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
               manageSubTab === "coa" ? "border-slate-900 text-slate-900" : "border-transparent text-slate-400 hover:text-slate-600"
             }`}
           >
-            <BookOpen className="w-4 h-4" /> Chart of Accounts & P&L Mapping
-            <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-slate-900 text-white font-mono">
-              {clientCoa.length}
-            </span>
+            <BookOpen className="w-4 h-4" /> Chart of Accounts ({clientCoa.length})
           </button>
         </div>
       )}
 
-      {/* VIEWPORT BODY */}
+      {/* BODY VIEWPORT */}
       <div className="p-8 max-w-5xl mx-auto w-full space-y-6">
 
-        {/* 1. MASTER VIEW: ALL CLIENTS DIRECTORY */}
+        {/* 1. MASTER DIRECTORY */}
         {viewMode === "directory" && (
           <div className="space-y-4">
             <div className="flex items-center justify-between">
               <div>
                 <h3 className="text-sm font-bold text-slate-900">Configured Client Entities ({clientListKeys.length})</h3>
                 <p className="text-xs text-slate-500">
-                  Select <strong>"Manage Client & COA"</strong> to view or edit that specific client's profile and custom accounts.
+                  Select <strong>"Manage Client & COA"</strong> to edit that specific client.
                 </p>
               </div>
             </div>
@@ -596,9 +574,9 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
                 let coaCount = 0;
                 try {
                   const storedCoa = localStorage.getItem(coaKey);
-                  coaCount = storedCoa ? JSON.parse(storedCoa).length : INITIAL_CLIENT_COA.length;
+                  coaCount = storedCoa ? JSON.parse(storedCoa).length : 0;
                 } catch {
-                  coaCount = INITIAL_CLIENT_COA.length;
+                  coaCount = 0;
                 }
 
                 return (
@@ -662,7 +640,6 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
                         {coaCount} Custom Ledgers
                       </span>
 
-                      {/* STRICT ROUTING ACTION */}
                       <button
                         onClick={() => handleOpenClient(clientName)}
                         className="text-xs font-bold text-white bg-slate-900 hover:bg-slate-800 px-3.5 py-1.5 rounded-lg flex items-center gap-1 transition shadow-sm"
@@ -677,31 +654,21 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
           </div>
         )}
 
-        {/* 2. DETAIL VIEW: PROFILE & BRANDING (ROUTED ONLY VIA "MANAGE CLIENT & COA") */}
+        {/* 2. PROFILE TAB */}
         {viewMode === "manage" && manageSubTab === "profile" && (
           <div className="space-y-6">
-
-            {/* BRANDING: LOGO & AUTHORIZED SIGNATURE */}
+            {/* BRANDING */}
             <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm space-y-4">
               <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
                 <ImageIcon className="w-4 h-4 text-slate-600" /> Entity Branding & Signatures (For Invoices)
               </h3>
 
               <div className="grid grid-cols-2 gap-6 pt-2">
-                {/* COMPANY LOGO */}
                 <div className="border border-dashed border-slate-300 rounded-xl p-4 flex flex-col items-center justify-center text-center bg-slate-50/50">
                   {currentForm.logoUrl ? (
                     <div className="relative group mb-3">
-                      <img
-                        src={currentForm.logoUrl}
-                        alt="Company Logo"
-                        className="max-h-24 max-w-full object-contain rounded border border-slate-200 bg-white p-1"
-                      />
-                      <button
-                        onClick={() => setCurrentForm((p) => ({ ...p, logoUrl: "" }))}
-                        className="absolute -top-2 -right-2 bg-rose-600 text-white rounded-full p-1 shadow hover:bg-rose-700"
-                        title="Remove Logo"
-                      >
+                      <img src={currentForm.logoUrl} alt="Logo" className="max-h-24 max-w-full object-contain rounded border border-slate-200 bg-white p-1" />
+                      <button onClick={() => setCurrentForm((p) => ({ ...p, logoUrl: "" }))} className="absolute -top-2 -right-2 bg-rose-600 text-white rounded-full p-1 shadow hover:bg-rose-700">
                         <Trash2 className="w-3 h-3" />
                       </button>
                     </div>
@@ -710,37 +677,18 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
                       <ImageIcon className="w-7 h-7" />
                     </div>
                   )}
-
-                  <input
-                    type="file"
-                    ref={logoInputRef}
-                    onChange={(e) => handleImageUpload(e, "logoUrl")}
-                    accept="image/*"
-                    className="hidden"
-                  />
-                  <button
-                    onClick={() => logoInputRef.current?.click()}
-                    className="px-3 py-1.5 bg-white border border-slate-300 hover:border-slate-400 rounded-lg text-xs font-semibold text-slate-700 transition"
-                  >
+                  <input type="file" ref={logoInputRef} onChange={(e) => handleImageUpload(e, "logoUrl")} accept="image/*" className="hidden" />
+                  <button onClick={() => logoInputRef.current?.click()} className="px-3 py-1.5 bg-white border border-slate-300 hover:border-slate-400 rounded-lg text-xs font-semibold text-slate-700 transition">
                     {currentForm.logoUrl ? "Replace Logo" : "Upload Company Logo"}
                   </button>
-                  <p className="text-[10px] text-slate-400 mt-1">PNG, JPG up to 2MB (Prints on top of Tax Invoice)</p>
+                  <p className="text-[10px] text-slate-400 mt-1">PNG, JPG up to 2MB</p>
                 </div>
 
-                {/* AUTHORIZED SIGNATORY STAMP */}
                 <div className="border border-dashed border-slate-300 rounded-xl p-4 flex flex-col items-center justify-center text-center bg-slate-50/50">
                   {currentForm.signatureUrl ? (
                     <div className="relative group mb-3">
-                      <img
-                        src={currentForm.signatureUrl}
-                        alt="Signature"
-                        className="max-h-24 max-w-full object-contain rounded border border-slate-200 bg-white p-1"
-                      />
-                      <button
-                        onClick={() => setCurrentForm((p) => ({ ...p, signatureUrl: "" }))}
-                        className="absolute -top-2 -right-2 bg-rose-600 text-white rounded-full p-1 shadow hover:bg-rose-700"
-                        title="Remove Signature"
-                      >
+                      <img src={currentForm.signatureUrl} alt="Signature" className="max-h-24 max-w-full object-contain rounded border border-slate-200 bg-white p-1" />
+                      <button onClick={() => setCurrentForm((p) => ({ ...p, signatureUrl: "" }))} className="absolute -top-2 -right-2 bg-rose-600 text-white rounded-full p-1 shadow hover:bg-rose-700">
                         <Trash2 className="w-3 h-3" />
                       </button>
                     </div>
@@ -749,26 +697,16 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
                       <PenTool className="w-7 h-7" />
                     </div>
                   )}
-
-                  <input
-                    type="file"
-                    ref={signatureInputRef}
-                    onChange={(e) => handleImageUpload(e, "signatureUrl")}
-                    accept="image/*"
-                    className="hidden"
-                  />
-                  <button
-                    onClick={() => signatureInputRef.current?.click()}
-                    className="px-3 py-1.5 bg-white border border-slate-300 hover:border-slate-400 rounded-lg text-xs font-semibold text-slate-700 transition"
-                  >
+                  <input type="file" ref={signatureInputRef} onChange={(e) => handleImageUpload(e, "signatureUrl")} accept="image/*" className="hidden" />
+                  <button onClick={() => signatureInputRef.current?.click()} className="px-3 py-1.5 bg-white border border-slate-300 hover:border-slate-400 rounded-lg text-xs font-semibold text-slate-700 transition">
                     {currentForm.signatureUrl ? "Replace Signature" : "Upload Authorized Signatory"}
                   </button>
-                  <p className="text-[10px] text-slate-400 mt-1">Digital signature/stamp image (Prints on bottom right)</p>
+                  <p className="text-[10px] text-slate-400 mt-1">Digital signature image</p>
                 </div>
               </div>
             </div>
 
-            {/* LEGAL & STATUTORY IDENTIFIERS */}
+            {/* LEGAL & STATUTORY DATA */}
             <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm space-y-4">
               <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
                 <Building2 className="w-4 h-4 text-slate-600" /> Legal Entity & Statutory Data
@@ -777,185 +715,60 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
               <div className="grid grid-cols-3 gap-4">
                 <div className="col-span-2">
                   <label className="block text-xs font-bold text-slate-700 mb-1">Company / Legal Trade Name</label>
-                  <input
-                    type="text"
-                    value={currentForm.companyName}
-                    onChange={(e) => setCurrentForm({ ...currentForm, companyName: e.target.value })}
-                    className="w-full text-xs font-bold border border-slate-300 rounded-lg p-2"
-                  />
+                  <input type="text" value={currentForm.companyName} onChange={(e) => setCurrentForm({ ...currentForm, companyName: e.target.value })} className="w-full text-xs font-bold border border-slate-300 rounded-lg p-2" />
                 </div>
-
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1">GSTIN</label>
-                  <input
-                    type="text"
-                    placeholder="24ABCDE1234F1Z5"
-                    value={currentForm.gstin}
-                    onChange={(e) => setCurrentForm({ ...currentForm, gstin: e.target.value.toUpperCase() })}
-                    className="w-full text-xs font-mono font-bold border border-slate-300 rounded-lg p-2"
-                  />
+                  <input type="text" placeholder="24ABCDE1234F1Z5" value={currentForm.gstin} onChange={(e) => setCurrentForm({ ...currentForm, gstin: e.target.value.toUpperCase() })} className="w-full text-xs font-mono font-bold border border-slate-300 rounded-lg p-2" />
                 </div>
-
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1">PAN Number</label>
-                  <input
-                    type="text"
-                    placeholder="ABCDE1234F"
-                    value={currentForm.pan}
-                    onChange={(e) => setCurrentForm({ ...currentForm, pan: e.target.value.toUpperCase() })}
-                    className="w-full text-xs font-mono font-bold border border-slate-300 rounded-lg p-2"
-                  />
+                  <input type="text" placeholder="ABCDE1234F" value={currentForm.pan} onChange={(e) => setCurrentForm({ ...currentForm, pan: e.target.value.toUpperCase() })} className="w-full text-xs font-mono font-bold border border-slate-300 rounded-lg p-2" />
                 </div>
-
                 <div className="col-span-2">
                   <label className="block text-xs font-bold text-slate-700 mb-1">Registered Business Address</label>
-                  <input
-                    type="text"
-                    placeholder="Complete Registered Office Address"
-                    value={currentForm.address}
-                    onChange={(e) => setCurrentForm({ ...currentForm, address: e.target.value })}
-                    className="w-full text-xs border border-slate-300 rounded-lg p-2"
-                  />
+                  <input type="text" placeholder="Complete Office Address" value={currentForm.address} onChange={(e) => setCurrentForm({ ...currentForm, address: e.target.value })} className="w-full text-xs border border-slate-300 rounded-lg p-2" />
                 </div>
               </div>
             </div>
 
-            {/* CONTACT & COMMUNICATION */}
+            {/* CONTACT & BANK */}
             <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm space-y-4">
               <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-                <UserCheck className="w-4 h-4 text-slate-600" /> Contact & Communication
+                <CreditCard className="w-4 h-4 text-slate-600" /> Primary Settlement Bank
               </h3>
-
-              <div className="grid grid-cols-4 gap-4">
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">Contact Person Name</label>
-                  <input
-                    type="text"
-                    placeholder="e.g. Managing Director"
-                    value={currentForm.contactPerson}
-                    onChange={(e) => setCurrentForm({ ...currentForm, contactPerson: e.target.value })}
-                    className="w-full text-xs border border-slate-300 rounded-lg p-2"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">Contact Phone</label>
-                  <input
-                    type="text"
-                    placeholder="+91 98250 XXXXX"
-                    value={currentForm.phone}
-                    onChange={(e) => setCurrentForm({ ...currentForm, phone: e.target.value })}
-                    className="w-full text-xs border border-slate-300 rounded-lg p-2"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">Email Address</label>
-                  <input
-                    type="email"
-                    placeholder="accounts@company.com"
-                    value={currentForm.email}
-                    onChange={(e) => setCurrentForm({ ...currentForm, email: e.target.value })}
-                    className="w-full text-xs border border-slate-300 rounded-lg p-2"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">Official Website</label>
-                  <input
-                    type="text"
-                    placeholder="https://company.com"
-                    value={currentForm.website}
-                    onChange={(e) => setCurrentForm({ ...currentForm, website: e.target.value })}
-                    className="w-full text-xs border border-slate-300 rounded-lg p-2"
-                  />
-                </div>
-              </div>
-            </div>
-
-            {/* PRIMARY SETTLEMENT BANK */}
-            <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm space-y-4">
-              <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-                <CreditCard className="w-4 h-4 text-slate-600" /> Primary Settlement Bank (Prints on Tax Invoices)
-              </h3>
-
               <div className="grid grid-cols-4 gap-4">
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1">Bank Name</label>
-                  <input
-                    type="text"
-                    placeholder="e.g. HDFC Bank"
-                    value={currentForm.bankName}
-                    onChange={(e) => setCurrentForm({ ...currentForm, bankName: e.target.value })}
-                    className="w-full text-xs border border-slate-300 rounded-lg p-2"
-                  />
+                  <input type="text" value={currentForm.bankName} onChange={(e) => setCurrentForm({ ...currentForm, bankName: e.target.value })} className="w-full text-xs border border-slate-300 rounded-lg p-2" />
                 </div>
-
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1">Account Number</label>
-                  <input
-                    type="text"
-                    placeholder="502000XXXXXX"
-                    value={currentForm.accountNo}
-                    onChange={(e) => setCurrentForm({ ...currentForm, accountNo: e.target.value })}
-                    className="w-full text-xs font-mono font-bold border border-slate-300 rounded-lg p-2"
-                  />
+                  <input type="text" value={currentForm.accountNo} onChange={(e) => setCurrentForm({ ...currentForm, accountNo: e.target.value })} className="w-full text-xs font-mono font-bold border border-slate-300 rounded-lg p-2" />
                 </div>
-
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1">IFSC Code</label>
-                  <input
-                    type="text"
-                    placeholder="HDFC0000006"
-                    value={currentForm.ifscCode}
-                    onChange={(e) => setCurrentForm({ ...currentForm, ifscCode: e.target.value.toUpperCase() })}
-                    className="w-full text-xs font-mono font-bold border border-slate-300 rounded-lg p-2"
-                  />
+                  <input type="text" value={currentForm.ifscCode} onChange={(e) => setCurrentForm({ ...currentForm, ifscCode: e.target.value.toUpperCase() })} className="w-full text-xs font-mono font-bold border border-slate-300 rounded-lg p-2" />
                 </div>
-
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1">Branch</label>
-                  <input
-                    type="text"
-                    placeholder="Branch name & City"
-                    value={currentForm.branch}
-                    onChange={(e) => setCurrentForm({ ...currentForm, branch: e.target.value })}
-                    className="w-full text-xs border border-slate-300 rounded-lg p-2"
-                  />
+                  <input type="text" value={currentForm.branch} onChange={(e) => setCurrentForm({ ...currentForm, branch: e.target.value })} className="w-full text-xs border border-slate-300 rounded-lg p-2" />
                 </div>
               </div>
             </div>
 
-            {/* DEFAULT TERMS & CONDITIONS */}
-            <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm space-y-2">
-              <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">
-                Default Terms & Conditions (Prints on Invoices)
-              </h3>
-              <textarea
-                rows={4}
-                value={currentForm.terms}
-                onChange={(e) => setCurrentForm({ ...currentForm, terms: e.target.value })}
-                className="w-full text-xs font-mono border border-slate-300 rounded-lg p-3 text-slate-700"
-              />
-            </div>
-
             <div className="flex justify-end">
-              <button
-                onClick={handleSaveProfile}
-                className="flex items-center gap-1.5 px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-bold transition shadow-md"
-              >
+              <button onClick={handleSaveProfile} className="flex items-center gap-1.5 px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-bold transition shadow-md">
                 <Save className="w-4 h-4" /> Save Profile & Brand Masters
               </button>
             </div>
-
           </div>
         )}
 
-        {/* 3. DETAIL VIEW: CHART OF ACCOUNTS (ROUTED ONLY VIA "MANAGE CLIENT & COA") */}
+        {/* 3. DYNAMIC CHART OF ACCOUNTS TAB */}
         {viewMode === "manage" && manageSubTab === "coa" && (
           <div className="space-y-6">
-            
-            {/* MANUAL SINGLE LEDGER ADD FORM */}
+            {/* ADD LEDGER FORM */}
             <form onSubmit={handleAddLedger} className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm space-y-4">
               <div className="flex items-center justify-between border-b border-slate-100 pb-3">
                 <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
@@ -964,14 +777,12 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
                 <span className="text-[11px] text-slate-400">Or use "Bulk Upload COA" above for spreadsheet import</span>
               </div>
 
-              <div className="grid grid-cols-5 gap-4 items-end">
+              <div className="grid grid-cols-6 gap-3 items-end">
                 <div className="col-span-2">
-                  <label className="block text-xs font-bold text-slate-700 mb-1">
-                    Ledger Account Name <span className="text-rose-500">*</span>
-                  </label>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Ledger Name <span className="text-rose-500">*</span></label>
                   <input
                     type="text"
-                    placeholder="e.g. Swiggy Commission / Cold Storage Rent"
+                    placeholder="e.g. Swiggy - Commission"
                     value={newLedgerName}
                     onChange={(e) => setNewLedgerName(e.target.value)}
                     className="w-full text-xs font-semibold border border-slate-300 rounded-lg p-2 focus:ring-1 focus:ring-slate-900"
@@ -979,24 +790,32 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
                 </div>
 
                 <div className="col-span-2">
-                  <label className="block text-xs font-bold text-slate-700 mb-1">
-                    P&L Financial Category <span className="text-rose-500">*</span>
-                  </label>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Statement Nature <span className="text-rose-500">*</span></label>
                   <select
-                    value={newLedgerCategory}
-                    onChange={(e) => setNewLedgerCategory(e.target.value)}
+                    value={newStatementType}
+                    onChange={(e) => setNewStatementType(e.target.value)}
                     className="w-full text-xs border border-slate-300 rounded-lg p-2 bg-white font-medium"
                   >
-                    {DEFAULT_PL_CATEGORIES.map((cat) => (
-                      <option key={cat} value={cat}>{cat}</option>
-                    ))}
+                    <option value="P&L">Profit & Loss (P&L)</option>
+                    <option value="Balance Sheet">Balance Sheet</option>
                   </select>
                 </div>
 
-                <div className="col-span-1">
+                <div className="col-span-2">
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Category Name <span className="text-rose-500">*</span></label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Selling & Distribution"
+                    value={newLedgerCategory}
+                    onChange={(e) => setNewLedgerCategory(e.target.value)}
+                    className="w-full text-xs border border-slate-300 rounded-lg p-2 bg-white font-medium"
+                  />
+                </div>
+
+                <div className="col-span-6 flex justify-end pt-2">
                   <button
                     type="submit"
-                    className="w-full flex items-center justify-center gap-1.5 px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-bold transition shadow-sm"
+                    className="flex items-center gap-1.5 px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-bold transition shadow-sm"
                   >
                     <Plus className="w-3.5 h-3.5" /> + Add Ledger
                   </button>
@@ -1004,28 +823,56 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
               </div>
             </form>
 
-            {/* MAPPED LEDGERS LIST GROUPED BY P&L CATEGORY */}
+            {/* FILTER STRIP (ALL / P&L / BALANCE SHEET) */}
+            <div className="flex items-center justify-between bg-white px-5 py-3 rounded-xl border border-slate-200">
+              <div className="flex items-center gap-2">
+                <Filter className="w-4 h-4 text-slate-500" />
+                <span className="text-xs font-bold text-slate-700">Filter By Statement:</span>
+              </div>
+              <div className="flex items-center gap-2">
+                {["ALL", "P&L", "Balance Sheet"].map((f) => (
+                  <button
+                    key={f}
+                    onClick={() => setCoaFilter(f)}
+                    className={`px-3 py-1 rounded-lg text-xs font-bold transition ${
+                      coaFilter === f ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                    }`}
+                  >
+                    {f} ({f === "ALL" ? clientCoa.length : clientCoa.filter((l) => l.statementType === f).length})
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* DYNAMIC LISTING RENDERED ACCORDING TO USER'S UPLOADED CATEGORIES */}
             <div className="space-y-4">
-              {DEFAULT_PL_CATEGORIES.map((category) => {
-                const ledgersInCategory = clientCoa.filter((l) => l.category === category);
+              {Object.keys(categoriesGrouped).length === 0 ? (
+                <div className="bg-white rounded-xl border border-slate-200 p-12 text-center text-slate-400 text-xs">
+                  No ledgers uploaded yet for {activeClient}. Click "Bulk Upload COA" or add manually above.
+                </div>
+              ) : (
+                Object.entries(categoriesGrouped).map(([categoryName, ledgers]) => {
+                  const statementNature = ledgers[0]?.statementType || "P&L";
 
-                return (
-                  <div key={category} className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
-                    <div className="bg-slate-50/80 px-5 py-3 border-b border-slate-200 flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <Layers className="w-4 h-4 text-slate-600" />
-                        <h4 className="text-xs font-bold text-slate-900">{category}</h4>
+                  return (
+                    <div key={categoryName} className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
+                      <div className="bg-slate-50/80 px-5 py-3 border-b border-slate-200 flex items-center justify-between">
+                        <div className="flex items-center gap-2.5">
+                          <Layers className="w-4 h-4 text-slate-600" />
+                          <h4 className="text-xs font-bold text-slate-900">{categoryName}</h4>
+                          <span className={`text-[10px] px-2 py-0.5 rounded font-bold uppercase ${
+                            statementNature === "P&L" ? "bg-emerald-50 text-emerald-800 border border-emerald-200" : "bg-indigo-50 text-indigo-800 border border-indigo-200"
+                          }`}>
+                            {statementNature}
+                          </span>
+                        </div>
+                        <span className="text-[11px] font-mono font-semibold text-slate-500 bg-white border border-slate-200 px-2.5 py-0.5 rounded-full">
+                          {ledgers.length} Ledgers
+                        </span>
                       </div>
-                      <span className="text-[11px] font-mono font-semibold text-slate-500 bg-white border border-slate-200 px-2.5 py-0.5 rounded-full">
-                        {ledgersInCategory.length} Ledgers
-                      </span>
-                    </div>
 
-                    {ledgersInCategory.length === 0 ? (
-                      <p className="p-4 text-xs text-slate-400 italic">No custom ledgers under this schedule head.</p>
-                    ) : (
                       <div className="divide-y divide-slate-100">
-                        {ledgersInCategory.map((item) => (
+                        {ledgers.map((item) => (
                           <div key={item.id} className="px-5 py-2.5 flex items-center justify-between hover:bg-slate-50/50 transition">
                             <span className="text-xs font-semibold text-slate-800">{item.name}</span>
                             <button
@@ -1038,15 +885,13 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
                           </div>
                         ))}
                       </div>
-                    )}
-                  </div>
-                );
-              })}
+                    </div>
+                  );
+                })
+              )}
             </div>
-
           </div>
         )}
-
       </div>
 
       {notification && (
