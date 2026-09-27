@@ -13,14 +13,15 @@ import {
   Upload,
   Image as ImageIcon,
   PenTool,
-  Globe,
-  Phone,
-  Mail,
-  UserCheck,
   Users,
   ChevronRight,
   ArrowLeft,
-  Filter
+  Filter,
+  Scale,
+  DollarSign,
+  Edit3,
+  X,
+  Check
 } from "lucide-react";
 
 const loadSheetJS = () => {
@@ -62,7 +63,7 @@ const getFreshProfileState = (clientName, savedProfiles) => {
 
 export default function SettingsModule({ activeClient, setActiveClient }) {
   const [viewMode, setViewMode] = useState("directory"); // 'directory' | 'manage'
-  const [manageSubTab, setManageSubTab] = useState("profile"); // 'profile' | 'coa'
+  const [manageSubTab, setManageSubTab] = useState("profile"); // 'profile' | 'coa' | 'opening_balances'
 
   const [profiles, setProfiles] = useState(() => {
     try {
@@ -81,7 +82,7 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
     }
   });
 
-  // Client-scoped COA
+  // Client-scoped Chart of Accounts with Opening Balance integration
   const [clientCoa, setClientCoa] = useState(() => {
     try {
       const saved = localStorage.getItem(`c4_coa_${activeClient}`);
@@ -112,8 +113,13 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
 
   // Form State for Adding Single Ledger
   const [newLedgerName, setNewLedgerName] = useState("");
-  const [newStatementType, setNewStatementType] = useState("P&L");
-  const [newLedgerCategory, setNewLedgerCategory] = useState("");
+  const [newStatementType, setNewStatementType] = useState("Balance Sheet");
+  const [newLedgerCategory, setNewLedgerCategory] = useState("Sundry Creditors");
+  const [newOpeningBalance, setNewOpeningBalance] = useState("0");
+  const [newBalanceType, setNewBalanceType] = useState("Cr");
+
+  // EDITING MODAL / INLINE STATE
+  const [editingLedger, setEditingLedger] = useState(null);
 
   const [isUploading, setIsUploading] = useState(false);
   const [notification, setNotification] = useState(null);
@@ -239,7 +245,7 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
     setProfiles(updatedProfiles);
     localStorage.setItem("c4_client_profiles", JSON.stringify(updatedProfiles));
     setActiveClient(targetName);
-    notify(`Complete profile for "${targetName}" saved successfully!`, "success");
+    notify(`Profile for "${targetName}" saved successfully!`, "success");
   };
 
   // Add Single Ledger
@@ -259,17 +265,64 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
       return;
     }
 
+    const opBal = Math.abs(parseFloat(newOpeningBalance) || 0);
+
     const created = {
       id: `coa_${Date.now()}`,
       name: newLedgerName.trim(),
       statementType: newStatementType,
-      category: newLedgerCategory.trim()
+      category: newLedgerCategory.trim(),
+      openingBalance: opBal,
+      balanceType: newBalanceType
     };
 
     setClientCoa((prev) => [...prev, created]);
     setNewLedgerName("");
-    setNewLedgerCategory("");
-    notify(`Ledger "${created.name}" saved under ${created.category}!`, "success");
+    setNewOpeningBalance("0");
+    notify(`Ledger "${created.name}" saved!`, "success");
+  };
+
+  // SAVE EDITED LEDGER
+  const handleSaveEditedLedger = () => {
+    if (!editingLedger || !editingLedger.name.trim() || !editingLedger.category.trim()) {
+      notify("Ledger Name and Category cannot be blank", "error");
+      return;
+    }
+
+    // Check duplicate name excluding itself
+    const duplicate = clientCoa.some(
+      (l) => l.id !== editingLedger.id && l.name.toLowerCase() === editingLedger.name.trim().toLowerCase()
+    );
+    if (duplicate) {
+      notify(`Another ledger with name "${editingLedger.name}" already exists!`, "error");
+      return;
+    }
+
+    setClientCoa((prev) =>
+      prev.map((l) =>
+        l.id === editingLedger.id
+          ? {
+              ...l,
+              name: editingLedger.name.trim(),
+              category: editingLedger.category.trim(),
+              statementType: editingLedger.statementType,
+              openingBalance: Math.abs(parseFloat(editingLedger.openingBalance) || 0),
+              balanceType: editingLedger.balanceType || "Dr"
+            }
+          : l
+      )
+    );
+
+    notify(`Ledger "${editingLedger.name}" updated successfully!`, "success");
+    setEditingLedger(null);
+  };
+
+  // Inline update opening balance
+  const handleUpdateOpeningBalance = (ledgerId, amount, type) => {
+    const numericAmt = Math.abs(parseFloat(amount) || 0);
+    setClientCoa((prev) =>
+      prev.map((l) => (l.id === ledgerId ? { ...l, openingBalance: numericAmt, balanceType: type } : l))
+    );
   };
 
   const handleDeleteLedger = (id, name) => {
@@ -278,52 +331,45 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
     notify(`Ledger "${name}" deleted.`, "info");
   };
 
-  // 3-COLUMN TEMPLATE (LEDGER NAME, STATEMENT TYPE, CATEGORY)
   const handleDownloadTemplate = async () => {
     try {
       const XLSX = await loadSheetJS();
       const templateData = [
-        ["Ledger Name", "Statement Type", "Category"],
-        ["Swiggy - Commission", "P&L", "Selling & Distribution Expenses"],
-        ["Electricity Expense", "P&L", "Rent & Occupancy Costs"],
-        ["Staff Salary & Wages", "P&L", "Employee Benefit Expenses"],
-        ["Purchases - Dairy Products", "P&L", "Cost of Goods Sold (COGS)"],
-        ["Sales - In-Store", "P&L", "Revenue from Operations"],
-        ["HDFC Bank A/c - 5010", "Balance Sheet", "Cash & Bank Balances"],
-        ["Electricity Expense Payable", "Balance Sheet", "Current Liabilities & Provisions"],
-        ["TDS Payable - Contractor", "Balance Sheet", "Duties & Taxes"],
-        ["Coffee Machine", "Balance Sheet", "Fixed Assets"]
+        ["Ledger Name", "Statement Type", "Category", "Opening Balance (₹)", "Dr/Cr"],
+        ["Amul Dairy Products", "Balance Sheet", "Sundry Creditors (AP)", 45000, "Cr"],
+        ["Vikas Packaging Industries", "Balance Sheet", "Sundry Creditors (AP)", 18200, "Cr"],
+        ["Blink Commerce Pvt Ltd", "Balance Sheet", "Sundry Debtors (AR)", 24500, "Dr"],
+        ["Zomato Aggregator Settlement", "Balance Sheet", "Sundry Debtors (AR)", 38900, "Dr"],
+        ["HDFC Bank Current A/c", "Balance Sheet", "Cash & Bank Balances", 125000, "Dr"],
+        ["Petty Cash Balance", "Balance Sheet", "Cash & Bank Balances", 15000, "Dr"],
+        ["Electricity Expense Payable", "Balance Sheet", "Provisions & Payables", 8400, "Cr"],
+        ["Swiggy - Commission", "P&L", "Selling & Distribution Expenses", 0, "Dr"],
+        ["Commercial Office Rent", "P&L", "Rent & Occupancy Costs", 0, "Dr"]
       ];
 
       const ws = XLSX.utils.aoa_to_sheet(templateData);
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, "Chart_of_Accounts");
-      XLSX.writeFile(wb, `COA_Template_${activeClient.replace(/\s+/g, "_")}.xlsx`);
-      notify("COA Template downloaded!", "success");
+      XLSX.writeFile(wb, `COA_With_Opening_Balances_${activeClient.replace(/\s+/g, "_")}.xlsx`);
+      notify("Template with Opening Balances downloaded!", "success");
     } catch {
       const csvContent =
-        "Ledger Name,Statement Type,Category\n" +
-        "Swiggy - Commission,P&L,Selling & Distribution Expenses\n" +
-        "Electricity Expense,P&L,Rent & Occupancy Costs\n" +
-        "Staff Salary & Wages,P&L,Employee Benefit Expenses\n" +
-        "Purchases - Dairy Products,P&L,Cost of Goods Sold (COGS)\n" +
-        "Sales - In-Store,P&L,Revenue from Operations\n" +
-        "HDFC Bank A/c - 5010,Balance Sheet,Cash & Bank Balances\n" +
-        "Electricity Expense Payable,Balance Sheet,Current Liabilities & Provisions\n" +
-        "TDS Payable - Contractor,Balance Sheet,Duties & Taxes\n" +
-        "Coffee Machine,Balance Sheet,Fixed Assets\n";
+        "Ledger Name,Statement Type,Category,Opening Balance (₹),Dr/Cr\n" +
+        "Amul Dairy Products,Balance Sheet,Sundry Creditors (AP),45000,Cr\n" +
+        "Blink Commerce Pvt Ltd,Balance Sheet,Sundry Debtors (AR),24500,Dr\n" +
+        "HDFC Bank Current A/c,Balance Sheet,Cash & Bank Balances,125000,Dr\n" +
+        "Swiggy - Commission,P&L,Selling & Distribution Expenses,0,Dr\n";
       const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
-      link.setAttribute("download", `COA_Template_${activeClient.replace(/\s+/g, "_")}.csv`);
+      link.setAttribute("download", `COA_With_Opening_Balances_${activeClient.replace(/\s+/g, "_")}.csv`);
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
     }
   };
 
-  // FULLY DYNAMIC IMPORT (PRESERVES EXACT CATEGORIES)
   const handleFileUpload = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -360,6 +406,8 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
           const nameIdx = headers.findIndex((h) => h.includes("ledger") || h.includes("account") || h.includes("name"));
           const typeIdx = headers.findIndex((h) => h.includes("statement") || h.includes("type") || h.includes("sheet") || h.includes("p&l"));
           const catIdx = headers.findIndex((h) => h.includes("category") || h.includes("group") || h.includes("head"));
+          const balIdx = headers.findIndex((h) => h.includes("open") || h.includes("bal") || h.includes("amount"));
+          const drcrIdx = headers.findIndex((h) => h.includes("dr") || h.includes("cr") || h.includes("d/c"));
 
           if (nameIdx === -1) {
             notify("Missing 'Ledger Name' column in header.", "error");
@@ -380,9 +428,8 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
                 statementType = "Balance Sheet";
               }
             } else {
-              // Contextual check if column is omitted
               const lower = name.toLowerCase();
-              if (lower.includes("payable") || lower.includes("bank") || lower.includes("cash") || lower.includes("deposit") || lower.includes("tds") || lower.includes("gst payable") || lower.includes("advance") || lower.includes("machine") || lower.includes("equipment")) {
+              if (lower.includes("payable") || lower.includes("bank") || lower.includes("cash") || lower.includes("deposit") || lower.includes("tds") || lower.includes("creditor") || lower.includes("debtor")) {
                 statementType = "Balance Sheet";
               }
             }
@@ -394,11 +441,38 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
               category = statementType === "Balance Sheet" ? "Balance Sheet Items" : "Operational Expenses";
             }
 
+            let openingBalance = 0;
+            let balanceType = "Dr";
+
+            if (balIdx !== -1 && row[balIdx]) {
+              const rawBalStr = String(row[balIdx]).trim();
+              openingBalance = Math.abs(parseFloat(rawBalStr.replace(/[^0-9.-]/g, "")) || 0);
+
+              if (rawBalStr.toLowerCase().includes("cr")) balanceType = "Cr";
+              else if (rawBalStr.toLowerCase().includes("dr")) balanceType = "Dr";
+            }
+
+            if (drcrIdx !== -1 && row[drcrIdx]) {
+              const rawDrCr = String(row[drcrIdx]).trim().toUpperCase();
+              if (rawDrCr.includes("CR")) balanceType = "Cr";
+              if (rawDrCr.includes("DR")) balanceType = "Dr";
+            } else if (balIdx === -1 || openingBalance === 0) {
+              const catLower = category.toLowerCase();
+              const nameLower = name.toLowerCase();
+              if (catLower.includes("creditor") || catLower.includes("payable") || catLower.includes("liab") || nameLower.includes("payable")) {
+                balanceType = "Cr";
+              } else {
+                balanceType = "Dr";
+              }
+            }
+
             parsedLedgers.push({
               id: `coa_${Date.now()}_${i}_${Math.random().toString(36).substr(2, 4)}`,
               name,
               statementType,
-              category
+              category,
+              openingBalance,
+              balanceType
             });
           }
 
@@ -414,7 +488,7 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
 
           if (replaceOption) {
             setClientCoa(parsedLedgers);
-            notify(`Uploaded ${parsedLedgers.length} ledgers for ${activeClient}!`, "success");
+            notify(`Uploaded ${parsedLedgers.length} ledgers with Opening Balances!`, "success");
           } else {
             const existingNames = new Set(clientCoa.map((l) => l.name.toLowerCase()));
             const newOnly = parsedLedgers.filter((l) => !existingNames.has(l.name.toLowerCase()));
@@ -438,7 +512,6 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
     }
   };
 
-  // Group client COA dynamically by Category
   const filteredCoa = clientCoa.filter((l) => {
     if (coaFilter === "ALL") return true;
     return l.statementType === coaFilter;
@@ -450,6 +523,21 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
     acc[cat].push(item);
     return acc;
   }, {});
+
+  const apLedgers = clientCoa.filter(
+    (l) => l.statementType === "Balance Sheet" && (l.category.toLowerCase().includes("creditor") || l.category.toLowerCase().includes("payable") || l.name.toLowerCase().includes("payable"))
+  );
+  const totalApOpening = apLedgers.reduce((acc, l) => acc + (parseFloat(l.openingBalance) || 0), 0);
+
+  const arLedgers = clientCoa.filter(
+    (l) => l.statementType === "Balance Sheet" && (l.category.toLowerCase().includes("debtor") || l.category.toLowerCase().includes("receivable") || l.name.toLowerCase().includes("receivable"))
+  );
+  const totalArOpening = arLedgers.reduce((acc, l) => acc + (parseFloat(l.openingBalance) || 0), 0);
+
+  const bankCashLedgers = clientCoa.filter(
+    (l) => l.statementType === "Balance Sheet" && (l.category.toLowerCase().includes("bank") || l.category.toLowerCase().includes("cash") || l.name.toLowerCase().includes("bank") || l.name.toLowerCase().includes("cash"))
+  );
+  const totalBankCashOpening = bankCashLedgers.reduce((acc, l) => acc + (parseFloat(l.openingBalance) || 0), 0);
 
   const clientListKeys = Object.keys(profiles);
 
@@ -474,7 +562,7 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
           <p className="text-xs text-slate-500 font-medium mt-0.5">
             {viewMode === "directory"
               ? "All registered entities on this Compliance4 portal"
-              : "Configuring legal profile, branding, bank accounts, and custom Chart of Accounts"}
+              : "Configuring legal profile, branding, bank accounts, and custom Chart of Accounts with Opening Balances"}
           </p>
         </div>
 
@@ -497,12 +585,12 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
             </button>
           )}
 
-          {viewMode === "manage" && manageSubTab === "coa" && (
+          {viewMode === "manage" && (manageSubTab === "coa" || manageSubTab === "opening_balances") && (
             <div className="flex items-center gap-2">
               <button
                 onClick={handleDownloadTemplate}
                 className="flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold px-3.5 py-2 rounded-lg transition"
-                title="Download 3-column Template (Ledger Name, Statement Type, Category)"
+                title="Download 5-column Template with Opening Balances"
               >
                 <Download className="w-3.5 h-3.5" /> Download Template
               </button>
@@ -521,7 +609,7 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
                 className="flex items-center gap-1.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold px-4 py-2 rounded-lg transition shadow-sm disabled:opacity-50"
               >
                 <Upload className="w-3.5 h-3.5" />
-                {isUploading ? "Uploading..." : "Bulk Upload COA (.xlsx / .csv)"}
+                {isUploading ? "Uploading..." : "Bulk Upload COA & Balances"}
               </button>
             </div>
           )}
@@ -548,6 +636,15 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
           >
             <BookOpen className="w-4 h-4" /> Chart of Accounts ({clientCoa.length})
           </button>
+
+          <button
+            onClick={() => setManageSubTab("opening_balances")}
+            className={`pb-3 text-xs font-bold transition flex items-center gap-2 border-b-2 ${
+              manageSubTab === "opening_balances" ? "border-slate-900 text-slate-900" : "border-transparent text-slate-400 hover:text-slate-600"
+            }`}
+          >
+            <Scale className="w-4 h-4 text-indigo-600" /> Opening Balances Master (AP / AR / Bank)
+          </button>
         </div>
       )}
 
@@ -561,7 +658,7 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
               <div>
                 <h3 className="text-sm font-bold text-slate-900">Configured Client Entities ({clientListKeys.length})</h3>
                 <p className="text-xs text-slate-500">
-                  Select <strong>"Manage Client & COA"</strong> to edit that specific client.
+                  Select <strong>"Manage Client & COA"</strong> to edit opening balances and ledgers.
                 </p>
               </div>
             </div>
@@ -657,7 +754,6 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
         {/* 2. PROFILE TAB */}
         {viewMode === "manage" && manageSubTab === "profile" && (
           <div className="space-y-6">
-            {/* BRANDING */}
             <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm space-y-4">
               <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
                 <ImageIcon className="w-4 h-4 text-slate-600" /> Entity Branding & Signatures (For Invoices)
@@ -689,7 +785,7 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
                     <div className="relative group mb-3">
                       <img src={currentForm.signatureUrl} alt="Signature" className="max-h-24 max-w-full object-contain rounded border border-slate-200 bg-white p-1" />
                       <button onClick={() => setCurrentForm((p) => ({ ...p, signatureUrl: "" }))} className="absolute -top-2 -right-2 bg-rose-600 text-white rounded-full p-1 shadow hover:bg-rose-700">
-                        <Trash2 className="w-3 h-3" />
+                        <Trash2 className="w-3.5 h-3.5" />
                       </button>
                     </div>
                   ) : (
@@ -706,7 +802,6 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
               </div>
             </div>
 
-            {/* LEGAL & STATUTORY DATA */}
             <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm space-y-4">
               <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
                 <Building2 className="w-4 h-4 text-slate-600" /> Legal Entity & Statutory Data
@@ -732,7 +827,6 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
               </div>
             </div>
 
-            {/* CONTACT & BANK */}
             <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm space-y-4">
               <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
                 <CreditCard className="w-4 h-4 text-slate-600" /> Primary Settlement Bank
@@ -765,16 +859,14 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
           </div>
         )}
 
-        {/* 3. DYNAMIC CHART OF ACCOUNTS TAB */}
+        {/* 3. CHART OF ACCOUNTS MASTER */}
         {viewMode === "manage" && manageSubTab === "coa" && (
           <div className="space-y-6">
-            {/* ADD LEDGER FORM */}
             <form onSubmit={handleAddLedger} className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm space-y-4">
               <div className="flex items-center justify-between border-b border-slate-100 pb-3">
                 <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
-                  <Plus className="w-4 h-4 text-slate-600" /> Add Single Ledger for {activeClient}
+                  <Plus className="w-4 h-4 text-slate-600" /> Add Single Ledger with Opening Balance
                 </h3>
-                <span className="text-[11px] text-slate-400">Or use "Bulk Upload COA" above for spreadsheet import</span>
               </div>
 
               <div className="grid grid-cols-6 gap-3 items-end">
@@ -782,34 +874,58 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
                   <label className="block text-xs font-bold text-slate-700 mb-1">Ledger Name <span className="text-rose-500">*</span></label>
                   <input
                     type="text"
-                    placeholder="e.g. Swiggy - Commission"
+                    placeholder="e.g. Vikas Packaging / Amul Supplies"
                     value={newLedgerName}
                     onChange={(e) => setNewLedgerName(e.target.value)}
                     className="w-full text-xs font-semibold border border-slate-300 rounded-lg p-2 focus:ring-1 focus:ring-slate-900"
                   />
                 </div>
 
-                <div className="col-span-2">
-                  <label className="block text-xs font-bold text-slate-700 mb-1">Statement Nature <span className="text-rose-500">*</span></label>
+                <div className="col-span-1">
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Nature <span className="text-rose-500">*</span></label>
                   <select
                     value={newStatementType}
                     onChange={(e) => setNewStatementType(e.target.value)}
                     className="w-full text-xs border border-slate-300 rounded-lg p-2 bg-white font-medium"
                   >
-                    <option value="P&L">Profit & Loss (P&L)</option>
                     <option value="Balance Sheet">Balance Sheet</option>
+                    <option value="P&L">Profit & Loss (P&L)</option>
                   </select>
                 </div>
 
-                <div className="col-span-2">
-                  <label className="block text-xs font-bold text-slate-700 mb-1">Category Name <span className="text-rose-500">*</span></label>
+                <div className="col-span-1">
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Category <span className="text-rose-500">*</span></label>
                   <input
                     type="text"
-                    placeholder="e.g. Selling & Distribution"
+                    placeholder="e.g. Sundry Creditors"
                     value={newLedgerCategory}
                     onChange={(e) => setNewLedgerCategory(e.target.value)}
                     className="w-full text-xs border border-slate-300 rounded-lg p-2 bg-white font-medium"
                   />
+                </div>
+
+                <div className="col-span-1">
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Op. Balance (₹)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    placeholder="0.00"
+                    value={newOpeningBalance}
+                    onChange={(e) => setNewOpeningBalance(e.target.value)}
+                    className="w-full text-xs font-mono font-bold border border-slate-300 rounded-lg p-2"
+                  />
+                </div>
+
+                <div className="col-span-1">
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Dr / Cr</label>
+                  <select
+                    value={newBalanceType}
+                    onChange={(e) => setNewBalanceType(e.target.value)}
+                    className="w-full text-xs border border-slate-300 rounded-lg p-2 bg-white font-bold"
+                  >
+                    <option value="Cr">Cr (Credit)</option>
+                    <option value="Dr">Dr (Debit)</option>
+                  </select>
                 </div>
 
                 <div className="col-span-6 flex justify-end pt-2">
@@ -823,14 +939,13 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
               </div>
             </form>
 
-            {/* FILTER STRIP (ALL / P&L / BALANCE SHEET) */}
             <div className="flex items-center justify-between bg-white px-5 py-3 rounded-xl border border-slate-200">
               <div className="flex items-center gap-2">
                 <Filter className="w-4 h-4 text-slate-500" />
                 <span className="text-xs font-bold text-slate-700">Filter By Statement:</span>
               </div>
               <div className="flex items-center gap-2">
-                {["ALL", "P&L", "Balance Sheet"].map((f) => (
+                {["ALL", "Balance Sheet", "P&L"].map((f) => (
                   <button
                     key={f}
                     onClick={() => setCoaFilter(f)}
@@ -844,11 +959,10 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
               </div>
             </div>
 
-            {/* DYNAMIC LISTING RENDERED ACCORDING TO USER'S UPLOADED CATEGORIES */}
             <div className="space-y-4">
               {Object.keys(categoriesGrouped).length === 0 ? (
                 <div className="bg-white rounded-xl border border-slate-200 p-12 text-center text-slate-400 text-xs">
-                  No ledgers uploaded yet for {activeClient}. Click "Bulk Upload COA" or add manually above.
+                  No ledgers uploaded yet for {activeClient}.
                 </div>
               ) : (
                 Object.entries(categoriesGrouped).map(([categoryName, ledgers]) => {
@@ -875,13 +989,31 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
                         {ledgers.map((item) => (
                           <div key={item.id} className="px-5 py-2.5 flex items-center justify-between hover:bg-slate-50/50 transition">
                             <span className="text-xs font-semibold text-slate-800">{item.name}</span>
-                            <button
-                              onClick={() => handleDeleteLedger(item.id, item.name)}
-                              className="text-slate-300 hover:text-rose-600 p-1.5 rounded transition"
-                              title="Delete Ledger"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
+
+                            <div className="flex items-center gap-3">
+                              <span className="text-xs font-mono font-bold text-slate-700">
+                                {item.openingBalance > 0
+                                  ? `₹${Number(item.openingBalance).toLocaleString("en-IN", { minimumFractionDigits: 2 })} ${item.balanceType || "Dr"}`
+                                  : "-"}
+                              </span>
+
+                              {/* EDIT BUTTON */}
+                              <button
+                                onClick={() => setEditingLedger({ ...item })}
+                                className="text-slate-400 hover:text-indigo-600 p-1.5 rounded hover:bg-indigo-50 transition"
+                                title="Edit Ledger Name & Category"
+                              >
+                                <Edit3 className="w-3.5 h-3.5" />
+                              </button>
+
+                              <button
+                                onClick={() => handleDeleteLedger(item.id, item.name)}
+                                className="text-slate-300 hover:text-rose-600 p-1.5 rounded hover:bg-rose-50 transition"
+                                title="Delete Ledger"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
                           </div>
                         ))}
                       </div>
@@ -892,7 +1024,215 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
             </div>
           </div>
         )}
+
+        {/* 4. OPENING BALANCES MASTER VIEW */}
+        {viewMode === "manage" && manageSubTab === "opening_balances" && (
+          <div className="space-y-6">
+            <div className="grid grid-cols-3 gap-5">
+              <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm space-y-1">
+                <span className="text-[10px] uppercase font-bold text-slate-400">Total Accounts Payable (Creditors)</span>
+                <p className="text-2xl font-black font-mono text-rose-700">
+                  ₹{totalApOpening.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                </p>
+                <p className="text-[11px] text-slate-500">{apLedgers.length} Vendor Ledgers Initialized (Cr)</p>
+              </div>
+
+              <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm space-y-1">
+                <span className="text-[10px] uppercase font-bold text-slate-400">Total Accounts Receivable (Debtors)</span>
+                <p className="text-2xl font-black font-mono text-emerald-700">
+                  ₹{totalArOpening.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                </p>
+                <p className="text-[11px] text-slate-500">{arLedgers.length} Customer / Aggregator Ledgers (Dr)</p>
+              </div>
+
+              <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm space-y-1">
+                <span className="text-[10px] uppercase font-bold text-slate-400">Starting Liquid Funds (Bank + Cash)</span>
+                <p className="text-2xl font-black font-mono text-indigo-700">
+                  ₹{totalBankCashOpening.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                </p>
+                <p className="text-[11px] text-slate-500">{bankCashLedgers.length} Cash & Bank Accounts (Dr)</p>
+              </div>
+            </div>
+
+            <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
+              <div className="px-6 py-4 border-b border-slate-200 bg-slate-50/70 flex items-center justify-between">
+                <div>
+                  <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
+                    Balance Sheet Ledgers & Opening Positions
+                  </h3>
+                  <p className="text-[11px] text-slate-500">Edit or enter opening balances directly. Values save automatically.</p>
+                </div>
+                <span className="text-[11px] font-mono text-slate-600 bg-white border border-slate-200 px-2.5 py-1 rounded-lg">
+                  {clientCoa.filter((l) => l.statementType === "Balance Sheet").length} Balance Sheet Accounts
+                </span>
+              </div>
+
+              <table className="w-full text-left text-xs">
+                <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 font-semibold uppercase text-[10px]">
+                  <tr>
+                    <th className="py-3 px-6">Account Ledger Name</th>
+                    <th className="py-3 px-4">Category / Group</th>
+                    <th className="py-3 px-4 text-right">Opening Balance (₹)</th>
+                    <th className="py-3 px-4 text-center">Nature</th>
+                    <th className="py-3 px-4 text-center">Quick Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
+                  {clientCoa
+                    .filter((l) => l.statementType === "Balance Sheet")
+                    .map((ledger) => (
+                      <tr key={ledger.id} className="hover:bg-slate-50/60 transition">
+                        <td className="py-3 px-6 font-bold text-slate-900">{ledger.name}</td>
+                        <td className="py-3 px-4 text-slate-600">{ledger.category}</td>
+                        
+                        <td className="py-3 px-4 text-right">
+                          <input
+                            type="number"
+                            step="0.01"
+                            value={ledger.openingBalance || 0}
+                            onChange={(e) =>
+                              handleUpdateOpeningBalance(ledger.id, e.target.value, ledger.balanceType || "Dr")
+                            }
+                            className="w-36 text-right font-mono font-bold text-xs border border-slate-300 rounded px-2 py-1 focus:ring-1 focus:ring-slate-900"
+                          />
+                        </td>
+
+                        <td className="py-3 px-4 text-center">
+                          <select
+                            value={ledger.balanceType || "Dr"}
+                            onChange={(e) =>
+                              handleUpdateOpeningBalance(ledger.id, ledger.openingBalance || 0, e.target.value)
+                            }
+                            className="text-xs font-bold border border-slate-300 rounded px-2 py-1 bg-white"
+                          >
+                            <option value="Dr">Dr</option>
+                            <option value="Cr">Cr</option>
+                          </select>
+                        </td>
+
+                        <td className="py-3 px-4 text-center">
+                          <div className="flex items-center justify-center gap-1.5">
+                            <button
+                              onClick={() => setEditingLedger({ ...ledger })}
+                              className="text-slate-400 hover:text-indigo-600 p-1 rounded hover:bg-indigo-50 transition"
+                              title="Edit Ledger Name & Category"
+                            >
+                              <Edit3 className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => notify(`Opening balance for ${ledger.name} committed!`, "success")}
+                              className="text-[11px] font-semibold text-indigo-700 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded hover:bg-indigo-100 transition"
+                            >
+                              Save
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                </tbody>
+              </table>
+            </div>
+
+          </div>
+        )}
+
       </div>
+
+      {/* MODAL: EDIT LEDGER NAME & CATEGORY */}
+      {editingLedger && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-xl border border-slate-200 shadow-xl max-w-md w-full p-6 space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                <Edit3 className="w-4 h-4 text-indigo-600" /> Edit Ledger Details
+              </h3>
+              <button
+                onClick={() => setEditingLedger(null)}
+                className="text-slate-400 hover:text-slate-600 p-1 rounded"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Ledger Name</label>
+                <input
+                  type="text"
+                  value={editingLedger.name}
+                  onChange={(e) => setEditingLedger({ ...editingLedger, name: e.target.value })}
+                  className="w-full text-xs font-bold border border-slate-300 rounded-lg p-2.5 focus:ring-1 focus:ring-slate-900"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Statement Nature</label>
+                  <select
+                    value={editingLedger.statementType}
+                    onChange={(e) => setEditingLedger({ ...editingLedger, statementType: e.target.value })}
+                    className="w-full text-xs border border-slate-300 rounded-lg p-2 bg-white font-medium"
+                  >
+                    <option value="Balance Sheet">Balance Sheet</option>
+                    <option value="P&L">Profit & Loss (P&L)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Category / Group</label>
+                  <input
+                    type="text"
+                    value={editingLedger.category}
+                    onChange={(e) => setEditingLedger({ ...editingLedger, category: e.target.value })}
+                    className="w-full text-xs border border-slate-300 rounded-lg p-2 font-medium"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 pt-1">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Opening Balance (₹)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={editingLedger.openingBalance || 0}
+                    onChange={(e) => setEditingLedger({ ...editingLedger, openingBalance: e.target.value })}
+                    className="w-full text-xs font-mono font-bold border border-slate-300 rounded-lg p-2"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Dr / Cr</label>
+                  <select
+                    value={editingLedger.balanceType || "Dr"}
+                    onChange={(e) => setEditingLedger({ ...editingLedger, balanceType: e.target.value })}
+                    className="w-full text-xs font-bold border border-slate-300 rounded-lg p-2 bg-white"
+                  >
+                    <option value="Dr">Dr (Debit)</option>
+                    <option value="Cr">Cr (Credit)</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
+              <button
+                onClick={() => setEditingLedger(null)}
+                className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg transition"
+              >
+                Cancel
+              </button>
+
+              <button
+                onClick={handleSaveEditedLedger}
+                className="flex items-center gap-1.5 px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-lg transition shadow-sm"
+              >
+                <Check className="w-3.5 h-3.5" /> Save Changes
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {notification && (
         <div
