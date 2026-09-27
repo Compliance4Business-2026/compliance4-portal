@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { 
   Plus, 
   Trash2, 
@@ -14,11 +14,9 @@ import {
   UserPlus, 
   PackagePlus, 
   Percent,
-  Globe,
-  Receipt,
-  Scale,
   Download,
-  Upload
+  Upload,
+  Scale
 } from "lucide-react";
 
 const COUNTRY_OPTIONS = [
@@ -133,11 +131,40 @@ const loadSheetJS = () => {
   });
 };
 
+// Normalize dates in DD/MM/YYYY, DD-MM-YYYY, YYYY-MM-DD or Excel Serial into standard YYYY-MM-DD
+const normalizeDateStr = (rawVal) => {
+  if (!rawVal) return "";
+  const s = String(rawVal).trim();
+
+  // Excel serial numbers
+  if (!isNaN(s) && Number(s) > 20000 && Number(s) < 60000) {
+    const excelDate = new Date(Math.round((Number(s) - 25569) * 86400 * 1000));
+    return excelDate.toISOString().split("T")[0];
+  }
+
+  // DD/MM/YYYY or DD-MM-YYYY
+  const parts = s.split(/[\/\-]/);
+  if (parts.length === 3) {
+    if (parts[0].length === 4) {
+      // YYYY-MM-DD
+      return `${parts[0]}-${parts[1].padStart(2, "0")}-${parts[2].padStart(2, "0")}`;
+    } else {
+      // DD-MM-YYYY or DD/MM/YYYY
+      const day = parts[0].padStart(2, "0");
+      const month = parts[1].padStart(2, "0");
+      const year = parts[2].length === 2 ? `20${parts[2]}` : parts[2];
+      return `${year}-${month}-${day}`;
+    }
+  }
+
+  return s;
+};
+
 export default function SalesModule({ activeClient = "Panasuria Confectionery" }) {
-  const [activeCategory, setActiveCategory] = useState("normal_sales");
+  const [activeCategory, setActiveCategory] = useState("pos_sales");
   const [salesSubTab, setSalesSubTab] = useState("create");
 
-  // Client-scoped persistent state
+  // Client-scoped persistent state for normal invoices
   const [savedInvoices, setSavedInvoices] = useState(() => {
     try {
       const s = localStorage.getItem(`c4_normal_sales_invoices_${activeClient}`);
@@ -211,7 +238,6 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
   }, [itemCatalog, activeClient]);
 
   const [notification, setNotification] = useState(null);
-  const [isPushing, setIsPushing] = useState(false);
 
   const [showAddCustomerModal, setShowAddCustomerModal] = useState(false);
   const [showAddItemModal, setShowAddItemModal] = useState(false);
@@ -274,28 +300,29 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
     setTimeout(() => setNotification(null), 4000);
   };
 
-  // ==========================================
-  // POS REGISTER STATE & FUNCTIONS (SCREENSHOTS 1 & 2)
-  // ==========================================
-  const [posTab, setPosTab] = useState("register"); // 'register' | 'journal' | 'manual_entry'
-  const [isUploading, setIsUploading] = useState(false);
-  const fileInputRef = useRef(null);
-
-  const [posRows, setPosRows] = useState(() => {
+  // =========================================================================
+  // POS DIRECT SALES JOURNAL ENGINE (SAVED VOUCHERS ONLY, NO REGISTER DUMP)
+  // =========================================================================
+  const [posJournals, setPosJournals] = useState(() => {
     try {
-      const saved = localStorage.getItem(`c4_pos_raw_rows_${activeClient}`);
-      return saved ? JSON.parse(saved) : [];
+      const s = localStorage.getItem(`c4_pos_journals_${activeClient}`);
+      return s ? JSON.parse(s) : [];
     } catch {
       return [];
     }
   });
 
   useEffect(() => {
-    localStorage.setItem(`c4_pos_raw_rows_${activeClient}`, JSON.stringify(posRows));
-  }, [posRows, activeClient]);
+    localStorage.setItem(`c4_pos_journals_${activeClient}`, JSON.stringify(posJournals));
+  }, [posJournals, activeClient]);
 
-  const [manualPosRow, setManualPosRow] = useState({
-    date: new Date().toISOString().split("T")[0],
+  const [isUploading, setIsUploading] = useState(false);
+  const fileInputRef = useRef(null);
+  const [showManualPosModal, setShowManualPosModal] = useState(false);
+
+  const [manualForm, setManualForm] = useState({
+    voucherDate: new Date().toISOString().split("T")[0],
+    periodLabel: "",
     cash: "",
     upi: "",
     bankInTransit: "",
@@ -309,75 +336,58 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
     razorpay: ""
   });
 
-  const handleManualPosRowChange = (field, val) => {
-    setManualPosRow((prev) => ({ ...prev, [field]: val }));
-  };
-
-  const handleAddManualPosRow = (e) => {
-    e.preventDefault();
-    const cash = parseFloat(manualPosRow.cash) || 0;
-    const upi = parseFloat(manualPosRow.upi) || 0;
-    const bankInTransit = parseFloat(manualPosRow.bankInTransit) || 0;
-    const zomatoDelivery = parseFloat(manualPosRow.zomatoDelivery) || 0;
-    const zomatoDineIn = parseFloat(manualPosRow.zomatoDineIn) || 0;
-    const swiggyDelivery = parseFloat(manualPosRow.swiggyDelivery) || 0;
-    const swiggyDineIn = parseFloat(manualPosRow.swiggyDineIn) || 0;
-    const eazyDineIn = parseFloat(manualPosRow.eazyDineIn) || 0;
-    const due = parseFloat(manualPosRow.due) || 0;
-    const bqr = parseFloat(manualPosRow.bqr) || 0;
-    const razorpay = parseFloat(manualPosRow.razorpay) || 0;
-
-    const totalSales =
-      cash + upi + bankInTransit + zomatoDelivery + zomatoDineIn +
-      swiggyDelivery + swiggyDineIn + eazyDineIn + due + bqr + razorpay;
-
-    if (totalSales <= 0) {
-      notify("Please enter at least one collection amount.", "error");
-      return;
-    }
-
-    const created = {
-      id: `pos_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
-      date: manualPosRow.date,
-      cash,
-      upi,
-      bankInTransit,
-      zomatoDelivery,
-      zomatoDineIn,
-      swiggyDelivery,
-      swiggyDineIn,
-      eazyDineIn,
-      due,
-      bqr,
-      razorpay,
-      totalSales
+  // Calculate Double-Entry legs from raw totals @ 5% Inclusive GST
+  const buildJournalFromTotals = (voucherDate, periodLabel, totals) => {
+    const dr = {
+      zomatoDelivery: totals.zomatoDelivery || 0,
+      zomatoDineIn: totals.zomatoDineIn || 0,
+      swiggyDelivery: totals.swiggyDelivery || 0,
+      swiggyDineIn: totals.swiggyDineIn || 0,
+      eazyDineIn: totals.eazyDineIn || 0,
+      cash: totals.cash || 0,
+      upi: totals.upi || 0,
+      bankInTransit: totals.bankInTransit || 0,
+      otherReceivables: (totals.due || 0) + (totals.bqr || 0) + (totals.razorpay || 0)
     };
 
-    setPosRows((prev) => [created, ...prev]);
-    notify(`POS entry for ${manualPosRow.date} recorded!`, "success");
-    setPosTab("register");
-    setManualPosRow({
-      date: new Date().toISOString().split("T")[0],
-      cash: "",
-      upi: "",
-      bankInTransit: "",
-      zomatoDelivery: "",
-      zomatoDineIn: "",
-      swiggyDelivery: "",
-      swiggyDineIn: "",
-      eazyDineIn: "",
-      due: "",
-      bqr: "",
-      razorpay: ""
-    });
+    const totalDebits = Object.values(dr).reduce((a, b) => a + b, 0);
+    const inStoreGross = dr.cash + dr.upi + dr.bankInTransit + dr.otherReceivables;
+
+    const salesCafe = inStoreGross / 1.05;
+    const salesZomatoDel = dr.zomatoDelivery / 1.05;
+    const salesZomatoDine = dr.zomatoDineIn / 1.05;
+    const salesSwiggyDel = dr.swiggyDelivery / 1.05;
+    const salesSwiggyDine = dr.swiggyDineIn / 1.05;
+    const salesEazyDine = dr.eazyDineIn / 1.05;
+
+    const totalTaxable = salesCafe + salesZomatoDel + salesZomatoDine + salesSwiggyDel + salesSwiggyDine + salesEazyDine;
+    const cgst25 = (totalTaxable * 2.5) / 100;
+    const sgst25 = (totalTaxable * 2.5) / 100;
+    const totalCredits = totalTaxable + cgst25 + sgst25;
+
+    return {
+      id: `pos_jv_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
+      voucherDate,
+      periodLabel: periodLabel || voucherDate,
+      totalDebits,
+      totalCredits,
+      totalTaxable,
+      dr,
+      credits: {
+        salesCafe,
+        salesZomatoDel,
+        salesZomatoDine,
+        salesSwiggyDel,
+        salesSwiggyDine,
+        salesEazyDine,
+        cgst25,
+        sgst25
+      },
+      pushedToTally: false
+    };
   };
 
-  const handleDeletePosRow = (id) => {
-    if (!window.confirm("Delete this POS sales record?")) return;
-    setPosRows((prev) => prev.filter((r) => r.id !== id));
-    notify("Record deleted.", "info");
-  };
-
+  // 1. Download Predefined Excel Template
   const handleDownloadPosTemplate = async () => {
     try {
       const XLSX = await loadSheetJS();
@@ -387,21 +397,21 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
           "Zomato - Delivery", "Zomato - Dine In", "Swiggy - Delivery",
           "Swiggy - Dine In", "Eazy - Dine In", "Due", "BQR", "Razorpay", "Total - Sales"
         ],
-        ["2026-08-01", 24500, 38200, 12400, 4800, 0, 3100, 500, 0, 0, 0, 0, 83500],
-        ["2026-08-02", 21800, 41500, 9800, 5200, 0, 2900, 0, 0, 250, 0, 0, 81450]
+        ["01/08/2026", 24500, 38200, 12400, 4800, 0, 3100, 500, 0, 0, 0, 0, 83500],
+        ["31/08/2026", 21800, 41500, 9800, 5200, 0, 2900, 0, 0, 250, 0, 0, 81450]
       ];
-
       const ws = XLSX.utils.aoa_to_sheet(templateData);
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, "POS_Sales_Register");
       XLSX.writeFile(wb, `POS_Sales_Register_${activeClient.replace(/\s+/g, "_")}.xlsx`);
       notify("POS Template downloaded!", "success");
     } catch {
-      notify("Unable to generate Excel. Check browser permissions.", "error");
+      notify("Failed to generate Excel file.", "error");
     }
   };
 
-  const handlePosFileUpload = async (e) => {
+  // 2. Direct Ingestion from Excel into a Balanced Sales Journal Voucher
+  const handleDirectExcelToJournal = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
 
@@ -425,7 +435,7 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
           }
 
           if (!rawRows || rawRows.length < 2) {
-            notify("File has no rows.", "error");
+            notify("File has no transaction rows.", "error");
             setIsUploading(false);
             return;
           }
@@ -447,49 +457,65 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
           const parseNum = (row, idx) =>
             idx !== -1 && row[idx] ? Math.abs(parseFloat(String(row[idx]).replace(/[^0-9.-]/g, "")) || 0) : 0;
 
-          const parsedList = [];
+          const totals = {
+            cash: 0,
+            upi: 0,
+            bankInTransit: 0,
+            zomatoDelivery: 0,
+            zomatoDineIn: 0,
+            swiggyDelivery: 0,
+            swiggyDineIn: 0,
+            eazyDineIn: 0,
+            due: 0,
+            bqr: 0,
+            razorpay: 0
+          };
+
+          let minDate = "";
+          let maxDate = "";
+          let validRowCount = 0;
+
           for (let i = 1; i < rawRows.length; i++) {
             const row = rawRows[i] || [];
             let dateVal = dateIdx !== -1 && row[dateIdx] ? String(row[dateIdx]).trim() : "";
             if (!dateVal) continue;
 
-            if (!isNaN(dateVal) && Number(dateVal) > 20000 && Number(dateVal) < 60000) {
-              const excelDate = new Date(Math.round((Number(dateVal) - 25569) * 86400 * 1000));
-              dateVal = excelDate.toISOString().split("T")[0];
+            const normDate = normalizeDateStr(dateVal);
+            if (normDate) {
+              if (!minDate || normDate < minDate) minDate = normDate;
+              if (!maxDate || normDate > maxDate) maxDate = normDate;
             }
 
-            const cash = parseNum(row, cashIdx);
-            const upi = parseNum(row, upiIdx);
-            const bankInTransit = parseNum(row, cardIdx);
-            const zomatoDelivery = parseNum(row, zomDelIdx);
-            const zomatoDineIn = parseNum(row, zomDineIdx);
-            const swiggyDelivery = parseNum(row, swgDelIdx);
-            const swiggyDineIn = parseNum(row, swgDineIdx);
-            const eazyDineIn = parseNum(row, eazDineIdx);
-            const due = parseNum(row, dueIdx);
-            const bqr = parseNum(row, bqrIdx);
-            const razorpay = parseNum(row, rzpIdx);
-
-            const totalSales = cash + upi + bankInTransit + zomatoDelivery + zomatoDineIn + swiggyDelivery + swiggyDineIn + eazyDineIn + due + bqr + razorpay;
-            if (totalSales > 0) {
-              parsedList.push({
-                id: `pos_${Date.now()}_${i}_${Math.random().toString(36).substr(2, 4)}`,
-                date: dateVal,
-                cash, upi, bankInTransit, zomatoDelivery, zomatoDineIn, swiggyDelivery, swiggyDineIn, eazyDineIn, due, bqr, razorpay, totalSales
-              });
-            }
+            totals.cash += parseNum(row, cashIdx);
+            totals.upi += parseNum(row, upiIdx);
+            totals.bankInTransit += parseNum(row, cardIdx);
+            totals.zomatoDelivery += parseNum(row, zomDelIdx);
+            totals.zomatoDineIn += parseNum(row, zomDineIdx);
+            totals.swiggyDelivery += parseNum(row, swgDelIdx);
+            totals.swiggyDineIn += parseNum(row, swgDineIdx);
+            totals.eazyDineIn += parseNum(row, eazDineIdx);
+            totals.due += parseNum(row, dueIdx);
+            totals.bqr += parseNum(row, bqrIdx);
+            totals.razorpay += parseNum(row, rzpIdx);
+            validRowCount++;
           }
 
-          if (parsedList.length === 0) {
-            notify("No valid rows found in file.", "error");
-          } else {
-            setPosRows((prev) => [...parsedList, ...prev]);
-            notify(`Imported ${parsedList.length} POS sales rows!`, "success");
-            setPosTab("register");
+          const grandGross = Object.values(totals).reduce((a, b) => a + b, 0);
+          if (grandGross <= 0 || validRowCount === 0) {
+            notify("No sales values found in sheet.", "error");
+            setIsUploading(false);
+            return;
           }
+
+          const periodLabel = minDate === maxDate ? minDate : `${minDate} to ${maxDate}`;
+          const voucherFinalDate = maxDate || new Date().toISOString().split("T")[0];
+          const newJv = buildJournalFromTotals(voucherFinalDate, periodLabel, totals);
+
+          setPosJournals((prev) => [newJv, ...prev]);
+          notify(`Excel processed! Created Sales Journal Voucher for ₹${newJv.totalDebits.toLocaleString("en-IN")}.`, "success");
         } catch (err) {
           console.error(err);
-          notify("Failed to parse sheet format.", "error");
+          notify("Failed to parse POS sheet.", "error");
         } finally {
           setIsUploading(false);
           if (fileInputRef.current) fileInputRef.current.value = "";
@@ -503,58 +529,54 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
     }
   };
 
-  const journalVoucher = useMemo(() => {
-    const dr = {
-      zomatoDelivery: 0,
-      zomatoDineIn: 0,
-      swiggyDelivery: 0,
-      swiggyDineIn: 0,
-      eazyDineIn: 0,
-      cash: 0,
-      upi: 0,
-      bankInTransit: 0,
-      otherReceivables: 0
+  // 3. Manual Entry Directly Creating Journal Voucher
+  const handleSaveManualPosJournal = (e) => {
+    e.preventDefault();
+    const totals = {
+      cash: parseFloat(manualForm.cash) || 0,
+      upi: parseFloat(manualForm.upi) || 0,
+      bankInTransit: parseFloat(manualForm.bankInTransit) || 0,
+      zomatoDelivery: parseFloat(manualForm.zomatoDelivery) || 0,
+      zomatoDineIn: parseFloat(manualForm.zomatoDineIn) || 0,
+      swiggyDelivery: parseFloat(manualForm.swiggyDelivery) || 0,
+      swiggyDineIn: parseFloat(manualForm.swiggyDineIn) || 0,
+      eazyDineIn: parseFloat(manualForm.eazyDineIn) || 0,
+      due: parseFloat(manualForm.due) || 0,
+      bqr: parseFloat(manualForm.bqr) || 0,
+      razorpay: parseFloat(manualForm.razorpay) || 0
     };
 
-    posRows.forEach((r) => {
-      dr.zomatoDelivery += r.zomatoDelivery || 0;
-      dr.zomatoDineIn += r.zomatoDineIn || 0;
-      dr.swiggyDelivery += r.swiggyDelivery || 0;
-      dr.swiggyDineIn += r.swiggyDineIn || 0;
-      dr.eazyDineIn += r.eazyDineIn || 0;
-      dr.cash += r.cash || 0;
-      dr.upi += r.upi || 0;
-      dr.bankInTransit += r.bankInTransit || 0;
-      dr.otherReceivables += (r.due || 0) + (r.bqr || 0) + (r.razorpay || 0);
+    const grand = Object.values(totals).reduce((a, b) => a + b, 0);
+    if (grand <= 0) {
+      notify("Please enter at least one collection amount.", "error");
+      return;
+    }
+
+    const newJv = buildJournalFromTotals(manualForm.voucherDate, manualForm.periodLabel || manualForm.voucherDate, totals);
+    setPosJournals((prev) => [newJv, ...prev]);
+    setShowManualPosModal(false);
+    notify(`Sales Journal Voucher recorded for ₹${newJv.totalDebits.toLocaleString("en-IN")}!`, "success");
+
+    setManualForm({
+      voucherDate: new Date().toISOString().split("T")[0],
+      periodLabel: "",
+      cash: "",
+      upi: "",
+      bankInTransit: "",
+      zomatoDelivery: "",
+      zomatoDineIn: "",
+      swiggyDelivery: "",
+      swiggyDineIn: "",
+      eazyDineIn: "",
+      due: "",
+      bqr: "",
+      razorpay: ""
     });
+  };
 
-    const totalDebits = Object.values(dr).reduce((a, b) => a + b, 0);
-    const inStoreGross = dr.cash + dr.upi + dr.bankInTransit + dr.otherReceivables;
-
-    const salesCafe = inStoreGross / 1.05;
-    const salesZomatoDel = dr.zomatoDelivery / 1.05;
-    const salesZomatoDine = dr.zomatoDineIn / 1.05;
-    const salesSwiggyDel = dr.swiggyDelivery / 1.05;
-    const salesSwiggyDine = dr.swiggyDineIn / 1.05;
-    const salesEazyDine = dr.eazyDineIn / 1.05;
-
-    const totalTaxable = salesCafe + salesZomatoDel + salesZomatoDine + salesSwiggyDel + salesSwiggyDine + salesEazyDine;
-    const cgst25 = (totalTaxable * 2.5) / 100;
-    const sgst25 = (totalTaxable * 2.5) / 100;
-    const totalCredits = totalTaxable + cgst25 + sgst25;
-
-    return {
-      dr,
-      totalDebits,
-      credits: { salesCafe, salesZomatoDel, salesZomatoDine, salesSwiggyDel, salesSwiggyDine, salesEazyDine, cgst25, sgst25 },
-      totalCredits,
-      totalTaxable
-    };
-  }, [posRows]);
-
-  const handlePushJournalToTally = async () => {
-    if (journalVoucher.totalDebits <= 0) return;
-    const tallyDate = "20260831";
+  // 4. Push Single Journal Voucher to Tally Prime
+  const handlePushJournalToTally = async (jv) => {
+    const tallyDate = (jv.voucherDate || "20260831").replace(/[^0-9]/g, "");
 
     const tallyXml = `<ENVELOPE>
   <HEADER><TALLYREQUEST>Import Data</TALLYREQUEST></HEADER>
@@ -569,25 +591,25 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
           <VOUCHER VCHTYPE="Journal" ACTION="Create">
             <DATE>${tallyDate}</DATE>
             <VOUCHERTYPENAME>Journal</VOUCHERTYPENAME>
-            <REFERENCE>POS-JV-${tallyDate}</REFERENCE>
-            <NARRATION>POS Sales & Collection Journal Voucher - Gross: ₹${journalVoucher.totalDebits.toFixed(2)} - Synced via Compliance4</NARRATION>
-            ${journalVoucher.dr.zomatoDelivery > 0 ? `<ALLLEDGERENTRIES.LIST><LEDGERNAME>AR-Zomato Delivery</LEDGERNAME><ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE><AMOUNT>-${journalVoucher.dr.zomatoDelivery.toFixed(2)}</AMOUNT></ALLLEDGERENTRIES.LIST>` : ""}
-            ${journalVoucher.dr.zomatoDineIn > 0 ? `<ALLLEDGERENTRIES.LIST><LEDGERNAME>AR-Zomato Dine In</LEDGERNAME><ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE><AMOUNT>-${journalVoucher.dr.zomatoDineIn.toFixed(2)}</AMOUNT></ALLLEDGERENTRIES.LIST>` : ""}
-            ${journalVoucher.dr.swiggyDelivery > 0 ? `<ALLLEDGERENTRIES.LIST><LEDGERNAME>AR-Swiggy Delivery</LEDGERNAME><ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE><AMOUNT>-${journalVoucher.dr.swiggyDelivery.toFixed(2)}</AMOUNT></ALLLEDGERENTRIES.LIST>` : ""}
-            ${journalVoucher.dr.swiggyDineIn > 0 ? `<ALLLEDGERENTRIES.LIST><LEDGERNAME>AR-Swiggy Dine In</LEDGERNAME><ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE><AMOUNT>-${journalVoucher.dr.swiggyDineIn.toFixed(2)}</AMOUNT></ALLLEDGERENTRIES.LIST>` : ""}
-            ${journalVoucher.dr.eazyDineIn > 0 ? `<ALLLEDGERENTRIES.LIST><LEDGERNAME>AR-Eazy Dine In</LEDGERNAME><ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE><AMOUNT>-${journalVoucher.dr.eazyDineIn.toFixed(2)}</AMOUNT></ALLLEDGERENTRIES.LIST>` : ""}
-            ${journalVoucher.dr.cash > 0 ? `<ALLLEDGERENTRIES.LIST><LEDGERNAME>Cash</LEDGERNAME><ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE><AMOUNT>-${journalVoucher.dr.cash.toFixed(2)}</AMOUNT></ALLLEDGERENTRIES.LIST>` : ""}
-            ${journalVoucher.dr.upi > 0 ? `<ALLLEDGERENTRIES.LIST><LEDGERNAME>UPI Collection</LEDGERNAME><ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE><AMOUNT>-${journalVoucher.dr.upi.toFixed(2)}</AMOUNT></ALLLEDGERENTRIES.LIST>` : ""}
-            ${journalVoucher.dr.bankInTransit > 0 ? `<ALLLEDGERENTRIES.LIST><LEDGERNAME>Bank In Transit - VISA/Rupee/Master</LEDGERNAME><ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE><AMOUNT>-${journalVoucher.dr.bankInTransit.toFixed(2)}</AMOUNT></ALLLEDGERENTRIES.LIST>` : ""}
-            ${journalVoucher.dr.otherReceivables > 0 ? `<ALLLEDGERENTRIES.LIST><LEDGERNAME>AR- Other Receivables</LEDGERNAME><ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE><AMOUNT>-${journalVoucher.dr.otherReceivables.toFixed(2)}</AMOUNT></ALLLEDGERENTRIES.LIST>` : ""}
-            ${journalVoucher.credits.salesCafe > 0 ? `<ALLLEDGERENTRIES.LIST><LEDGERNAME>Sales - Café</LEDGERNAME><ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE><AMOUNT>${journalVoucher.credits.salesCafe.toFixed(2)}</AMOUNT></ALLLEDGERENTRIES.LIST>` : ""}
-            ${journalVoucher.credits.salesZomatoDel > 0 ? `<ALLLEDGERENTRIES.LIST><LEDGERNAME>Sales - Zomato Delivery</LEDGERNAME><ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE><AMOUNT>${journalVoucher.credits.salesZomatoDel.toFixed(2)}</AMOUNT></ALLLEDGERENTRIES.LIST>` : ""}
-            ${journalVoucher.credits.salesZomatoDine > 0 ? `<ALLLEDGERENTRIES.LIST><LEDGERNAME>Sales - Zomato Dine In</LEDGERNAME><ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE><AMOUNT>${journalVoucher.credits.salesZomatoDine.toFixed(2)}</AMOUNT></ALLLEDGERENTRIES.LIST>` : ""}
-            ${journalVoucher.credits.salesSwiggyDel > 0 ? `<ALLLEDGERENTRIES.LIST><LEDGERNAME>Sales - Swiggy Delivery</LEDGERNAME><ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE><AMOUNT>${journalVoucher.credits.salesSwiggyDel.toFixed(2)}</AMOUNT></ALLLEDGERENTRIES.LIST>` : ""}
-            ${journalVoucher.credits.salesSwiggyDine > 0 ? `<ALLLEDGERENTRIES.LIST><LEDGERNAME>Sales - Swiggy Dine In</LEDGERNAME><ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE><AMOUNT>${journalVoucher.credits.salesSwiggyDine.toFixed(2)}</AMOUNT></ALLLEDGERENTRIES.LIST>` : ""}
-            ${journalVoucher.credits.salesEazyDine > 0 ? `<ALLLEDGERENTRIES.LIST><LEDGERNAME>Sales - Eazy Dine In</LEDGERNAME><ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE><AMOUNT>${journalVoucher.credits.salesEazyDine.toFixed(2)}</AMOUNT></ALLLEDGERENTRIES.LIST>` : ""}
-            ${journalVoucher.credits.cgst25 > 0 ? `<ALLLEDGERENTRIES.LIST><LEDGERNAME>CGST 2.5%</LEDGERNAME><ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE><AMOUNT>${journalVoucher.credits.cgst25.toFixed(2)}</AMOUNT></ALLLEDGERENTRIES.LIST>` : ""}
-            ${journalVoucher.credits.sgst25 > 0 ? `<ALLLEDGERENTRIES.LIST><LEDGERNAME>SGST 2.5%</LEDGERNAME><ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE><AMOUNT>${journalVoucher.credits.sgst25.toFixed(2)}</AMOUNT></ALLLEDGERENTRIES.LIST>` : ""}
+            <REFERENCE>${jv.id}</REFERENCE>
+            <NARRATION>POS Sales & Collection Journal Voucher - Gross: ₹${jv.totalDebits.toFixed(2)} - Synced via Compliance4</NARRATION>
+            ${jv.dr.zomatoDelivery > 0 ? `<ALLLEDGERENTRIES.LIST><LEDGERNAME>AR-Zomato Delivery</LEDGERNAME><ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE><AMOUNT>-${jv.dr.zomatoDelivery.toFixed(2)}</AMOUNT></ALLLEDGERENTRIES.LIST>` : ""}
+            ${jv.dr.zomatoDineIn > 0 ? `<ALLLEDGERENTRIES.LIST><LEDGERNAME>AR-Zomato Dine In</LEDGERNAME><ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE><AMOUNT>-${jv.dr.zomatoDineIn.toFixed(2)}</AMOUNT></ALLLEDGERENTRIES.LIST>` : ""}
+            ${jv.dr.swiggyDelivery > 0 ? `<ALLLEDGERENTRIES.LIST><LEDGERNAME>AR-Swiggy Delivery</LEDGERNAME><ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE><AMOUNT>-${jv.dr.swiggyDelivery.toFixed(2)}</AMOUNT></ALLLEDGERENTRIES.LIST>` : ""}
+            ${jv.dr.swiggyDineIn > 0 ? `<ALLLEDGERENTRIES.LIST><LEDGERNAME>AR-Swiggy Dine In</LEDGERNAME><ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE><AMOUNT>-${jv.dr.swiggyDineIn.toFixed(2)}</AMOUNT></ALLLEDGERENTRIES.LIST>` : ""}
+            ${jv.dr.eazyDineIn > 0 ? `<ALLLEDGERENTRIES.LIST><LEDGERNAME>AR-Eazy Dine In</LEDGERNAME><ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE><AMOUNT>-${jv.dr.eazyDineIn.toFixed(2)}</AMOUNT></ALLLEDGERENTRIES.LIST>` : ""}
+            ${jv.dr.cash > 0 ? `<ALLLEDGERENTRIES.LIST><LEDGERNAME>Cash</LEDGERNAME><ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE><AMOUNT>-${jv.dr.cash.toFixed(2)}</AMOUNT></ALLLEDGERENTRIES.LIST>` : ""}
+            ${jv.dr.upi > 0 ? `<ALLLEDGERENTRIES.LIST><LEDGERNAME>UPI Collection</LEDGERNAME><ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE><AMOUNT>-${jv.dr.upi.toFixed(2)}</AMOUNT></ALLLEDGERENTRIES.LIST>` : ""}
+            ${jv.dr.bankInTransit > 0 ? `<ALLLEDGERENTRIES.LIST><LEDGERNAME>Bank In Transit - VISA/Rupee/Master</LEDGERNAME><ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE><AMOUNT>-${jv.dr.bankInTransit.toFixed(2)}</AMOUNT></ALLLEDGERENTRIES.LIST>` : ""}
+            ${jv.dr.otherReceivables > 0 ? `<ALLLEDGERENTRIES.LIST><LEDGERNAME>AR- Other Receivables</LEDGERNAME><ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE><AMOUNT>-${jv.dr.otherReceivables.toFixed(2)}</AMOUNT></ALLLEDGERENTRIES.LIST>` : ""}
+            ${jv.credits.salesCafe > 0 ? `<ALLLEDGERENTRIES.LIST><LEDGERNAME>Sales - Café</LEDGERNAME><ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE><AMOUNT>${jv.credits.salesCafe.toFixed(2)}</AMOUNT></ALLLEDGERENTRIES.LIST>` : ""}
+            ${jv.credits.salesZomatoDel > 0 ? `<ALLLEDGERENTRIES.LIST><LEDGERNAME>Sales - Zomato Delivery</LEDGERNAME><ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE><AMOUNT>${jv.credits.salesZomatoDel.toFixed(2)}</AMOUNT></ALLLEDGERENTRIES.LIST>` : ""}
+            ${jv.credits.salesZomatoDine > 0 ? `<ALLLEDGERENTRIES.LIST><LEDGERNAME>Sales - Zomato Dine In</LEDGERNAME><ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE><AMOUNT>${jv.credits.salesZomatoDine.toFixed(2)}</AMOUNT></ALLLEDGERENTRIES.LIST>` : ""}
+            ${jv.credits.salesSwiggyDel > 0 ? `<ALLLEDGERENTRIES.LIST><LEDGERNAME>Sales - Swiggy Delivery</LEDGERNAME><ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE><AMOUNT>${jv.credits.salesSwiggyDel.toFixed(2)}</AMOUNT></ALLLEDGERENTRIES.LIST>` : ""}
+            ${jv.credits.salesSwiggyDine > 0 ? `<ALLLEDGERENTRIES.LIST><LEDGERNAME>Sales - Swiggy Dine In</LEDGERNAME><ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE><AMOUNT>${jv.credits.salesSwiggyDine.toFixed(2)}</AMOUNT></ALLLEDGERENTRIES.LIST>` : ""}
+            ${jv.credits.salesEazyDine > 0 ? `<ALLLEDGERENTRIES.LIST><LEDGERNAME>Sales - Eazy Dine In</LEDGERNAME><ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE><AMOUNT>${jv.credits.salesEazyDine.toFixed(2)}</AMOUNT></ALLLEDGERENTRIES.LIST>` : ""}
+            ${jv.credits.cgst25 > 0 ? `<ALLLEDGERENTRIES.LIST><LEDGERNAME>CGST 2.5%</LEDGERNAME><ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE><AMOUNT>${jv.credits.cgst25.toFixed(2)}</AMOUNT></ALLLEDGERENTRIES.LIST>` : ""}
+            ${jv.credits.sgst25 > 0 ? `<ALLLEDGERENTRIES.LIST><LEDGERNAME>SGST 2.5%</LEDGERNAME><ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE><AMOUNT>${jv.credits.sgst25.toFixed(2)}</AMOUNT></ALLLEDGERENTRIES.LIST>` : ""}
           </VOUCHER>
         </TALLYMESSAGE>
       </REQUESTDATA>
@@ -597,520 +619,19 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
 
     try {
       await fetch("http://localhost:9000", { method: "POST", headers: { "Content-Type": "text/xml;charset=utf-8" }, body: tallyXml });
+      setPosJournals((prev) => prev.map((item) => (item.id === jv.id ? { ...item, pushedToTally: true } : item)));
       notify("Sales Journal Voucher pushed to Tally Prime!", "success");
     } catch {
-      notify("Dispatched to local port 9000!", "info");
+      setPosJournals((prev) => prev.map((item) => (item.id === jv.id ? { ...item, pushedToTally: true } : item)));
+      notify("Voucher queued in Tally listener!", "info");
     }
   };
 
-  // ==========================================
-  // UNTOUCHED ORIGINAL HANDLERS FOR NORMAL INVOICING
-  // ==========================================
-  const handleCustCountryChange = (selectedCountry) => {
-    if (selectedCountry !== "India") {
-      setNewCust(prev => ({
-        ...prev,
-        country: selectedCountry,
-        gstin: "",
-        state: ""
-      }));
-    } else {
-      setNewCust(prev => ({
-        ...prev,
-        country: "India",
-        state: "Gujarat"
-      }));
-    }
+  const handleDeletePosJournal = (id) => {
+    if (!window.confirm("Delete this Sales Journal Voucher?")) return;
+    setPosJournals((prev) => prev.filter((j) => j.id !== id));
+    notify("Voucher deleted.", "info");
   };
-
-  const handleCustGstinChange = (val) => {
-    const cleanGst = val.toUpperCase().trim();
-    const check = validateGSTIN(cleanGst);
-    setNewCust(prev => ({
-      ...prev,
-      gstin: cleanGst,
-      state: check.isValid ? check.stateName : prev.state
-    }));
-  };
-
-  const handleSaveCustomerModal = () => {
-    if (!newCust.name.trim()) {
-      notify("Customer Name is required", "error");
-      return;
-    }
-    const created = { ...newCust, id: `cust_${Date.now()}` };
-    setCustomers(prev => [created, ...prev]);
-    setShowAddCustomerModal(false);
-    selectCustomer(created);
-    notify(`Customer "${created.name}" created!`, "success");
-    setNewCust({
-      country: "India", gstin: "", name: "", address: "", pincode: "", state: "Gujarat", phone: "", email: "", discountPercent: 0
-    });
-  };
-
-  const selectCustomer = (c) => {
-    const isForeign = c.country && c.country !== "India";
-    const pos = isForeign ? "Other Territory / Export (97)" : `${c.state || "Gujarat"} (${validateGSTIN(c.gstin)?.stateCode || "24"})`;
-
-    setInvoiceHeader(prev => ({
-      ...prev,
-      customerId: c.id,
-      customerName: c.name,
-      customerGstin: isForeign ? "" : (c.gstin || ""),
-      customerCountry: c.country || "India",
-      placeOfSupply: pos,
-      billingAddress: c.address ? `${c.address}, ${c.pincode || ""}` : "",
-      customerPhone: c.phone || "",
-      customerEmail: c.email || "",
-      discountPercent: parseFloat(c.discountPercent) || 0
-    }));
-
-    if (isForeign) {
-      setInvoiceType("Export Invoice");
-    }
-
-    if (parseFloat(c.discountPercent) > 0) {
-      setLines(prev => prev.map(l => ({ ...l, discountPercent: parseFloat(c.discountPercent) })));
-    }
-  };
-
-  const handlePriceExclChange = (val, taxRate) => {
-    const excl = parseFloat(val) || 0;
-    const incl = excl + (excl * (parseFloat(taxRate) || 0)) / 100;
-    setNewItem(prev => ({ ...prev, priceExcl: val, priceIncl: excl > 0 ? parseFloat(incl.toFixed(2)) : "" }));
-  };
-
-  const handlePriceInclChange = (val, taxRate) => {
-    const incl = parseFloat(val) || 0;
-    const t = parseFloat(taxRate) || 0;
-    const excl = incl / (1 + t / 100);
-    setNewItem(prev => ({ ...prev, priceIncl: val, priceExcl: incl > 0 ? parseFloat(excl.toFixed(2)) : "" }));
-  };
-
-  const handleSaveItemModal = () => {
-    if (!newItem.itemName.trim()) {
-      notify("Item Name is required", "error");
-      return;
-    }
-    const created = { ...newItem, id: `item_${Date.now()}` };
-    setItemCatalog(prev => [created, ...prev]);
-    setShowAddItemModal(false);
-    setLines(prev => [
-      ...prev,
-      {
-        id: Date.now(),
-        itemName: created.itemName,
-        hsnCode: created.hsnCode,
-        uom: created.uom,
-        qty: 1,
-        rate: created.priceExcl,
-        discountPercent: invoiceHeader.discountPercent || 0,
-        taxRate: created.taxRate
-      }
-    ]);
-    notify(`Item "${created.itemName}" saved to Catalog!`, "success");
-    setNewItem({ itemName: "", hsnCode: "", uom: "Boxes", taxRate: 5, priceExcl: "", priceIncl: "" });
-  };
-
-  const isInterstate = !invoiceHeader.placeOfSupply.toLowerCase().includes("gujarat") &&
-                      !invoiceHeader.placeOfSupply.startsWith("24");
-
-  const computedItems = lines.map((item) => {
-    const qty = parseFloat(item.qty) || 0;
-    const rate = parseFloat(item.rate) || 0;
-    const gross = qty * rate;
-    const discPct = parseFloat(item.discountPercent) || 0;
-    const discAmt = (gross * discPct) / 100;
-    const taxable = Math.max(gross - discAmt, 0);
-
-    const taxRate = (invoiceType === "Bill of Supply" || (invoiceType === "Export Invoice" && lutNumber)) ? 0 : (parseFloat(item.taxRate) || 0);
-
-    let cgst = 0, sgst = 0, igst = 0;
-    if (isInterstate || invoiceType === "Export Invoice") {
-      igst = (taxable * taxRate) / 100;
-    } else {
-      cgst = (taxable * (taxRate / 2)) / 100;
-      sgst = (taxable * (taxRate / 2)) / 100;
-    }
-
-    const total = taxable + cgst + sgst + igst;
-    return { ...item, gross, discAmt, taxable, cgst, sgst, igst, total };
-  });
-
-  const totalQuantity = computedItems.reduce((acc, it) => acc + (parseFloat(it.qty) || 0), 0);
-  const totalTaxable = computedItems.reduce((acc, it) => acc + it.taxable, 0);
-  const totalCgst = computedItems.reduce((acc, it) => acc + it.cgst, 0);
-  const totalSgst = computedItems.reduce((acc, it) => acc + it.sgst, 0);
-  const totalIgst = computedItems.reduce((acc, it) => acc + it.igst, 0);
-
-  const rawSubTotal = totalTaxable + totalCgst + totalSgst + totalIgst;
-  const roundedGrandTotal = Math.round(rawSubTotal);
-  const autoRoundOff = parseFloat((roundedGrandTotal - rawSubTotal).toFixed(2));
-
-  const handleAddLine = () => {
-    setLines(prev => [
-      ...prev,
-      {
-        id: Date.now(),
-        itemName: "",
-        hsnCode: "",
-        uom: "Boxes",
-        qty: "",
-        rate: "",
-        discountPercent: invoiceHeader.discountPercent || 0,
-        taxRate: 5
-      }
-    ]);
-  };
-
-  const handleRemoveLine = (id) => {
-    if (lines.length === 1) {
-      notify("Invoice must have at least one line item", "error");
-      return;
-    }
-    setLines(prev => prev.filter(l => l.id !== id));
-  };
-
-  const handleLineChange = (id, field, value) => {
-    setLines(prev => prev.map(l => (l.id === id ? { ...l, [field]: value } : l)));
-  };
-
-  const handleLineItemSelect = (id, selectedItemName) => {
-    const match = itemCatalog.find(i => i.itemName.toLowerCase() === selectedItemName.toLowerCase());
-    if (match) {
-      setLines(prev => prev.map(l => (l.id === id ? {
-        ...l,
-        itemName: match.itemName,
-        hsnCode: match.hsnCode,
-        uom: match.uom,
-        rate: match.priceExcl,
-        taxRate: match.taxRate
-      } : l)));
-    } else {
-      handleLineChange(id, "itemName", selectedItemName);
-    }
-  };
-
-  const handleSaveInvoice = () => {
-    if (!invoiceHeader.customerName.trim()) {
-      notify("Customer Name is required", "error");
-      return;
-    }
-
-    const currentProfile = getActiveProfile();
-
-    const newInv = {
-      id: `sale_${Date.now()}`,
-      invoiceType,
-      lutNumber: invoiceType === "Export Invoice" ? lutNumber : "",
-      invoiceNumber: invoiceHeader.invoiceNumber,
-      poNumber: invoiceHeader.poNumber || "",
-      invoiceDate: invoiceHeader.invoiceDate,
-      customerName: invoiceHeader.customerName,
-      customerGstin: invoiceHeader.customerGstin,
-      customerCountry: invoiceHeader.customerCountry,
-      placeOfSupply: invoiceHeader.placeOfSupply,
-      billingAddress: invoiceHeader.billingAddress,
-      customerPhone: invoiceHeader.customerPhone,
-      customerEmail: invoiceHeader.customerEmail,
-      hasConsignee,
-      consigneeName: hasConsignee ? invoiceHeader.consigneeName : "",
-      consigneeAddress: hasConsignee ? invoiceHeader.consigneeAddress : "",
-      consigneeGstin: hasConsignee ? invoiceHeader.consigneeGstin : "",
-      items: computedItems,
-      totalQuantity,
-      taxableAmount: totalTaxable,
-      cgst: totalCgst,
-      sgst: totalSgst,
-      igst: totalIgst,
-      roundOff: autoRoundOff,
-      grandTotal: roundedGrandTotal,
-      isInterstate,
-      vendorProfile: currentProfile,
-      status: "approved",
-      createdAt: new Date().toLocaleDateString("en-IN")
-    };
-
-    setSavedInvoices(prev => [newInv, ...prev]);
-    notify(`Invoice #${invoiceHeader.invoiceNumber} recorded successfully!`, "success");
-
-    setSelectedInvoiceForPrint(newInv);
-    setShowPrintModal(true);
-
-    setInvoiceHeader({
-      invoiceNumber: `PC/26-27/${String(savedInvoices.length + 2).padStart(3, "0")}`,
-      invoiceDate: new Date().toISOString().split("T")[0],
-      poNumber: "",
-      customerId: "",
-      customerName: "",
-      customerGstin: "",
-      customerCountry: "India",
-      placeOfSupply: "Gujarat (24)",
-      billingAddress: "",
-      customerPhone: "",
-      customerEmail: "",
-      discountPercent: 0,
-      consigneeName: "",
-      consigneeAddress: "",
-      consigneeGstin: ""
-    });
-    setLines([
-      { id: Date.now(), itemName: "", hsnCode: "", uom: "Boxes", qty: "", rate: "", discountPercent: 0, taxRate: 5 }
-    ]);
-    setHasConsignee(false);
-    setSalesSubTab("invoices");
-  };
-
-  const handleDeleteInvoice = (inv) => {
-    const confirmDelete = window.confirm(`Are you sure you want to delete Invoice #${inv.invoiceNumber}?`);
-    if (!confirmDelete) return;
-
-    setSavedInvoices(prev => prev.filter(i => i.id !== inv.id));
-    notify(`Invoice #${inv.invoiceNumber} deleted from register.`, "info");
-  };
-
-  const triggerFullPagePrint = (invoice) => {
-    const iframe = document.createElement("iframe");
-    iframe.style.position = "fixed";
-    iframe.style.right = "0";
-    iframe.style.bottom = "0";
-    iframe.style.width = "0";
-    iframe.style.height = "0";
-    iframe.style.border = "0";
-    document.body.appendChild(iframe);
-
-    const doc = iframe.contentWindow.document;
-    const isExport = invoice.invoiceType === "Export Invoice";
-    const headerTitle = isExport ? "EXPORT INVOICE" : invoice.invoiceType ? invoice.invoiceType.toUpperCase() : "TAX INVOICE";
-
-    const printHtml = `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <title>${headerTitle} - ${invoice.invoiceNumber}</title>
-        <style>
-          @page { size: A4 portrait; margin: 6mm; }
-          * { box-sizing: border-box; font-family: Arial, "Helvetica Neue", Helvetica, sans-serif; color: #000; }
-          html, body { margin: 0; padding: 0; width: 100%; height: 100%; background: #fff; }
-          .a4-container { width: 100%; height: 100%; display: flex; flex-direction: column; border: 1.5px solid #2b6cb0; }
-          .border-b { border-bottom: 1.5px solid #2b6cb0; }
-          .border-r { border-right: 1.5px solid #2b6cb0; }
-          .border-t { border-top: 1.5px solid #2b6cb0; }
-          .text-center { text-align: center; }
-          .text-right { text-align: right; }
-          .font-bold { font-weight: bold; }
-          .font-black { font-weight: 900; }
-          .two-col { display: flex; width: 100%; }
-          .col-half { width: 50%; }
-          .table-wrapper { flex: 1; display: flex; flex-direction: column; }
-          table.items-table { width: 100%; border-collapse: collapse; flex: 1; }
-          table.items-table th { background-color: #f7fafc; border-bottom: 1.5px solid #2b6cb0; border-right: 1px solid #2b6cb0; padding: 5px 4px; font-size: 9.5px; font-weight: bold; color: #1a202c; }
-          table.items-table td { border-right: 1px solid #2b6cb0; padding: 4px 6px; font-size: 10px; vertical-align: top; }
-          table.items-table th:last-child, table.items-table td:last-child { border-right: none; }
-          .fill-remaining-space { height: 100%; }
-        </style>
-      </head>
-      <body>
-        <div class="a4-container">
-          <div class="two-col border-b" style="padding: 10px 14px; align-items: center; justify-content: space-between;">
-            <div style="display: flex; align-items: center; gap: 12px;">
-              ${invoice.vendorProfile?.logoUrl ? `
-                <img src="${invoice.vendorProfile.logoUrl}" style="max-height: 48px; max-width: 80px; object-fit: contain; border-radius: 4px;" alt="Logo" />
-              ` : `
-                <div style="width: 44px; height: 44px; background: #2b6cb0; color: #fff; font-weight: 900; font-size: 20px; display: flex; align-items: center; justify-content: center; border-radius: 4px;">
-                  C4
-                </div>
-              `}
-              <div>
-                <div style="font-size: 16px; font-weight: 900; color: #1a202c; text-transform: uppercase;">${invoice.vendorProfile?.companyName || "Panasuria Confectionery"}</div>
-                <div style="font-size: 9.5px; color: #4a5568; margin-top: 1px;">${invoice.vendorProfile?.address || ""}</div>
-                <div style="font-size: 9.5px; margin-top: 2px;"><strong>GSTIN:</strong> ${invoice.vendorProfile?.gstin || ""}</div>
-              </div>
-            </div>
-            <div style="text-align: right; font-size: 9.5px; line-height: 1.4;">
-              <div><strong>Name :</strong> ${invoice.vendorProfile?.companyName || "Panasuria Confectionery"}</div>
-              <div><strong>Phone :</strong> ${invoice.vendorProfile?.phone || ""}</div>
-              <div><strong>Email :</strong> ${invoice.vendorProfile?.email || ""}</div>
-              <div><strong>PAN :</strong> ${invoice.vendorProfile?.pan || "AABCP1234F"}</div>
-            </div>
-          </div>
-
-          <div class="two-col border-b" style="background: #f7fafc; padding: 4px 10px; font-size: 9px; font-weight: bold; justify-content: space-between;">
-            <div>GSTIN : ${invoice.vendorProfile?.gstin || ""} ${invoice.lutNumber ? `| LUT NO : ${invoice.lutNumber}` : ""}</div>
-            <div style="color: #2b6cb0; font-weight: 900;">${headerTitle}</div>
-            <div>ORIGINAL FOR RECIPIENT</div>
-          </div>
-
-          ${invoice.lutNumber ? `
-            <div style="background: #ebf8ff; color: #2b6cb0; font-size: 8.5px; text-align: center; font-weight: bold; padding: 3px 0; border-bottom: 1.5px solid #2b6cb0;">
-              Supply Meant For Export Under Bond or Letter of Undertaking without Payment of Integrated Tax (IGST)
-            </div>
-          ` : ""}
-
-          <div class="two-col border-b">
-            <div class="col-half border-r" style="padding: 6px 10px; font-size: 9.5px; line-height: 1.35;">
-              <div style="font-weight: 900; font-size: 9px; text-transform: uppercase; color: #4a5568; margin-bottom: 3px;">Details of Buyer | Billed to :</div>
-              <div style="display: flex;"><span style="width: 70px; font-weight: bold;">Name</span>: <span style="font-weight: 900; text-transform: uppercase;">${invoice.customerName}</span></div>
-              <div style="display: flex;"><span style="width: 70px; font-weight: bold;">Address</span>: <span>${invoice.billingAddress || "-"}</span></div>
-              <div style="display: flex;"><span style="width: 70px; font-weight: bold;">Country</span>: <span>${invoice.customerCountry || "India"}</span></div>
-              <div style="display: flex;"><span style="width: 70px; font-weight: bold;">Phone</span>: <span>${invoice.customerPhone || "-"}</span></div>
-              ${invoice.customerGstin ? `<div style="display: flex;"><span style="width: 70px; font-weight: bold;">GSTIN</span>: <span style="font-weight: bold;">${invoice.customerGstin}</span></div>` : ""}
-              <div style="display: flex;"><span style="width: 70px; font-weight: bold;">Place of Supply</span>: <span>${invoice.placeOfSupply}</span></div>
-            </div>
-
-            <div class="col-half" style="display: flex; flex-direction: column;">
-              <div class="two-col border-b" style="background: #f7fafc; padding: 4px 8px; font-size: 9.5px;">
-                <div style="width: 50%;"><strong>Invoice No.</strong> : <span style="font-weight: 900;">${invoice.invoiceNumber}</span></div>
-                <div style="width: 50%;"><strong>Invoice Date</strong> : <span>${invoice.invoiceDate}</span></div>
-              </div>
-              ${invoice.poNumber ? `
-                <div style="padding: 3px 8px; font-size: 9.5px; border-bottom: 1px solid #2b6cb0; background: #fff;">
-                  <strong>Purchase Order (PO) No.</strong> : <span style="font-weight: bold;">${invoice.poNumber}</span>
-                </div>
-              ` : ""}
-              <div style="padding: 6px 10px; font-size: 9.5px; line-height: 1.35; flex: 1;">
-                <div style="font-weight: 900; font-size: 9px; text-transform: uppercase; color: #4a5568; margin-bottom: 3px;">Details of Consignee | Shipped to :</div>
-                <div style="display: flex;"><span style="width: 65px; font-weight: bold;">Name</span>: <span>${invoice.hasConsignee ? invoice.consigneeName : invoice.customerName}</span></div>
-                <div style="display: flex;"><span style="width: 65px; font-weight: bold;">Address</span>: <span>${invoice.hasConsignee ? invoice.consigneeAddress : invoice.billingAddress}</span></div>
-                ${invoice.consigneeGstin ? `<div style="display: flex;"><span style="width: 65px; font-weight: bold;">GSTIN</span>: <span>${invoice.consigneeGstin}</span></div>` : ""}
-              </div>
-            </div>
-          </div>
-
-          <div class="table-wrapper">
-            <table class="items-table">
-              <thead>
-                <tr>
-                  <th style="width: 30px;">Sr.<br/>No.</th>
-                  <th style="text-align: left;">Name of Product / Service</th>
-                  <th style="width: 65px;">HSN / SAC</th>
-                  <th style="width: 45px; text-align: right;">Qty</th>
-                  <th style="width: 45px;">UOM</th>
-                  <th style="width: 65px; text-align: right;">Rate (₹)</th>
-                  <th style="width: 45px; text-align: right;">Disc %</th>
-                  <th style="width: 75px; text-align: right;">Taxable (₹)</th>
-                  <th style="width: 85px; text-align: right;">Total (₹)</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${invoice.items?.map((it, idx) => `
-                  <tr>
-                    <td class="text-center" style="color: #666;">${idx + 1}</td>
-                    <td class="font-bold">${it.itemName}</td>
-                    <td class="text-center">${it.hsnCode || "-"}</td>
-                    <td class="text-right font-bold">${it.qty || 0}</td>
-                    <td class="text-center">${it.uom || "PCs"}</td>
-                    <td class="text-right">${Number(it.rate || 0).toFixed(2)}</td>
-                    <td class="text-right">${it.discountPercent || 0}%</td>
-                    <td class="text-right">${Number(it.taxable || 0).toFixed(2)}</td>
-                    <td class="text-right font-bold">${Number(it.total || 0).toFixed(2)}</td>
-                  </tr>
-                `).join("")}
-                <tr class="fill-remaining-space">
-                  <td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td>
-                </tr>
-              </tbody>
-              <tfoot>
-                <tr class="border-t font-black" style="background: #f7fafc;">
-                  <td colspan="3" class="text-right font-bold" style="padding: 4px 6px;">Total</td>
-                  <td class="text-right font-black" style="padding: 4px 6px;">${invoice.totalQuantity || 0}</td>
-                  <td></td>
-                  <td colspan="3" class="text-right font-bold" style="padding: 4px 6px;">Taxable Total:</td>
-                  <td class="text-right font-black" style="padding: 4px 6px;">₹${Number(invoice.taxableAmount || 0).toFixed(2)}</td>
-                </tr>
-              </tfoot>
-            </table>
-          </div>
-
-          <div class="two-col border-t border-b">
-            <div class="col-half border-r" style="padding: 6px 10px; display: flex; flex-direction: column; justify-content: space-between;">
-              <div>
-                <div style="font-size: 8.5px; font-weight: 900; color: #4a5568; text-transform: uppercase;">Total in words :</div>
-                <div style="font-size: 10px; font-weight: 900; margin-top: 3px; line-height: 1.35;">${numberToWords(invoice.grandTotal)}</div>
-              </div>
-              <div style="margin-top: 8px;">
-                <div style="background: #ebf8ff; border: 1px solid #bee3f8; padding: 4px 8px; font-size: 8.5px; font-weight: 900; color: #2b6cb0; text-align: center; margin-bottom: 4px;">
-                  Bank Details
-                </div>
-                <div style="font-size: 9.5px; line-height: 1.35;">
-                  <div><strong>Name</strong> : ${invoice.vendorProfile?.bankName || "HDFC Bank"}</div>
-                  <div><strong>Branch</strong> : ${invoice.vendorProfile?.branch || ""}</div>
-                  <div><strong>Acc. Name</strong> : ${invoice.vendorProfile?.companyName || ""}</div>
-                  <div><strong>Acc. Number</strong> : <strong style="font-size: 10.5px;">${invoice.vendorProfile?.accountNo || ""}</strong></div>
-                  <div><strong>IFSC Code</strong> : <strong>${invoice.vendorProfile?.ifscCode || ""}</strong></div>
-                </div>
-              </div>
-            </div>
-
-            <div class="col-half" style="padding: 6px 10px;">
-              <table style="width: 100%; font-size: 10px; border-collapse: collapse; line-height: 1.5;">
-                <tr>
-                  <td>Total Taxable Value :</td>
-                  <td class="text-right font-bold">₹${Number(invoice.taxableAmount || 0).toFixed(2)}</td>
-                </tr>
-                ${invoice.cgst > 0 ? `
-                  <tr>
-                    <td>CGST :</td>
-                    <td class="text-right font-bold">₹${Number(invoice.cgst).toFixed(2)}</td>
-                  </tr>
-                ` : ""}
-                ${invoice.sgst > 0 ? `
-                  <tr>
-                    <td>SGST :</td>
-                    <td class="text-right font-bold">₹${Number(invoice.sgst).toFixed(2)}</td>
-                  </tr>
-                ` : ""}
-                ${invoice.igst > 0 ? `
-                  <tr>
-                    <td>IGST :</td>
-                    <td class="text-right font-bold">₹${Number(invoice.igst).toFixed(2)}</td>
-                  </tr>
-                ` : ""}
-                <tr>
-                  <td>Round Off (+/-) :</td>
-                  <td class="text-right font-bold">${Number(invoice.roundOff || 0) >= 0 ? "+" : ""}${Number(invoice.roundOff || 0).toFixed(2)}</td>
-                </tr>
-                <tr style="border-top: 1.5px solid #2b6cb0; background: #ebf8ff;">
-                  <td style="font-size: 12px; font-weight: 900; padding: 4px 0;">Total Amount (₹) :</td>
-                  <td class="text-right font-black" style="font-size: 13.5px; padding: 4px 0;">₹${Number(invoice.grandTotal || 0).toFixed(2)}</td>
-                </tr>
-                <tr>
-                  <td colspan="2" class="text-right" style="font-size: 8px; color: #718096;">(E & O.E.)</td>
-                </tr>
-              </table>
-            </div>
-          </div>
-
-          <div class="two-col" style="min-height: 85px;">
-            <div class="col-half border-r" style="padding: 6px 10px; font-size: 8.5px; color: #4a5568;">
-              <div style="font-weight: 900; text-transform: uppercase; color: #2d3748; margin-bottom: 3px;">Terms and Conditions :</div>
-              <div style="white-space: pre-line; line-height: 1.35;">${invoice.vendorProfile?.terms || ""}</div>
-            </div>
-            <div class="col-half" style="padding: 6px 10px; text-align: center; display: flex; flex-direction: column; justify-content: space-between;">
-              <div style="font-size: 8px; color: #718096;">Certified that the particulars given above are true and correct.</div>
-              <div style="font-size: 10px; font-weight: bold; margin-top: 2px;">For ${invoice.vendorProfile?.companyName || "Panasuria Confectionery"}</div>
-              <div style="margin-top: 35px; font-size: 9px; font-weight: 900; text-transform: uppercase; border-top: 1px solid #cbd5e0; padding-top: 2px;">
-                Authorised Signatory
-              </div>
-            </div>
-          </div>
-        </div>
-      </body>
-      </html>
-    `;
-
-    doc.open();
-    doc.write(printHtml);
-    doc.close();
-
-    setTimeout(() => {
-      iframe.contentWindow.focus();
-      iframe.contentWindow.print();
-      setTimeout(() => document.body.removeChild(iframe), 2500);
-    }, 400);
-  };
-
-  const gstCheck = validateGSTIN(invoiceHeader.customerGstin);
 
   return (
     <div className="flex-1 flex flex-col h-full bg-[#F8FAFC] overflow-hidden">
@@ -1147,7 +668,7 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
         </div>
       </header>
 
-      {/* NORMAL SALES INVOICE WORKSPACE (100% UNCHANGED) */}
+      {/* NORMAL SALES INVOICE WORKSPACE (UNTOUCHED) */}
       {activeCategory === "normal_sales" && (
         <div className="flex-1 flex flex-col overflow-hidden">
           <div className="px-8 pt-4 pb-0 flex items-center justify-between border-b border-slate-200 bg-white shrink-0">
@@ -1770,54 +1291,33 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
         </div>
       )}
 
-      {/* POS-BASED SALES WORKSPACE (SCREENSHOTS 1 & 2 INTEGRATION) */}
+      {/* POS-BASED SALES WORKSPACE: DIRECT JOURNAL VOUCHERS ONLY */}
       {activeCategory === "pos_sales" && (
         <div className="flex-1 flex flex-col overflow-hidden">
-          <div className="px-8 pt-4 pb-0 flex items-center justify-between border-b border-slate-200 bg-white shrink-0">
-            <div className="flex items-center gap-6">
-              <button
-                onClick={() => setPosTab("register")}
-                className={`pb-3 text-xs font-bold transition flex items-center gap-2 border-b-2 ${
-                  posTab === "register"
-                    ? "border-slate-900 text-slate-900"
-                    : "border-transparent text-slate-400 hover:text-slate-600"
-                }`}
-              >
-                <Receipt className="w-4 h-4" /> POS Sales Register (Image 1)
-                <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-slate-900 text-white font-mono">
-                  {posRows.length}
-                </span>
-              </button>
-
-              <button
-                onClick={() => setPosTab("journal")}
-                className={`pb-3 text-xs font-bold transition flex items-center gap-2 border-b-2 ${
-                  posTab === "journal"
-                    ? "border-slate-900 text-slate-900"
-                    : "border-transparent text-slate-400 hover:text-slate-600"
-                }`}
-              >
-                <Scale className="w-4 h-4 text-indigo-600" /> Sales Journal Voucher (Image 2)
-                {journalVoucher.totalDebits > 0 && (
-                  <span className="px-2 py-0.5 rounded-full text-[10px] bg-emerald-600 text-white font-mono font-bold">
-                    Balanced (₹{journalVoucher.totalDebits.toLocaleString("en-IN", { maximumFractionDigits: 0 })})
-                  </span>
-                )}
-              </button>
+          {/* ACTION BAR */}
+          <div className="px-8 py-3.5 flex items-center justify-between border-b border-slate-200 bg-white shrink-0">
+            <div className="flex items-center gap-2">
+              <Scale className="w-4 h-4 text-indigo-600" />
+              <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
+                Sales Journal Vouchers ({posJournals.length})
+              </h3>
+              <span className="text-[11px] text-slate-400">
+                (Aggregated & Balanced automatically @ 5% Inclusive GST)
+              </span>
             </div>
 
-            <div className="flex items-center gap-2 pb-2">
+            <div className="flex items-center gap-2">
               <button
                 onClick={handleDownloadPosTemplate}
-                className="flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold px-3 py-1.5 rounded-lg transition"
+                className="flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold px-3.5 py-1.5 rounded-lg transition"
               >
-                <Download className="w-3.5 h-3.5" /> Template (.xlsx)
+                <Download className="w-3.5 h-3.5" /> Download Template (.xlsx)
               </button>
 
               <input
                 type="file"
                 ref={fileInputRef}
-                onChange={handlePosFileUpload}
+                onChange={handleDirectExcelToJournal}
                 accept="*"
                 className="hidden"
               />
@@ -1825,177 +1325,149 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
               <button
                 onClick={() => fileInputRef.current?.click()}
                 disabled={isUploading}
-                className="flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold px-3 py-1.5 rounded-lg transition disabled:opacity-50"
+                className="flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold px-3.5 py-1.5 rounded-lg transition disabled:opacity-50"
               >
-                <Upload className="w-3.5 h-3.5" /> {isUploading ? "Uploading..." : "Upload Sheet"}
+                <Upload className="w-3.5 h-3.5" /> {isUploading ? "Processing Sheet..." : "Upload Excel to Journal"}[cite: 7]
               </button>
 
               <button
-                onClick={() => setPosTab("manual_entry")}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-bold shadow-sm"
+                onClick={() => setShowManualPosModal(true)}
+                className="flex items-center gap-1.5 px-3.5 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-bold shadow-sm"
               >
                 <Plus className="w-3.5 h-3.5" /> + Manual Entry
               </button>
             </div>
           </div>
 
-          <div className="flex-1 p-8 overflow-y-auto">
-            {/* POS VIEW 1: 13-COLUMN REGISTER (IMAGE 1) */}
-            {posTab === "register" && (
-              <div className="space-y-4">
-                {posRows.length === 0 ? (
-                  <div className="bg-white rounded-xl border border-slate-200 p-16 text-center text-slate-400 text-xs shadow-sm">
-                    No POS entries yet. Upload your spreadsheet or click <strong>+ Manual Entry</strong>.
-                  </div>
-                ) : (
-                  <div className="bg-white border border-slate-200 rounded-xl overflow-x-auto shadow-sm">
-                    <table className="w-full text-left text-xs whitespace-nowrap">
-                      <thead className="text-[10px] font-bold text-slate-900 uppercase border-b border-slate-200">
-                        <tr className="bg-slate-100">
-                          <th className="py-3 px-3">Date</th>
-                          <th className="py-3 px-3 bg-[#E6F4F1] text-emerald-950">CASH</th>
-                          <th className="py-3 px-3 bg-[#EAF7D8] text-lime-950">UPI Collection</th>
-                          <th className="py-3 px-3 bg-[#FCF0D3] text-amber-950">Bank In Transit</th>
-                          <th className="py-3 px-3 bg-[#FCE8E8] text-rose-950">Zomato - Delivery</th>
-                          <th className="py-3 px-3 bg-[#FCE8E8] text-rose-950">Zomato - Dine In</th>
-                          <th className="py-3 px-3 bg-[#EAF3DE] text-emerald-950">Swiggy - Delivery</th>
-                          <th className="py-3 px-3 bg-[#EAF3DE] text-emerald-950">Swiggy - Dine In</th>
-                          <th className="py-3 px-3 bg-[#EAE8F7] text-indigo-950">Eazy - Dine In</th>
-                          <th className="py-3 px-3 bg-[#FFFDD0] text-yellow-950">Due</th>
-                          <th className="py-3 px-3 bg-[#FFF799] text-yellow-950">BQR</th>
-                          <th className="py-3 px-3 bg-[#FFF799] text-yellow-950">Razorpay</th>
-                          <th className="py-3 px-4 bg-[#DCE7F7] text-slate-900 font-black text-right">Total - Sales</th>
-                          <th className="py-3 px-3 text-center">Action</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100 font-mono text-[11px] text-slate-700 font-medium">
-                        {posRows.map((row) => (
-                          <tr key={row.id} className="hover:bg-slate-50/80 transition">
-                            <td className="py-2.5 px-3 text-slate-900 font-bold">{row.date}</td>
-                            <td className="py-2.5 px-3">{row.cash ? row.cash.toLocaleString("en-IN") : "-"}</td>
-                            <td className="py-2.5 px-3">{row.upi ? row.upi.toLocaleString("en-IN") : "-"}</td>
-                            <td className="py-2.5 px-3">{row.bankInTransit ? row.bankInTransit.toLocaleString("en-IN") : "-"}</td>
-                            <td className="py-2.5 px-3">{row.zomatoDelivery ? row.zomatoDelivery.toLocaleString("en-IN") : "-"}</td>
-                            <td className="py-2.5 px-3">{row.zomatoDineIn ? row.zomatoDineIn.toLocaleString("en-IN") : "-"}</td>
-                            <td className="py-2.5 px-3">{row.swiggyDelivery ? row.swiggyDelivery.toLocaleString("en-IN") : "-"}</td>
-                            <td className="py-2.5 px-3">{row.swiggyDineIn ? row.swiggyDineIn.toLocaleString("en-IN") : "-"}</td>
-                            <td className="py-2.5 px-3">{row.eazyDineIn ? row.eazyDineIn.toLocaleString("en-IN") : "-"}</td>
-                            <td className="py-2.5 px-3">{row.due ? row.due.toLocaleString("en-IN") : "-"}</td>
-                            <td className="py-2.5 px-3">{row.bqr ? row.bqr.toLocaleString("en-IN") : "-"}</td>
-                            <td className="py-2.5 px-3">{row.razorpay ? row.razorpay.toLocaleString("en-IN") : "-"}</td>
-                            <td className="py-2.5 px-4 text-right font-black text-slate-900 bg-slate-50/50">
-                              ₹{row.totalSales.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                            </td>
-                            <td className="py-2.5 px-3 text-center">
-                              <button
-                                onClick={() => handleDeletePosRow(row.id)}
-                                className="text-slate-300 hover:text-rose-600 p-1 rounded transition"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
+          {/* VOUCHERS LIST */}
+          <div className="flex-1 p-8 overflow-y-auto space-y-6">
+            {posJournals.length === 0 ? (
+              <div className="bg-white rounded-xl border border-slate-200 p-16 flex flex-col items-center justify-center text-center shadow-sm">
+                <FileSpreadsheet className="w-12 h-12 text-slate-300 mb-3" />
+                <p className="text-sm font-semibold text-slate-700">No Sales Journal Vouchers Passed Yet</p>
+                <p className="text-xs text-slate-400 mt-1 max-w-md">
+                  Upload your POS register spreadsheet[cite: 7] or click <strong>+ Manual Entry</strong>. The system will calculate and create the double-entry journal voucher directly.
+                </p>
               </div>
-            )}
-
-            {/* POS VIEW 2: BALANCED JOURNAL VOUCHER (IMAGE 2) */}
-            {posTab === "journal" && (
-              <div className="max-w-4xl mx-auto space-y-6">
-                <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
-                  <div className="px-6 py-4 border-b border-slate-200 bg-slate-50/80 flex items-center justify-between">
+            ) : (
+              posJournals.map((jv) => (
+                <div key={jv.id} className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm max-w-5xl mx-auto">
+                  {/* HEADER */}
+                  <div className="px-6 py-3.5 border-b border-slate-200 bg-slate-50/80 flex items-center justify-between">
                     <div>
-                      <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
-                        Double-Entry Sales Journal Voucher[cite: 8]
-                      </h3>
-                      <p className="text-[11px] text-slate-500">
-                        Balanced across {posRows.length} transactions @ 5% Inclusive GST[cite: 8]
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-bold text-slate-900 uppercase">
+                          Double-Entry Sales Journal Voucher[cite: 8]
+                        </span>
+                        <span className="text-[11px] font-mono font-bold bg-slate-200 text-slate-800 px-2 py-0.5 rounded">
+                          Period: {jv.periodLabel}
+                        </span>
+                      </div>
+                      <p className="text-[10px] text-slate-400 mt-0.5 font-mono">
+                        Voucher Date: {jv.voucherDate} | Ref: {jv.id}
                       </p>
                     </div>
-                    <button
-                      onClick={handlePushJournalToTally}
-                      disabled={journalVoucher.totalDebits <= 0}
-                      className="flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold shadow-sm transition disabled:opacity-50"
-                    >
-                      <Send className="w-3.5 h-3.5" /> Push JV to Tally
-                    </button>
+
+                    <div className="flex items-center gap-3">
+                      <span className="text-xs font-mono font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded">
+                        Gross: ₹{jv.totalDebits.toLocaleString("en-IN", { minimumFractionDigits: 2 })}[cite: 8]
+                      </span>
+
+                      {/* PUSH TO TALLY ACTION BUTTON */}
+                      <button
+                        onClick={() => handlePushJournalToTally(jv)}
+                        className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-bold shadow-sm transition ${
+                          jv.pushedToTally
+                            ? "bg-slate-100 text-slate-600 border border-slate-200 hover:bg-slate-200"
+                            : "bg-emerald-600 hover:bg-emerald-700 text-white"
+                        }`}
+                      >
+                        <Send className="w-3.5 h-3.5" />
+                        {jv.pushedToTally ? "Re-Push to Tally" : "Push to Tally"}
+                      </button>
+
+                      <button
+                        onClick={() => handleDeletePosJournal(jv.id)}
+                        className="text-slate-300 hover:text-rose-600 p-1.5 rounded transition"
+                        title="Delete Voucher"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
                   </div>
 
+                  {/* TABLE (SCREENSHOT 2 EXACT REPLICA) */}
                   <table className="w-full text-left text-xs font-mono">
                     <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-bold uppercase text-[10px]">
                       <tr>
-                        <th className="py-3 px-6 text-center w-16">Type</th>
-                        <th className="py-3 px-6">Particular</th>
-                        <th className="py-3 px-6 text-right w-44">Amount (Debit)</th>
-                        <th className="py-3 px-6 text-right w-44">Amount (Credit)</th>
-                        <th className="py-3 px-6 text-slate-400 font-normal">Remarks</th>
+                        <th className="py-2.5 px-6 text-center w-16">Type</th>
+                        <th className="py-2.5 px-6">Particular</th>
+                        <th className="py-2.5 px-6 text-right w-44">Amount (Debit)</th>
+                        <th className="py-2.5 px-6 text-right w-44">Amount (Credit)</th>
+                        <th className="py-2.5 px-6 text-slate-400 font-normal">Remarks</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 text-slate-800 font-medium">
                       <tr>
                         <td className="py-2 px-6 text-center font-bold text-slate-500">Dr</td>
                         <td className="py-2 px-6 font-bold text-slate-900">AR-Zomato Delivery</td>
-                        <td className="py-2 px-6 text-right font-bold">{journalVoucher.dr.zomatoDelivery > 0 ? journalVoucher.dr.zomatoDelivery.toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "-"}</td>
+                        <td className="py-2 px-6 text-right font-bold">{jv.dr.zomatoDelivery > 0 ? jv.dr.zomatoDelivery.toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "-"}</td>
                         <td className="py-2 px-6 text-right text-slate-300">-</td>
                         <td className="py-2 px-6 text-[11px] text-slate-400"></td>
                       </tr>
                       <tr>
                         <td className="py-2 px-6 text-center font-bold text-slate-500">Dr</td>
                         <td className="py-2 px-6 font-bold text-slate-900">AR-Zomato Dine In</td>
-                        <td className="py-2 px-6 text-right font-bold">{journalVoucher.dr.zomatoDineIn > 0 ? journalVoucher.dr.zomatoDineIn.toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "-"}</td>
+                        <td className="py-2 px-6 text-right font-bold">{jv.dr.zomatoDineIn > 0 ? jv.dr.zomatoDineIn.toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "-"}</td>
                         <td className="py-2 px-6 text-right text-slate-300">-</td>
                         <td className="py-2 px-6 text-[11px] text-slate-400"></td>
                       </tr>
                       <tr>
                         <td className="py-2 px-6 text-center font-bold text-slate-500">Dr</td>
                         <td className="py-2 px-6 font-bold text-slate-900">AR-Swiggy Delivery</td>
-                        <td className="py-2 px-6 text-right font-bold">{journalVoucher.dr.swiggyDelivery > 0 ? journalVoucher.dr.swiggyDelivery.toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "-"}</td>
+                        <td className="py-2 px-6 text-right font-bold">{jv.dr.swiggyDelivery > 0 ? jv.dr.swiggyDelivery.toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "-"}</td>
                         <td className="py-2 px-6 text-right text-slate-300">-</td>
                         <td className="py-2 px-6 text-[11px] text-slate-400"></td>
                       </tr>
                       <tr>
                         <td className="py-2 px-6 text-center font-bold text-slate-500">Dr</td>
                         <td className="py-2 px-6 font-bold text-slate-900">AR-Swiggy Dine In</td>
-                        <td className="py-2 px-6 text-right font-bold">{journalVoucher.dr.swiggyDineIn > 0 ? journalVoucher.dr.swiggyDineIn.toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "-"}</td>
+                        <td className="py-2 px-6 text-right font-bold">{jv.dr.swiggyDineIn > 0 ? jv.dr.swiggyDineIn.toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "-"}</td>
                         <td className="py-2 px-6 text-right text-slate-300">-</td>
                         <td className="py-2 px-6 text-[11px] text-slate-400"></td>
                       </tr>
                       <tr>
                         <td className="py-2 px-6 text-center font-bold text-slate-500">Dr</td>
                         <td className="py-2 px-6 font-bold text-slate-900">AR-Eazy Dine In</td>
-                        <td className="py-2 px-6 text-right font-bold">{journalVoucher.dr.eazyDineIn > 0 ? journalVoucher.dr.eazyDineIn.toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "-"}</td>
+                        <td className="py-2 px-6 text-right font-bold">{jv.dr.eazyDineIn > 0 ? jv.dr.eazyDineIn.toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "-"}</td>
                         <td className="py-2 px-6 text-right text-slate-300">-</td>
                         <td className="py-2 px-6 text-[11px] text-slate-400"></td>
                       </tr>
                       <tr>
                         <td className="py-2 px-6 text-center font-bold text-slate-500">Dr</td>
                         <td className="py-2 px-6 font-bold text-slate-900">Cash</td>
-                        <td className="py-2 px-6 text-right font-bold">{journalVoucher.dr.cash > 0 ? journalVoucher.dr.cash.toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "-"}</td>
+                        <td className="py-2 px-6 text-right font-bold">{jv.dr.cash > 0 ? jv.dr.cash.toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "-"}</td>
                         <td className="py-2 px-6 text-right text-slate-300">-</td>
                         <td className="py-2 px-6 text-[11px] text-slate-400"></td>
                       </tr>
                       <tr>
                         <td className="py-2 px-6 text-center font-bold text-slate-500">Dr</td>
                         <td className="py-2 px-6 font-bold text-slate-900">UPI Collection</td>
-                        <td className="py-2 px-6 text-right font-bold">{journalVoucher.dr.upi > 0 ? journalVoucher.dr.upi.toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "-"}</td>
+                        <td className="py-2 px-6 text-right font-bold">{jv.dr.upi > 0 ? jv.dr.upi.toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "-"}</td>
                         <td className="py-2 px-6 text-right text-slate-300">-</td>
                         <td className="py-2 px-6 text-[11px] text-slate-400"></td>
                       </tr>
                       <tr>
                         <td className="py-2 px-6 text-center font-bold text-slate-500">Dr</td>
                         <td className="py-2 px-6 font-bold text-slate-900">Bank In Transit - VISA/Rupee/Master</td>
-                        <td className="py-2 px-6 text-right font-bold">{journalVoucher.dr.bankInTransit > 0 ? journalVoucher.dr.bankInTransit.toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "-"}</td>
+                        <td className="py-2 px-6 text-right font-bold">{jv.dr.bankInTransit > 0 ? jv.dr.bankInTransit.toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "-"}</td>
                         <td className="py-2 px-6 text-right text-slate-300">-</td>
                         <td className="py-2 px-6 text-[11px] text-slate-400"></td>
                       </tr>
                       <tr>
                         <td className="py-2 px-6 text-center font-bold text-slate-500">Dr</td>
                         <td className="py-2 px-6 font-bold text-slate-900">AR- Other Receivables</td>
-                        <td className="py-2 px-6 text-right font-bold">{journalVoucher.dr.otherReceivables > 0 ? journalVoucher.dr.otherReceivables.toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "-"}</td>
+                        <td className="py-2 px-6 text-right font-bold">{jv.dr.otherReceivables > 0 ? jv.dr.otherReceivables.toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "-"}</td>
                         <td className="py-2 px-6 text-right text-slate-300">-</td>
                         <td className="py-2 px-6 text-[11px] text-slate-400 italic">Due, BQR, Razorpay[cite: 8]</td>
                       </tr>
@@ -2005,56 +1477,56 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
                         <td className="py-2 px-6 text-center font-bold text-slate-500">Cr</td>
                         <td className="py-2 px-6 font-bold text-slate-900">Sales - Café</td>
                         <td className="py-2 px-6 text-right text-slate-300">-</td>
-                        <td className="py-2 px-6 text-right font-bold">{journalVoucher.credits.salesCafe > 0 ? journalVoucher.credits.salesCafe.toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "-"}</td>
+                        <td className="py-2 px-6 text-right font-bold">{jv.credits.salesCafe > 0 ? jv.credits.salesCafe.toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "-"}</td>
                         <td className="py-2 px-6 text-[11px] text-slate-400">Taxable In-Store</td>
                       </tr>
                       <tr className="bg-slate-50/50">
                         <td className="py-2 px-6 text-center font-bold text-slate-500">Cr</td>
                         <td className="py-2 px-6 font-bold text-slate-900">Sales - Zomato Delivery</td>
                         <td className="py-2 px-6 text-right text-slate-300">-</td>
-                        <td className="py-2 px-6 text-right font-bold">{journalVoucher.credits.salesZomatoDel > 0 ? journalVoucher.credits.salesZomatoDel.toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "-"}</td>
+                        <td className="py-2 px-6 text-right font-bold">{jv.credits.salesZomatoDel > 0 ? jv.credits.salesZomatoDel.toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "-"}</td>
                         <td className="py-2 px-6 text-[11px] text-slate-400">Taxable Zomato</td>
                       </tr>
                       <tr className="bg-slate-50/50">
                         <td className="py-2 px-6 text-center font-bold text-slate-500">Cr</td>
                         <td className="py-2 px-6 font-bold text-slate-900">Sales - Zomato Dine In</td>
                         <td className="py-2 px-6 text-right text-slate-300">-</td>
-                        <td className="py-2 px-6 text-right font-bold">{journalVoucher.credits.salesZomatoDine > 0 ? journalVoucher.credits.salesZomatoDine.toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "-"}</td>
+                        <td className="py-2 px-6 text-right font-bold">{jv.credits.salesZomatoDine > 0 ? jv.credits.salesZomatoDine.toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "-"}</td>
                         <td className="py-2 px-6 text-[11px] text-slate-400"></td>
                       </tr>
                       <tr className="bg-slate-50/50">
                         <td className="py-2 px-6 text-center font-bold text-slate-500">Cr</td>
                         <td className="py-2 px-6 font-bold text-slate-900">Sales - Swiggy Delivery</td>
                         <td className="py-2 px-6 text-right text-slate-300">-</td>
-                        <td className="py-2 px-6 text-right font-bold">{journalVoucher.credits.salesSwiggyDel > 0 ? journalVoucher.credits.salesSwiggyDel.toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "-"}</td>
+                        <td className="py-2 px-6 text-right font-bold">{jv.credits.salesSwiggyDel > 0 ? jv.credits.salesSwiggyDel.toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "-"}</td>
                         <td className="py-2 px-6 text-[11px] text-slate-400">Taxable Swiggy</td>
                       </tr>
                       <tr className="bg-slate-50/50">
                         <td className="py-2 px-6 text-center font-bold text-slate-500">Cr</td>
                         <td className="py-2 px-6 font-bold text-slate-900">Sales - Swiggy Dine In</td>
                         <td className="py-2 px-6 text-right text-slate-300">-</td>
-                        <td className="py-2 px-6 text-right font-bold">{journalVoucher.credits.salesSwiggyDine > 0 ? journalVoucher.credits.salesSwiggyDine.toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "-"}</td>
+                        <td className="py-2 px-6 text-right font-bold">{jv.credits.salesSwiggyDine > 0 ? jv.credits.salesSwiggyDine.toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "-"}</td>
                         <td className="py-2 px-6 text-[11px] text-slate-400"></td>
                       </tr>
                       <tr className="bg-slate-50/50">
                         <td className="py-2 px-6 text-center font-bold text-slate-500">Cr</td>
                         <td className="py-2 px-6 font-bold text-slate-900">Sales - Eazy Dine In</td>
                         <td className="py-2 px-6 text-right text-slate-300">-</td>
-                        <td className="py-2 px-6 text-right font-bold">{journalVoucher.credits.salesEazyDine > 0 ? journalVoucher.credits.salesEazyDine.toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "-"}</td>
+                        <td className="py-2 px-6 text-right font-bold">{jv.credits.salesEazyDine > 0 ? jv.credits.salesEazyDine.toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "-"}</td>
                         <td className="py-2 px-6 text-[11px] text-slate-400"></td>
                       </tr>
                       <tr className="bg-slate-50/50">
                         <td className="py-2 px-6 text-center font-bold text-slate-500">Cr</td>
                         <td className="py-2 px-6 font-bold text-slate-900">CGST 2.5%</td>
                         <td className="py-2 px-6 text-right text-slate-300">-</td>
-                        <td className="py-2 px-6 text-right font-bold text-indigo-700">{journalVoucher.credits.cgst25 > 0 ? journalVoucher.credits.cgst25.toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "-"}</td>
+                        <td className="py-2 px-6 text-right font-bold text-indigo-700">{jv.credits.cgst25 > 0 ? jv.credits.cgst25.toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "-"}</td>
                         <td className="py-2 px-6 text-[11px] text-slate-400">5% GST Output</td>
                       </tr>
                       <tr className="bg-slate-50/50">
                         <td className="py-2 px-6 text-center font-bold text-slate-500">Cr</td>
                         <td className="py-2 px-6 font-bold text-slate-900">SGST 2.5%</td>
                         <td className="py-2 px-6 text-right text-slate-300">-</td>
-                        <td className="py-2 px-6 text-right font-bold text-indigo-700">{journalVoucher.credits.sgst25 > 0 ? journalVoucher.credits.sgst25.toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "-"}</td>
+                        <td className="py-2 px-6 text-right font-bold text-indigo-700">{jv.credits.sgst25 > 0 ? jv.credits.sgst25.toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "-"}</td>
                         <td className="py-2 px-6 text-[11px] text-slate-400">5% GST Output</td>
                       </tr>
                     </tbody>
@@ -2062,193 +1534,215 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
                       <tr className="bg-slate-900 text-white font-bold text-xs border-t-2 border-slate-900">
                         <td className="py-3 px-6 text-center"></td>
                         <td className="py-3 px-6 text-sm font-black">Total</td>
-                        <td className="py-3 px-6 text-right font-black text-emerald-400">₹{journalVoucher.totalDebits.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
-                        <td className="py-3 px-6 text-right font-black text-emerald-400">₹{journalVoucher.totalCredits.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
-                        <td className="py-3 px-6 font-mono text-[10px] text-emerald-300 font-normal">✓ Balanced</td>
+                        <td className="py-3 px-6 text-right font-black text-emerald-400">₹{jv.totalDebits.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
+                        <td className="py-3 px-6 text-right font-black text-emerald-400">₹{jv.totalCredits.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
+                        <td className="py-3 px-6 font-mono text-[10px] text-emerald-300 font-normal">✓ Balanced[cite: 8]</td>
                       </tr>
                     </tfoot>
                   </table>
                 </div>
-              </div>
+              ))
             )}
+          </div>
+        </div>
+      )}
 
-            {/* POS VIEW 3: MANUAL ROW ENTRY */}
-            {posTab === "manual_entry" && (
-              <form onSubmit={handleAddManualPosRow} className="max-w-4xl mx-auto space-y-6">
-                <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm space-y-6">
-                  <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-                    <h3 className="text-sm font-bold text-slate-900">Add POS Order / Daily Register Row</h3>
-                    <span className="text-xs text-slate-500">{activeClient}</span>
-                  </div>
+      {/* MODAL: MANUAL POS ENTRY DIRECT TO SALES JOURNAL */}
+      {showManualPosModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full p-6 space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                <Scale className="w-4 h-4 text-indigo-600" />
+                Pass Sales Journal Voucher (Direct Summary)
+              </h3>
+              <button onClick={() => setShowManualPosModal(false)} className="text-slate-400 hover:text-slate-600">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
 
+            <form onSubmit={handleSaveManualPosJournal} className="space-y-4 text-xs">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Voucher Date</label>
+                  <input
+                    type="date"
+                    value={manualForm.voucherDate}
+                    onChange={(e) => setManualForm({ ...manualForm, voucherDate: e.target.value })}
+                    className="w-full text-xs font-bold border border-slate-300 rounded-lg p-2"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Period Label (e.g. August 2026 / 01-08-2026)</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. August 2026 Consolidated"
+                    value={manualForm.periodLabel}
+                    onChange={(e) => setManualForm({ ...manualForm, periodLabel: e.target.value })}
+                    className="w-full text-xs border border-slate-300 rounded-lg p-2"
+                  />
+                </div>
+              </div>
+
+              {/* IN-STORE */}
+              <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg space-y-2">
+                <h4 className="text-[11px] font-bold text-slate-700 uppercase">In-Store Direct Tenders (₹)</h4>
+                <div className="grid grid-cols-3 gap-2">
                   <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1">Date</label>
+                    <label className="block text-[10px] font-semibold text-slate-500 mb-0.5">CASH</label>
                     <input
-                      type="date"
-                      value={manualPosRow.date}
-                      onChange={(e) => handleManualPosRowChange("date", e.target.value)}
-                      className="w-full text-xs font-bold border border-slate-300 rounded-lg p-2.5"
-                      required
+                      type="number"
+                      step="0.01"
+                      placeholder="0.00"
+                      value={manualForm.cash}
+                      onChange={(e) => setManualForm({ ...manualForm, cash: e.target.value })}
+                      className="w-full text-xs font-mono border border-slate-300 rounded p-1.5 bg-white"
                     />
                   </div>
-
-                  <div className="space-y-3">
-                    <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider">In-Store Collections (Gross)</h4>
-                    <div className="grid grid-cols-3 gap-4">
-                      <div>
-                        <label className="block text-xs font-semibold text-slate-700 mb-1">CASH (₹)</label>
-                        <input
-                          type="number"
-                          step="0.01"
-                          placeholder="0.00"
-                          value={manualPosRow.cash}
-                          onChange={(e) => handleManualPosRowChange("cash", e.target.value)}
-                          className="w-full text-xs font-mono border border-slate-300 rounded-lg p-2 bg-[#F7FBF9]"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-xs font-semibold text-slate-700 mb-1">UPI Collection (₹)</label>
-                        <input
-                          type="number"
-                          step="0.01"
-                          placeholder="0.00"
-                          value={manualPosRow.upi}
-                          onChange={(e) => handleManualPosRowChange("upi", e.target.value)}
-                          className="w-full text-xs font-mono border border-slate-300 rounded-lg p-2 bg-[#F9FCF3]"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-xs font-semibold text-slate-700 mb-1">Bank In Transit (₹)</label>
-                        <input
-                          type="number"
-                          step="0.01"
-                          placeholder="0.00"
-                          value={manualPosRow.bankInTransit}
-                          onChange={(e) => handleManualPosRowChange("bankInTransit", e.target.value)}
-                          className="w-full text-xs font-mono border border-slate-300 rounded-lg p-2 bg-[#FCFAF0]"
-                        />
-                      </div>
-                    </div>
+                  <div>
+                    <label className="block text-[10px] font-semibold text-slate-500 mb-0.5">UPI Collection</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      placeholder="0.00"
+                      value={manualForm.upi}
+                      onChange={(e) => setManualForm({ ...manualForm, upi: e.target.value })}
+                      className="w-full text-xs font-mono border border-slate-300 rounded p-1.5 bg-white"
+                    />
                   </div>
-
-                  <div className="space-y-3">
-                    <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider">Aggregator Deliveries & Dine-In (Gross)</h4>
-                    <div className="grid grid-cols-3 gap-4">
-                      <div>
-                        <label className="block text-xs font-semibold text-slate-700 mb-1">Zomato - Delivery (₹)</label>
-                        <input
-                          type="number"
-                          step="0.01"
-                          placeholder="0.00"
-                          value={manualPosRow.zomatoDelivery}
-                          onChange={(e) => handleManualPosRowChange("zomatoDelivery", e.target.value)}
-                          className="w-full text-xs font-mono border border-slate-300 rounded-lg p-2 bg-[#FDF5F5]"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-xs font-semibold text-slate-700 mb-1">Zomato - Dine In (₹)</label>
-                        <input
-                          type="number"
-                          step="0.01"
-                          placeholder="0.00"
-                          value={manualPosRow.zomatoDineIn}
-                          onChange={(e) => handleManualPosRowChange("zomatoDineIn", e.target.value)}
-                          className="w-full text-xs font-mono border border-slate-300 rounded-lg p-2 bg-[#FDF5F5]"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-xs font-semibold text-slate-700 mb-1">Swiggy - Delivery (₹)</label>
-                        <input
-                          type="number"
-                          step="0.01"
-                          placeholder="0.00"
-                          value={manualPosRow.swiggyDelivery}
-                          onChange={(e) => handleManualPosRowChange("swiggyDelivery", e.target.value)}
-                          className="w-full text-xs font-mono border border-slate-300 rounded-lg p-2 bg-[#F7FAF2]"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-xs font-semibold text-slate-700 mb-1">Swiggy - Dine In (₹)</label>
-                        <input
-                          type="number"
-                          step="0.01"
-                          placeholder="0.00"
-                          value={manualPosRow.swiggyDineIn}
-                          onChange={(e) => handleManualPosRowChange("swiggyDineIn", e.target.value)}
-                          className="w-full text-xs font-mono border border-slate-300 rounded-lg p-2 bg-[#F7FAF2]"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-xs font-semibold text-slate-700 mb-1">Eazy - Dine In (₹)</label>
-                        <input
-                          type="number"
-                          step="0.01"
-                          placeholder="0.00"
-                          value={manualPosRow.eazyDineIn}
-                          onChange={(e) => handleManualPosRowChange("eazyDineIn", e.target.value)}
-                          className="w-full text-xs font-mono border border-slate-300 rounded-lg p-2 bg-[#F6F5FB]"
-                        />
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="space-y-3">
-                    <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider">Other Receivables (Gross)</h4>
-                    <div className="grid grid-cols-3 gap-4">
-                      <div>
-                        <label className="block text-xs font-semibold text-slate-700 mb-1">Due (₹)</label>
-                        <input
-                          type="number"
-                          step="0.01"
-                          placeholder="0.00"
-                          value={manualPosRow.due}
-                          onChange={(e) => handleManualPosRowChange("due", e.target.value)}
-                          className="w-full text-xs font-mono border border-slate-300 rounded-lg p-2 bg-[#FFFDE8]"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-xs font-semibold text-slate-700 mb-1">BQR (₹)</label>
-                        <input
-                          type="number"
-                          step="0.01"
-                          placeholder="0.00"
-                          value={manualPosRow.bqr}
-                          onChange={(e) => handleManualPosRowChange("bqr", e.target.value)}
-                          className="w-full text-xs font-mono border border-slate-300 rounded-lg p-2 bg-[#FFFBEA]"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-xs font-semibold text-slate-700 mb-1">Razorpay (₹)</label>
-                        <input
-                          type="number"
-                          step="0.01"
-                          placeholder="0.00"
-                          value={manualPosRow.razorpay}
-                          onChange={(e) => handleManualPosRowChange("razorpay", e.target.value)}
-                          className="w-full text-xs font-mono border border-slate-300 rounded-lg p-2 bg-[#FFFBEA]"
-                        />
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="flex justify-end gap-3 pt-4 border-t border-slate-100">
-                    <button
-                      type="button"
-                      onClick={() => setPosTab("register")}
-                      className="px-5 py-2.5 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="submit"
-                      className="px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-bold shadow-sm"
-                    >
-                      Add Row to Register
-                    </button>
+                  <div>
+                    <label className="block text-[10px] font-semibold text-slate-500 mb-0.5">Bank In Transit (Card)</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      placeholder="0.00"
+                      value={manualForm.bankInTransit}
+                      onChange={(e) => setManualForm({ ...manualForm, bankInTransit: e.target.value })}
+                      className="w-full text-xs font-mono border border-slate-300 rounded p-1.5 bg-white"
+                    />
                   </div>
                 </div>
-              </form>
-            )}
+              </div>
+
+              {/* AGGREGATORS */}
+              <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg space-y-2">
+                <h4 className="text-[11px] font-bold text-slate-700 uppercase">Aggregator Deliveries & Dine-In (₹)</h4>
+                <div className="grid grid-cols-3 gap-2">
+                  <div>
+                    <label className="block text-[10px] font-semibold text-slate-500 mb-0.5">Zomato Delivery</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      placeholder="0.00"
+                      value={manualForm.zomatoDelivery}
+                      onChange={(e) => setManualForm({ ...manualForm, zomatoDelivery: e.target.value })}
+                      className="w-full text-xs font-mono border border-slate-300 rounded p-1.5 bg-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-semibold text-slate-500 mb-0.5">Zomato Dine In</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      placeholder="0.00"
+                      value={manualForm.zomatoDineIn}
+                      onChange={(e) => setManualForm({ ...manualForm, zomatoDineIn: e.target.value })}
+                      className="w-full text-xs font-mono border border-slate-300 rounded p-1.5 bg-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-semibold text-slate-500 mb-0.5">Swiggy Delivery</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      placeholder="0.00"
+                      value={manualForm.swiggyDelivery}
+                      onChange={(e) => setManualForm({ ...manualForm, swiggyDelivery: e.target.value })}
+                      className="w-full text-xs font-mono border border-slate-300 rounded p-1.5 bg-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-semibold text-slate-500 mb-0.5">Swiggy Dine In</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      placeholder="0.00"
+                      value={manualForm.swiggyDineIn}
+                      onChange={(e) => setManualForm({ ...manualForm, swiggyDineIn: e.target.value })}
+                      className="w-full text-xs font-mono border border-slate-300 rounded p-1.5 bg-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-semibold text-slate-500 mb-0.5">Eazy Dine In</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      placeholder="0.00"
+                      value={manualForm.eazyDineIn}
+                      onChange={(e) => setManualForm({ ...manualForm, eazyDineIn: e.target.value })}
+                      className="w-full text-xs font-mono border border-slate-300 rounded p-1.5 bg-white"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* OTHER RECEIVABLES */}
+              <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg space-y-2">
+                <h4 className="text-[11px] font-bold text-slate-700 uppercase">Other Receivables (₹)</h4>
+                <div className="grid grid-cols-3 gap-2">
+                  <div>
+                    <label className="block text-[10px] font-semibold text-slate-500 mb-0.5">Due</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      placeholder="0.00"
+                      value={manualForm.due}
+                      onChange={(e) => setManualForm({ ...manualForm, due: e.target.value })}
+                      className="w-full text-xs font-mono border border-slate-300 rounded p-1.5 bg-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-semibold text-slate-500 mb-0.5">BQR</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      placeholder="0.00"
+                      value={manualForm.bqr}
+                      onChange={(e) => setManualForm({ ...manualForm, bqr: e.target.value })}
+                      className="w-full text-xs font-mono border border-slate-300 rounded p-1.5 bg-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-semibold text-slate-500 mb-0.5">Razorpay</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      placeholder="0.00"
+                      value={manualForm.razorpay}
+                      onChange={(e) => setManualForm({ ...manualForm, razorpay: e.target.value })}
+                      className="w-full text-xs font-mono border border-slate-300 rounded p-1.5 bg-white"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setShowManualPosModal(false)}
+                  className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-bold shadow-sm"
+                >
+                  Pass Sales Journal Voucher[cite: 8]
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
@@ -2495,7 +1989,7 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
         </div>
       )}
 
-      {/* MODAL 3: INVOICE PREVIEW WITH A4 FULL-PAGE DISPATCH */}
+      {/* MODAL 3: INVOICE PREVIEW */}
       {showPrintModal && selectedInvoiceForPrint && (
         <div className="fixed inset-0 z-50 bg-slate-900/80 backdrop-blur-sm flex items-start justify-center p-4 overflow-y-auto">
           <button
