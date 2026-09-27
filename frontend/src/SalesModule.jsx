@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import { 
   Plus, 
   Trash2, 
@@ -16,26 +16,15 @@ import {
   Percent,
   Download,
   Upload,
-  Scale
+  Scale,
+  Eye,
+  Check
 } from "lucide-react";
 
 const COUNTRY_OPTIONS = [
-  "India",
-  "United States",
-  "United Arab Emirates",
-  "United Kingdom",
-  "Canada",
-  "Australia",
-  "Singapore",
-  "Germany",
-  "France",
-  "Russia",
-  "Saudi Arabia",
-  "Qatar",
-  "Oman",
-  "Kuwait",
-  "Bahrain",
-  "Other"
+  "India", "United States", "United Arab Emirates", "United Kingdom", "Canada",
+  "Australia", "Singapore", "Germany", "France", "Russia", "Saudi Arabia",
+  "Qatar", "Oman", "Kuwait", "Bahrain", "Other"
 ];
 
 const GST_STATE_CODES = {
@@ -131,40 +120,33 @@ const loadSheetJS = () => {
   });
 };
 
-// Normalize dates in DD/MM/YYYY, DD-MM-YYYY, YYYY-MM-DD or Excel Serial into standard YYYY-MM-DD
 const normalizeDateStr = (rawVal) => {
   if (!rawVal) return "";
   const s = String(rawVal).trim();
-
-  // Excel serial numbers
   if (!isNaN(s) && Number(s) > 20000 && Number(s) < 60000) {
     const excelDate = new Date(Math.round((Number(s) - 25569) * 86400 * 1000));
     return excelDate.toISOString().split("T")[0];
   }
-
-  // DD/MM/YYYY or DD-MM-YYYY
   const parts = s.split(/[\/\-]/);
   if (parts.length === 3) {
     if (parts[0].length === 4) {
-      // YYYY-MM-DD
       return `${parts[0]}-${parts[1].padStart(2, "0")}-${parts[2].padStart(2, "0")}`;
     } else {
-      // DD-MM-YYYY or DD/MM/YYYY
       const day = parts[0].padStart(2, "0");
       const month = parts[1].padStart(2, "0");
       const year = parts[2].length === 2 ? `20${parts[2]}` : parts[2];
       return `${year}-${month}-${day}`;
     }
   }
-
   return s;
 };
 
 export default function SalesModule({ activeClient = "Panasuria Confectionery" }) {
-  const [activeCategory, setActiveCategory] = useState("pos_sales");
+  // Top category switcher: 'normal_sales' (B2B) vs 'pos_sales' (POS Consolidated)
+  const [activeCategory, setActiveCategory] = useState("normal_sales");
   const [salesSubTab, setSalesSubTab] = useState("create");
 
-  // Client-scoped persistent state for normal invoices
+  // Normal Sales State
   const [savedInvoices, setSavedInvoices] = useState(() => {
     try {
       const s = localStorage.getItem(`c4_normal_sales_invoices_${activeClient}`);
@@ -196,11 +178,6 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
     try {
       const all = JSON.parse(localStorage.getItem("c4_client_profiles") || "{}");
       if (all[activeClient]) return all[activeClient];
-    } catch {}
-
-    try {
-      const single = JSON.parse(localStorage.getItem("c4_vendor_profile") || "{}");
-      if (single.companyName) return single;
     } catch {}
 
     return {
@@ -238,7 +215,6 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
   }, [itemCatalog, activeClient]);
 
   const [notification, setNotification] = useState(null);
-
   const [showAddCustomerModal, setShowAddCustomerModal] = useState(false);
   const [showAddItemModal, setShowAddItemModal] = useState(false);
   const [showPrintModal, setShowPrintModal] = useState(false);
@@ -267,28 +243,11 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
   });
 
   const [lines, setLines] = useState([
-    {
-      id: 1,
-      itemName: "",
-      hsnCode: "",
-      uom: "Boxes",
-      qty: "",
-      rate: "",
-      discountPercent: 0,
-      taxRate: 5
-    }
+    { id: 1, itemName: "", hsnCode: "", uom: "Boxes", qty: "", rate: "", discountPercent: 0, taxRate: 5 }
   ]);
 
   const [newCust, setNewCust] = useState({
-    country: "India",
-    gstin: "",
-    name: "",
-    address: "",
-    pincode: "",
-    state: "Gujarat",
-    phone: "",
-    email: "",
-    discountPercent: 0
+    country: "India", gstin: "", name: "", address: "", pincode: "", state: "Gujarat", phone: "", email: "", discountPercent: 0
   });
 
   const [newItem, setNewItem] = useState({
@@ -301,8 +260,14 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
   };
 
   // =========================================================================
-  // POS DIRECT SALES JOURNAL ENGINE (SAVED VOUCHERS ONLY, NO REGISTER DUMP)
+  // POS CONSOLIDATED SALES: TWO SUB-TABS (ENTRIES vs PUSHED TO TALLY)
   // =========================================================================
+  const [posSubTab, setPosSubTab] = useState("all_entries"); // 'all_entries' | 'pushed_tally'
+  const [viewingJvDetails, setViewingJvDetails] = useState(null); // Modal for single JV inspection
+  const [showManualPosModal, setShowManualPosModal] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+  const fileInputRef = useRef(null);
+
   const [posJournals, setPosJournals] = useState(() => {
     try {
       const s = localStorage.getItem(`c4_pos_journals_${activeClient}`);
@@ -315,10 +280,6 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
   useEffect(() => {
     localStorage.setItem(`c4_pos_journals_${activeClient}`, JSON.stringify(posJournals));
   }, [posJournals, activeClient]);
-
-  const [isUploading, setIsUploading] = useState(false);
-  const fileInputRef = useRef(null);
-  const [showManualPosModal, setShowManualPosModal] = useState(false);
 
   const [manualForm, setManualForm] = useState({
     voucherDate: new Date().toISOString().split("T")[0],
@@ -336,7 +297,6 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
     razorpay: ""
   });
 
-  // Calculate Double-Entry legs from raw totals @ 5% Inclusive GST
   const buildJournalFromTotals = (voucherDate, periodLabel, totals) => {
     const dr = {
       zomatoDelivery: totals.zomatoDelivery || 0,
@@ -365,8 +325,11 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
     const sgst25 = (totalTaxable * 2.5) / 100;
     const totalCredits = totalTaxable + cgst25 + sgst25;
 
+    const voucherNum = `JV-POS-${voucherDate.replace(/-/g, "")}-${Math.floor(100 + Math.random() * 900)}`;
+
     return {
       id: `pos_jv_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
+      voucherNumber: voucherNum,
       voucherDate,
       periodLabel: periodLabel || voucherDate,
       totalDebits,
@@ -387,7 +350,6 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
     };
   };
 
-  // 1. Download Predefined Excel Template
   const handleDownloadPosTemplate = async () => {
     try {
       const XLSX = await loadSheetJS();
@@ -406,11 +368,10 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
       XLSX.writeFile(wb, `POS_Sales_Register_${activeClient.replace(/\s+/g, "_")}.xlsx`);
       notify("POS Template downloaded!", "success");
     } catch {
-      notify("Failed to generate Excel file.", "error");
+      notify("Failed to generate template.", "error");
     }
   };
 
-  // 2. Direct Ingestion from Excel into a Balanced Sales Journal Voucher
   const handleDirectExcelToJournal = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -458,17 +419,8 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
             idx !== -1 && row[idx] ? Math.abs(parseFloat(String(row[idx]).replace(/[^0-9.-]/g, "")) || 0) : 0;
 
           const totals = {
-            cash: 0,
-            upi: 0,
-            bankInTransit: 0,
-            zomatoDelivery: 0,
-            zomatoDineIn: 0,
-            swiggyDelivery: 0,
-            swiggyDineIn: 0,
-            eazyDineIn: 0,
-            due: 0,
-            bqr: 0,
-            razorpay: 0
+            cash: 0, upi: 0, bankInTransit: 0, zomatoDelivery: 0, zomatoDineIn: 0,
+            swiggyDelivery: 0, swiggyDineIn: 0, eazyDineIn: 0, due: 0, bqr: 0, razorpay: 0
           };
 
           let minDate = "";
@@ -512,10 +464,10 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
           const newJv = buildJournalFromTotals(voucherFinalDate, periodLabel, totals);
 
           setPosJournals((prev) => [newJv, ...prev]);
-          notify(`Excel processed! Created Sales Journal Voucher for ₹${newJv.totalDebits.toLocaleString("en-IN")}.`, "success");
+          notify(`Processed ${validRowCount} rows! Sales Journal Voucher #${newJv.voucherNumber} created.`, "success");
         } catch (err) {
           console.error(err);
-          notify("Failed to parse POS sheet.", "error");
+          notify("Failed to parse sheet.", "error");
         } finally {
           setIsUploading(false);
           if (fileInputRef.current) fileInputRef.current.value = "";
@@ -529,7 +481,6 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
     }
   };
 
-  // 3. Manual Entry Directly Creating Journal Voucher
   const handleSaveManualPosJournal = (e) => {
     e.preventDefault();
     const totals = {
@@ -555,27 +506,17 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
     const newJv = buildJournalFromTotals(manualForm.voucherDate, manualForm.periodLabel || manualForm.voucherDate, totals);
     setPosJournals((prev) => [newJv, ...prev]);
     setShowManualPosModal(false);
-    notify(`Sales Journal Voucher recorded for ₹${newJv.totalDebits.toLocaleString("en-IN")}!`, "success");
+    notify(`Sales Journal Voucher #${newJv.voucherNumber} recorded!`, "success");
 
     setManualForm({
       voucherDate: new Date().toISOString().split("T")[0],
-      periodLabel: "",
-      cash: "",
-      upi: "",
-      bankInTransit: "",
-      zomatoDelivery: "",
-      zomatoDineIn: "",
-      swiggyDelivery: "",
-      swiggyDineIn: "",
-      eazyDineIn: "",
-      due: "",
-      bqr: "",
-      razorpay: ""
+      periodLabel: "", cash: "", upi: "", bankInTransit: "", zomatoDelivery: "",
+      zomatoDineIn: "", swiggyDelivery: "", swiggyDineIn: "", eazyDineIn: "", due: "", bqr: "", razorpay: ""
     });
   };
 
-  // 4. Push Single Journal Voucher to Tally Prime
-  const handlePushJournalToTally = async (jv) => {
+  const handlePushJournalToTally = async (jv, e) => {
+    if (e) e.stopPropagation();
     const tallyDate = (jv.voucherDate || "20260831").replace(/[^0-9]/g, "");
 
     const tallyXml = `<ENVELOPE>
@@ -591,7 +532,7 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
           <VOUCHER VCHTYPE="Journal" ACTION="Create">
             <DATE>${tallyDate}</DATE>
             <VOUCHERTYPENAME>Journal</VOUCHERTYPENAME>
-            <REFERENCE>${jv.id}</REFERENCE>
+            <REFERENCE>${jv.voucherNumber}</REFERENCE>
             <NARRATION>POS Sales & Collection Journal Voucher - Gross: ₹${jv.totalDebits.toFixed(2)} - Synced via Compliance4</NARRATION>
             ${jv.dr.zomatoDelivery > 0 ? `<ALLLEDGERENTRIES.LIST><LEDGERNAME>AR-Zomato Delivery</LEDGERNAME><ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE><AMOUNT>-${jv.dr.zomatoDelivery.toFixed(2)}</AMOUNT></ALLLEDGERENTRIES.LIST>` : ""}
             ${jv.dr.zomatoDineIn > 0 ? `<ALLLEDGERENTRIES.LIST><LEDGERNAME>AR-Zomato Dine In</LEDGERNAME><ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE><AMOUNT>-${jv.dr.zomatoDineIn.toFixed(2)}</AMOUNT></ALLLEDGERENTRIES.LIST>` : ""}
@@ -620,28 +561,493 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
     try {
       await fetch("http://localhost:9000", { method: "POST", headers: { "Content-Type": "text/xml;charset=utf-8" }, body: tallyXml });
       setPosJournals((prev) => prev.map((item) => (item.id === jv.id ? { ...item, pushedToTally: true } : item)));
-      notify("Sales Journal Voucher pushed to Tally Prime!", "success");
+      notify(`Voucher #${jv.voucherNumber} pushed to Tally Prime!`, "success");
     } catch {
       setPosJournals((prev) => prev.map((item) => (item.id === jv.id ? { ...item, pushedToTally: true } : item)));
-      notify("Voucher queued in Tally listener!", "info");
+      notify("Voucher queued in Tally listener (Port 9000)!", "info");
     }
   };
 
-  const handleDeletePosJournal = (id) => {
+  const handleDeletePosJournal = (id, e) => {
+    if (e) e.stopPropagation();
     if (!window.confirm("Delete this Sales Journal Voucher?")) return;
     setPosJournals((prev) => prev.filter((j) => j.id !== id));
+    if (viewingJvDetails?.id === id) setViewingJvDetails(null);
     notify("Voucher deleted.", "info");
   };
 
+  // ==========================================
+  // NORMAL INVOICING HANDLERS
+  // ==========================================
+  const handleCustCountryChange = (selectedCountry) => {
+    if (selectedCountry !== "India") {
+      setNewCust(prev => ({ ...prev, country: selectedCountry, gstin: "", state: "" }));
+    } else {
+      setNewCust(prev => ({ ...prev, country: "India", state: "Gujarat" }));
+    }
+  };
+
+  const handleCustGstinChange = (val) => {
+    const cleanGst = val.toUpperCase().trim();
+    const check = validateGSTIN(cleanGst);
+    setNewCust(prev => ({ ...prev, gstin: cleanGst, state: check.isValid ? check.stateName : prev.state }));
+  };
+
+  const handleSaveCustomerModal = () => {
+    if (!newCust.name.trim()) {
+      notify("Customer Name is required", "error");
+      return;
+    }
+    const created = { ...newCust, id: `cust_${Date.now()}` };
+    setCustomers(prev => [created, ...prev]);
+    setShowAddCustomerModal(false);
+    selectCustomer(created);
+    notify(`Customer "${created.name}" created!`, "success");
+    setNewCust({ country: "India", gstin: "", name: "", address: "", pincode: "", state: "Gujarat", phone: "", email: "", discountPercent: 0 });
+  };
+
+  const selectCustomer = (c) => {
+    const isForeign = c.country && c.country !== "India";
+    const pos = isForeign ? "Other Territory / Export (97)" : `${c.state || "Gujarat"} (${validateGSTIN(c.gstin)?.stateCode || "24"})`;
+
+    setInvoiceHeader(prev => ({
+      ...prev,
+      customerId: c.id,
+      customerName: c.name,
+      customerGstin: isForeign ? "" : (c.gstin || ""),
+      customerCountry: c.country || "India",
+      placeOfSupply: pos,
+      billingAddress: c.address ? `${c.address}, ${c.pincode || ""}` : "",
+      customerPhone: c.phone || "",
+      customerEmail: c.email || "",
+      discountPercent: parseFloat(c.discountPercent) || 0
+    }));
+
+    if (isForeign) setInvoiceType("Export Invoice");
+    if (parseFloat(c.discountPercent) > 0) {
+      setLines(prev => prev.map(l => ({ ...l, discountPercent: parseFloat(c.discountPercent) })));
+    }
+  };
+
+  const handlePriceExclChange = (val, taxRate) => {
+    const excl = parseFloat(val) || 0;
+    const incl = excl + (excl * (parseFloat(taxRate) || 0)) / 100;
+    setNewItem(prev => ({ ...prev, priceExcl: val, priceIncl: excl > 0 ? parseFloat(incl.toFixed(2)) : "" }));
+  };
+
+  const handlePriceInclChange = (val, taxRate) => {
+    const incl = parseFloat(val) || 0;
+    const t = parseFloat(taxRate) || 0;
+    const excl = incl / (1 + t / 100);
+    setNewItem(prev => ({ ...prev, priceIncl: val, priceExcl: incl > 0 ? parseFloat(excl.toFixed(2)) : "" }));
+  };
+
+  const handleSaveItemModal = () => {
+    if (!newItem.itemName.trim()) {
+      notify("Item Name is required", "error");
+      return;
+    }
+    const created = { ...newItem, id: `item_${Date.now()}` };
+    setItemCatalog(prev => [created, ...prev]);
+    setShowAddItemModal(false);
+    setLines(prev => [
+      ...prev,
+      {
+        id: Date.now(),
+        itemName: created.itemName,
+        hsnCode: created.hsnCode,
+        uom: created.uom,
+        qty: 1,
+        rate: created.priceExcl,
+        discountPercent: invoiceHeader.discountPercent || 0,
+        taxRate: created.taxRate
+      }
+    ]);
+    notify(`Item "${created.itemName}" saved to Catalog!`, "success");
+    setNewItem({ itemName: "", hsnCode: "", uom: "Boxes", taxRate: 5, priceExcl: "", priceIncl: "" });
+  };
+
+  const isInterstate = !invoiceHeader.placeOfSupply.toLowerCase().includes("gujarat") &&
+                      !invoiceHeader.placeOfSupply.startsWith("24");
+
+  const computedItems = lines.map((item) => {
+    const qty = parseFloat(item.qty) || 0;
+    const rate = parseFloat(item.rate) || 0;
+    const gross = qty * rate;
+    const discPct = parseFloat(item.discountPercent) || 0;
+    const discAmt = (gross * discPct) / 100;
+    const taxable = Math.max(gross - discAmt, 0);
+
+    const taxRate = (invoiceType === "Bill of Supply" || (invoiceType === "Export Invoice" && lutNumber)) ? 0 : (parseFloat(item.taxRate) || 0);
+
+    let cgst = 0, sgst = 0, igst = 0;
+    if (isInterstate || invoiceType === "Export Invoice") {
+      igst = (taxable * taxRate) / 100;
+    } else {
+      cgst = (taxable * (taxRate / 2)) / 100;
+      sgst = (taxable * (taxRate / 2)) / 100;
+    }
+
+    const total = taxable + cgst + sgst + igst;
+    return { ...item, gross, discAmt, taxable, cgst, sgst, igst, total };
+  });
+
+  const totalQuantity = computedItems.reduce((acc, it) => acc + (parseFloat(it.qty) || 0), 0);
+  const totalTaxable = computedItems.reduce((acc, it) => acc + it.taxable, 0);
+  const totalCgst = computedItems.reduce((acc, it) => acc + it.cgst, 0);
+  const totalSgst = computedItems.reduce((acc, it) => acc + it.sgst, 0);
+  const totalIgst = computedItems.reduce((acc, it) => acc + it.igst, 0);
+
+  const rawSubTotal = totalTaxable + totalCgst + totalSgst + totalIgst;
+  const roundedGrandTotal = Math.round(rawSubTotal);
+  const autoRoundOff = parseFloat((roundedGrandTotal - rawSubTotal).toFixed(2));
+
+  const handleAddLine = () => {
+    setLines(prev => [
+      ...prev,
+      {
+        id: Date.now(), itemName: "", hsnCode: "", uom: "Boxes", qty: "", rate: "",
+        discountPercent: invoiceHeader.discountPercent || 0, taxRate: 5
+      }
+    ]);
+  };
+
+  const handleRemoveLine = (id) => {
+    if (lines.length === 1) {
+      notify("Invoice must have at least one line item", "error");
+      return;
+    }
+    setLines(prev => prev.filter(l => l.id !== id));
+  };
+
+  const handleLineChange = (id, field, value) => {
+    setLines(prev => prev.map(l => (l.id === id ? { ...l, [field]: value } : l)));
+  };
+
+  const handleLineItemSelect = (id, selectedItemName) => {
+    const match = itemCatalog.find(i => i.itemName.toLowerCase() === selectedItemName.toLowerCase());
+    if (match) {
+      setLines(prev => prev.map(l => (l.id === id ? {
+        ...l, itemName: match.itemName, hsnCode: match.hsnCode, uom: match.uom, rate: match.priceExcl, taxRate: match.taxRate
+      } : l)));
+    } else {
+      handleLineChange(id, "itemName", selectedItemName);
+    }
+  };
+
+  const handleSaveInvoice = () => {
+    if (!invoiceHeader.customerName.trim()) {
+      notify("Customer Name is required", "error");
+      return;
+    }
+
+    const currentProfile = getActiveProfile();
+
+    const newInv = {
+      id: `sale_${Date.now()}`,
+      invoiceType,
+      lutNumber: invoiceType === "Export Invoice" ? lutNumber : "",
+      invoiceNumber: invoiceHeader.invoiceNumber,
+      poNumber: invoiceHeader.poNumber || "",
+      invoiceDate: invoiceHeader.invoiceDate,
+      customerName: invoiceHeader.customerName,
+      customerGstin: invoiceHeader.customerGstin,
+      customerCountry: invoiceHeader.customerCountry,
+      placeOfSupply: invoiceHeader.placeOfSupply,
+      billingAddress: invoiceHeader.billingAddress,
+      customerPhone: invoiceHeader.customerPhone,
+      customerEmail: invoiceHeader.customerEmail,
+      hasConsignee,
+      consigneeName: hasConsignee ? invoiceHeader.consigneeName : "",
+      consigneeAddress: hasConsignee ? invoiceHeader.consigneeAddress : "",
+      consigneeGstin: hasConsignee ? invoiceHeader.consigneeGstin : "",
+      items: computedItems,
+      totalQuantity,
+      taxableAmount: totalTaxable,
+      cgst: totalCgst,
+      sgst: totalSgst,
+      igst: totalIgst,
+      roundOff: autoRoundOff,
+      grandTotal: roundedGrandTotal,
+      isInterstate,
+      vendorProfile: currentProfile,
+      status: "approved",
+      createdAt: new Date().toLocaleDateString("en-IN")
+    };
+
+    setSavedInvoices(prev => [newInv, ...prev]);
+    notify(`Invoice #${invoiceHeader.invoiceNumber} recorded successfully!`, "success");
+    setSelectedInvoiceForPrint(newInv);
+    setShowPrintModal(true);
+
+    setInvoiceHeader({
+      invoiceNumber: `PC/26-27/${String(savedInvoices.length + 2).padStart(3, "0")}`,
+      invoiceDate: new Date().toISOString().split("T")[0],
+      poNumber: "", customerId: "", customerName: "", customerGstin: "", customerCountry: "India",
+      placeOfSupply: "Gujarat (24)", billingAddress: "", customerPhone: "", customerEmail: "",
+      discountPercent: 0, consigneeName: "", consigneeAddress: "", consigneeGstin: ""
+    });
+    setLines([{ id: Date.now(), itemName: "", hsnCode: "", uom: "Boxes", qty: "", rate: "", discountPercent: 0, taxRate: 5 }]);
+    setHasConsignee(false);
+    setSalesSubTab("invoices");
+  };
+
+  const handleDeleteInvoice = (inv) => {
+    if (!window.confirm(`Are you sure you want to delete Invoice #${inv.invoiceNumber}?`)) return;
+    setSavedInvoices(prev => prev.filter(i => i.id !== inv.id));
+    notify(`Invoice #${inv.invoiceNumber} deleted from register.`, "info");
+  };
+
+  const triggerFullPagePrint = (invoice) => {
+    const iframe = document.createElement("iframe");
+    iframe.style.position = "fixed";
+    iframe.style.right = "0";
+    iframe.style.bottom = "0";
+    iframe.style.width = "0";
+    iframe.style.height = "0";
+    iframe.style.border = "0";
+    document.body.appendChild(iframe);
+
+    const doc = iframe.contentWindow.document;
+    const isExport = invoice.invoiceType === "Export Invoice";
+    const headerTitle = isExport ? "EXPORT INVOICE" : invoice.invoiceType ? invoice.invoiceType.toUpperCase() : "TAX INVOICE";
+
+    const printHtml = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>${headerTitle} - ${invoice.invoiceNumber}</title>
+        <style>
+          @page { size: A4 portrait; margin: 6mm; }
+          * { box-sizing: border-box; font-family: Arial, "Helvetica Neue", Helvetica, sans-serif; color: #000; }
+          html, body { margin: 0; padding: 0; width: 100%; height: 100%; background: #fff; }
+          .a4-container { width: 100%; height: 100%; display: flex; flex-direction: column; border: 1.5px solid #2b6cb0; }
+          .border-b { border-bottom: 1.5px solid #2b6cb0; }
+          .border-r { border-right: 1.5px solid #2b6cb0; }
+          .border-t { border-top: 1.5px solid #2b6cb0; }
+          .text-center { text-align: center; }
+          .text-right { text-align: right; }
+          .font-bold { font-weight: bold; }
+          .font-black { font-weight: 900; }
+          .two-col { display: flex; width: 100%; }
+          .col-half { width: 50%; }
+          .table-wrapper { flex: 1; display: flex; flex-direction: column; }
+          table.items-table { width: 100%; border-collapse: collapse; flex: 1; }
+          table.items-table th { background-color: #f7fafc; border-bottom: 1.5px solid #2b6cb0; border-right: 1px solid #2b6cb0; padding: 5px 4px; font-size: 9.5px; font-weight: bold; color: #1a202c; }
+          table.items-table td { border-right: 1px solid #2b6cb0; padding: 4px 6px; font-size: 10px; vertical-align: top; }
+          table.items-table th:last-child, table.items-table td:last-child { border-right: none; }
+          .fill-remaining-space { height: 100%; }
+        </style>
+      </head>
+      <body>
+        <div class="a4-container">
+          <div class="two-col border-b" style="padding: 10px 14px; align-items: center; justify-content: space-between;">
+            <div style="display: flex; align-items: center; gap: 12px;">
+              ${invoice.vendorProfile?.logoUrl ? `
+                <img src="${invoice.vendorProfile.logoUrl}" style="max-height: 48px; max-width: 80px; object-fit: contain; border-radius: 4px;" alt="Logo" />
+              ` : `
+                <div style="width: 44px; height: 44px; background: #2b6cb0; color: #fff; font-weight: 900; font-size: 20px; display: flex; align-items: center; justify-content: center; border-radius: 4px;">C4</div>
+              `}
+              <div>
+                <div style="font-size: 16px; font-weight: 900; color: #1a202c; text-transform: uppercase;">${invoice.vendorProfile?.companyName || "Panasuria Confectionery"}</div>
+                <div style="font-size: 9.5px; color: #4a5568; margin-top: 1px;">${invoice.vendorProfile?.address || ""}</div>
+                <div style="font-size: 9.5px; margin-top: 2px;"><strong>GSTIN:</strong> ${invoice.vendorProfile?.gstin || ""}</div>
+              </div>
+            </div>
+            <div style="text-align: right; font-size: 9.5px; line-height: 1.4;">
+              <div><strong>Name :</strong> ${invoice.vendorProfile?.companyName || "Panasuria Confectionery"}</div>
+              <div><strong>Phone :</strong> ${invoice.vendorProfile?.phone || ""}</div>
+              <div><strong>Email :</strong> ${invoice.vendorProfile?.email || ""}</div>
+              <div><strong>PAN :</strong> ${invoice.vendorProfile?.pan || "AABCP1234F"}</div>
+            </div>
+          </div>
+
+          <div class="two-col border-b" style="background: #f7fafc; padding: 4px 10px; font-size: 9px; font-weight: bold; justify-content: space-between;">
+            <div>GSTIN : ${invoice.vendorProfile?.gstin || ""} ${invoice.lutNumber ? `| LUT NO : ${invoice.lutNumber}` : ""}</div>
+            <div style="color: #2b6cb0; font-weight: 900;">${headerTitle}</div>
+            <div>ORIGINAL FOR RECIPIENT</div>
+          </div>
+
+          <div class="two-col border-b">
+            <div class="col-half border-r" style="padding: 6px 10px; font-size: 9.5px; line-height: 1.35;">
+              <div style="font-weight: 900; font-size: 9px; text-transform: uppercase; color: #4a5568; margin-bottom: 3px;">Details of Buyer | Billed to :</div>
+              <div style="display: flex;"><span style="width: 70px; font-weight: bold;">Name</span>: <span style="font-weight: 900; text-transform: uppercase;">${invoice.customerName}</span></div>
+              <div style="display: flex;"><span style="width: 70px; font-weight: bold;">Address</span>: <span>${invoice.billingAddress || "-"}</span></div>
+              <div style="display: flex;"><span style="width: 70px; font-weight: bold;">Country</span>: <span>${invoice.customerCountry || "India"}</span></div>
+              <div style="display: flex;"><span style="width: 70px; font-weight: bold;">Phone</span>: <span>${invoice.customerPhone || "-"}</span></div>
+              ${invoice.customerGstin ? `<div style="display: flex;"><span style="width: 70px; font-weight: bold;">GSTIN</span>: <span style="font-weight: bold;">${invoice.customerGstin}</span></div>` : ""}
+              <div style="display: flex;"><span style="width: 70px; font-weight: bold;">Place of Supply</span>: <span>${invoice.placeOfSupply}</span></div>
+            </div>
+
+            <div class="col-half" style="display: flex; flex-direction: column;">
+              <div class="two-col border-b" style="background: #f7fafc; padding: 4px 8px; font-size: 9.5px;">
+                <div style="width: 50%;"><strong>Invoice No.</strong> : <span style="font-weight: 900;">${invoice.invoiceNumber}</span></div>
+                <div style="width: 50%;"><strong>Invoice Date</strong> : <span>${invoice.invoiceDate}</span></div>
+              </div>
+              ${invoice.poNumber ? `
+                <div style="padding: 3px 8px; font-size: 9.5px; border-bottom: 1px solid #2b6cb0; background: #fff;">
+                  <strong>Purchase Order (PO) No.</strong> : <span style="font-weight: bold;">${invoice.poNumber}</span>
+                </div>
+              ` : ""}
+              <div style="padding: 6px 10px; font-size: 9.5px; line-height: 1.35; flex: 1;">
+                <div style="font-weight: 900; font-size: 9px; text-transform: uppercase; color: #4a5568; margin-bottom: 3px;">Details of Consignee | Shipped to :</div>
+                <div style="display: flex;"><span style="width: 65px; font-weight: bold;">Name</span>: <span>${invoice.hasConsignee ? invoice.consigneeName : invoice.customerName}</span></div>
+                <div style="display: flex;"><span style="width: 65px; font-weight: bold;">Address</span>: <span>${invoice.hasConsignee ? invoice.consigneeAddress : invoice.billingAddress}</span></div>
+                ${invoice.consigneeGstin ? `<div style="display: flex;"><span style="width: 65px; font-weight: bold;">GSTIN</span>: <span>${invoice.consigneeGstin}</span></div>` : ""}
+              </div>
+            </div>
+          </div>
+
+          <div class="table-wrapper">
+            <table class="items-table">
+              <thead>
+                <tr>
+                  <th style="width: 30px;">Sr.<br/>No.</th>
+                  <th style="text-align: left;">Name of Product / Service</th>
+                  <th style="width: 65px;">HSN / SAC</th>
+                  <th style="width: 45px; text-align: right;">Qty</th>
+                  <th style="width: 45px;">UOM</th>
+                  <th style="width: 65px; text-align: right;">Rate (₹)</th>
+                  <th style="width: 45px; text-align: right;">Disc %</th>
+                  <th style="width: 75px; text-align: right;">Taxable (₹)</th>
+                  <th style="width: 85px; text-align: right;">Total (₹)</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${invoice.items?.map((it, idx) => `
+                  <tr>
+                    <td class="text-center" style="color: #666;">${idx + 1}</td>
+                    <td class="font-bold">${it.itemName}</td>
+                    <td class="text-center">${it.hsnCode || "-"}</td>
+                    <td class="text-right font-bold">${it.qty || 0}</td>
+                    <td class="text-center">${it.uom || "PCs"}</td>
+                    <td class="text-right">${Number(it.rate || 0).toFixed(2)}</td>
+                    <td class="text-right">${it.discountPercent || 0}%</td>
+                    <td class="text-right">${Number(it.taxable || 0).toFixed(2)}</td>
+                    <td class="text-right font-bold">${Number(it.total || 0).toFixed(2)}</td>
+                  </tr>
+                `).join("")}
+                <tr class="fill-remaining-space">
+                  <td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td>
+                </tr>
+              </tbody>
+              <tfoot>
+                <tr class="border-t font-black" style="background: #f7fafc;">
+                  <td colspan="3" class="text-right font-bold" style="padding: 4px 6px;">Total</td>
+                  <td class="text-right font-black" style="padding: 4px 6px;">${invoice.totalQuantity || 0}</td>
+                  <td></td>
+                  <td colspan="3" class="text-right font-bold" style="padding: 4px 6px;">Taxable Total:</td>
+                  <td class="text-right font-black" style="padding: 4px 6px;">₹${Number(invoice.taxableAmount || 0).toFixed(2)}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+
+          <div class="two-col border-t border-b">
+            <div class="col-half border-r" style="padding: 6px 10px; display: flex; flex-direction: column; justify-content: space-between;">
+              <div>
+                <div style="font-size: 8.5px; font-weight: 900; color: #4a5568; text-transform: uppercase;">Total in words :</div>
+                <div style="font-size: 10px; font-weight: 900; margin-top: 3px; line-height: 1.35;">${numberToWords(invoice.grandTotal)}</div>
+              </div>
+              <div style="margin-top: 8px;">
+                <div style="background: #ebf8ff; border: 1px solid #bee3f8; padding: 4px 8px; font-size: 8.5px; font-weight: 900; color: #2b6cb0; text-align: center; margin-bottom: 4px;">
+                  Bank Details
+                </div>
+                <div style="font-size: 9.5px; line-height: 1.35;">
+                  <div><strong>Name</strong> : ${invoice.vendorProfile?.bankName || "HDFC Bank"}</div>
+                  <div><strong>Branch</strong> : ${invoice.vendorProfile?.branch || ""}</div>
+                  <div><strong>Acc. Name</strong> : ${invoice.vendorProfile?.companyName || ""}</div>
+                  <div><strong>Acc. Number</strong> : <strong style="font-size: 10.5px;">${invoice.vendorProfile?.accountNo || ""}</strong></div>
+                  <div><strong>IFSC Code</strong> : <strong>${invoice.vendorProfile?.ifscCode || ""}</strong></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="col-half" style="padding: 6px 10px;">
+              <table style="width: 100%; font-size: 10px; border-collapse: collapse; line-height: 1.5;">
+                <tr>
+                  <td>Total Taxable Value :</td>
+                  <td class="text-right font-bold">₹${Number(invoice.taxableAmount || 0).toFixed(2)}</td>
+                </tr>
+                ${invoice.cgst > 0 ? `
+                  <tr>
+                    <td>CGST :</td>
+                    <td class="text-right font-bold">₹${Number(invoice.cgst).toFixed(2)}</td>
+                  </tr>
+                ` : ""}
+                ${invoice.sgst > 0 ? `
+                  <tr>
+                    <td>SGST :</td>
+                    <td class="text-right font-bold">₹${Number(invoice.sgst).toFixed(2)}</td>
+                  </tr>
+                ` : ""}
+                ${invoice.igst > 0 ? `
+                  <tr>
+                    <td>IGST :</td>
+                    <td class="text-right font-bold">₹${Number(invoice.igst).toFixed(2)}</td>
+                  </tr>
+                ` : ""}
+                <tr>
+                  <td>Round Off (+/-) :</td>
+                  <td class="text-right font-bold">${Number(invoice.roundOff || 0) >= 0 ? "+" : ""}${Number(invoice.roundOff || 0).toFixed(2)}</td>
+                </tr>
+                <tr style="border-top: 1.5px solid #2b6cb0; background: #ebf8ff;">
+                  <td style="font-size: 12px; font-weight: 900; padding: 4px 0;">Total Amount (₹) :</td>
+                  <td class="text-right font-black" style="font-size: 13.5px; padding: 4px 0;">₹${Number(invoice.grandTotal || 0).toFixed(2)}</td>
+                </tr>
+                <tr>
+                  <td colspan="2" class="text-right" style="font-size: 8px; color: #718096;">(E & O.E.)</td>
+                </tr>
+              </table>
+            </div>
+          </div>
+
+          <div class="two-col" style="min-height: 85px;">
+            <div class="col-half border-r" style="padding: 6px 10px; font-size: 8.5px; color: #4a5568;">
+              <div style="font-weight: 900; text-transform: uppercase; color: #2d3748; margin-bottom: 3px;">Terms and Conditions :</div>
+              <div style="white-space: pre-line; line-height: 1.35;">${invoice.vendorProfile?.terms || ""}</div>
+            </div>
+            <div class="col-half" style="padding: 6px 10px; text-align: center; display: flex; flex-direction: column; justify-content: space-between;">
+              <div style="font-size: 8px; color: #718096;">Certified that the particulars given above are true and correct.</div>
+              <div style="font-size: 10px; font-weight: bold; margin-top: 2px;">For ${invoice.vendorProfile?.companyName || "Panasuria Confectionery"}</div>
+              <div style="margin-top: 35px; font-size: 9px; font-weight: 900; text-transform: uppercase; border-top: 1px solid #cbd5e0; padding-top: 2px;">
+                Authorised Signatory
+              </div>
+            </div>
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
+
+    doc.open();
+    doc.write(printHtml);
+    doc.close();
+
+    setTimeout(() => {
+      iframe.contentWindow.focus();
+      iframe.contentWindow.print();
+      setTimeout(() => document.body.removeChild(iframe), 2500);
+    }, 400);
+  };
+
+  const gstCheck = validateGSTIN(invoiceHeader.customerGstin);
+
+  // Separate POS Journals by Push Status
+  const pendingJvs = posJournals.filter((j) => !j.pushedToTally);
+  const pushedJvs = posJournals.filter((j) => j.pushedToTally);
+  const activeJvList = posSubTab === "all_entries" ? posJournals : pushedJvs;
+
   return (
     <div className="flex-1 flex flex-col h-full bg-[#F8FAFC] overflow-hidden">
-      {/* HEADER BAR */}
+      {/* TOP HEADER BAR */}
       <header className="bg-white border-b border-slate-200 px-8 py-4 flex items-center justify-between shadow-sm shrink-0">
         <div>
           <h2 className="text-xl font-bold text-slate-900 tracking-tight">Sales & Revenue Center</h2>
           <p className="text-xs text-slate-500 font-medium">{activeClient}</p>
         </div>
 
+        {/* PRIMARY TOGGLE: NORMAL SALES (B2B) vs POS-BASED SALES */}
         <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200">
           <button
             onClick={() => setActiveCategory("normal_sales")}
@@ -654,6 +1060,7 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
             <FileText className="w-3.5 h-3.5" />
             Normal Sales Invoices (B2B)
           </button>
+
           <button
             onClick={() => setActiveCategory("pos_sales")}
             className={`px-4 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-2 ${
@@ -668,7 +1075,7 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
         </div>
       </header>
 
-      {/* NORMAL SALES INVOICE WORKSPACE (UNTOUCHED) */}
+      {/* TRACK 1: NORMAL SALES INVOICE WORKSPACE (UNTOUCHED & FULLY FUNCTIONAL) */}
       {activeCategory === "normal_sales" && (
         <div className="flex-1 flex flex-col overflow-hidden">
           <div className="px-8 pt-4 pb-0 flex items-center justify-between border-b border-slate-200 bg-white shrink-0">
@@ -692,7 +1099,7 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
                 }`}
               >
                 Invoice Register
-                <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-slate-900 text-white">
+                <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-slate-900 text-white font-mono">
                   {savedInvoices.length}
                 </span>
               </button>
@@ -714,12 +1121,10 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
             </div>
           </div>
 
-          {/* VIEW 1: CREATE INVOICE FORM */}
+          {/* CREATE INVOICE VIEW */}
           {salesSubTab === "create" && (
             <div className="flex-1 p-8 overflow-y-auto">
               <div className="max-w-5xl mx-auto bg-white rounded-xl border border-slate-200 shadow-sm p-6 space-y-6">
-                
-                {/* DOCUMENT TYPE */}
                 <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between gap-4">
                   <div className="flex items-center gap-4">
                     <span className="text-xs font-bold text-slate-700">Document Type:</span>
@@ -753,7 +1158,6 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
                   )}
                 </div>
 
-                {/* NUMBER, DATE, PO NO, PLACE OF SUPPLY */}
                 <div className="grid grid-cols-4 gap-4">
                   <div>
                     <label className="block text-xs font-bold text-slate-700 mb-1">Invoice Number</label>
@@ -801,12 +1205,9 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
                   </div>
                 </div>
 
-                {/* CUSTOMER SECTION */}
                 <div className="border-t border-slate-100 pt-4 space-y-4">
                   <div className="flex items-center justify-between">
-                    <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">
-                      Customer / Debtor (Billed To)
-                    </h3>
+                    <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Customer / Debtor (Billed To)</h3>
                     <div className="flex items-center gap-2">
                       <span className="text-xs text-slate-500 font-medium">Quick Pick Saved Customer:</span>
                       <select
@@ -909,7 +1310,6 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
                     </div>
                   </div>
 
-                  {/* CONSIGNEE TOGGLE */}
                   <div className="pt-1">
                     <label className="flex items-center gap-2 text-xs font-bold text-slate-700 cursor-pointer">
                       <input
@@ -960,7 +1360,6 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
                   </div>
                 </div>
 
-                {/* LINE ITEMS */}
                 <div className="border-t border-slate-100 pt-5 space-y-3">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
@@ -983,7 +1382,7 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
                     <table className="w-full text-left text-xs">
                       <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-semibold uppercase text-[10px]">
                         <tr>
-                          <th className="py-2.5 px-3">Item Description (Type to search)</th>
+                          <th className="py-2.5 px-3">Item Description</th>
                           <th className="py-2.5 px-2 w-20">HSN</th>
                           <th className="py-2.5 px-2 w-20">UOM</th>
                           <th className="py-2.5 px-2 text-right w-16">Qty</th>
@@ -1070,9 +1469,7 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
                                 className="w-full text-[11px] p-1 border border-slate-200 rounded bg-white truncate"
                               >
                                 {GST_RATE_OPTIONS.map(opt => (
-                                  <option key={opt.label} value={opt.value}>
-                                    {opt.label}
-                                  </option>
+                                  <option key={opt.label} value={opt.value}>{opt.label}</option>
                                 ))}
                               </select>
                             </td>
@@ -1100,13 +1497,10 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
                   </div>
                 </div>
 
-                {/* BOTTOM SUMMARY STRIP */}
                 <div className="border-t border-slate-100 pt-6 grid grid-cols-2 gap-8">
                   <div className="space-y-4">
                     <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-2 text-xs">
-                      <p className="font-bold text-slate-800 uppercase tracking-wider text-[11px]">
-                        Vendor Bank Details (For Direct Settlement)
-                      </p>
+                      <p className="font-bold text-slate-800 uppercase tracking-wider text-[11px]">Vendor Bank Details</p>
                       <div className="grid grid-cols-2 gap-1 text-[11px]">
                         <span className="text-slate-500 font-medium">Bank Name:</span>
                         <span className="font-semibold text-slate-800">{vendorProfile.bankName}</span>
@@ -1120,9 +1514,7 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
                     </div>
 
                     <div>
-                      <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1">
-                        Terms & Conditions
-                      </label>
+                      <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1">Terms & Conditions</label>
                       <textarea
                         rows={3}
                         value={vendorProfile.terms}
@@ -1177,14 +1569,8 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
                     </div>
 
                     <div className="border border-slate-300 rounded-xl p-3 text-right bg-white space-y-8">
-                      <p className="text-xs font-bold text-slate-800">
-                        For {vendorProfile.companyName}
-                      </p>
-                      <div>
-                        <p className="text-[11px] font-bold text-slate-700 uppercase tracking-wider">
-                          Authorised Signatory
-                        </p>
-                      </div>
+                      <p className="text-xs font-bold text-slate-800">For {vendorProfile.companyName}</p>
+                      <div><p className="text-[11px] font-bold text-slate-700 uppercase tracking-wider">Authorised Signatory</p></div>
                     </div>
                   </div>
                 </div>
@@ -1194,24 +1580,21 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
                     onClick={handleSaveInvoice}
                     className="flex items-center gap-1.5 px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-semibold shadow-sm transition"
                   >
-                    <CheckCircle2 className="w-3.5 h-3.5" />
-                    Save & Preview Invoice
+                    <CheckCircle2 className="w-3.5 h-3.5" /> Save & Preview Invoice
                   </button>
                 </div>
               </div>
             </div>
           )}
 
-          {/* VIEW 2: INVOICE REGISTER TABLE */}
+          {/* INVOICE REGISTER TABLE */}
           {salesSubTab === "invoices" && (
             <div className="flex-1 p-8 overflow-y-auto">
               {savedInvoices.length === 0 ? (
                 <div className="bg-white rounded-xl border border-slate-200 p-16 flex flex-col items-center justify-center text-center shadow-sm">
                   <FileText className="w-12 h-12 text-slate-300 mb-3" />
                   <p className="text-sm font-semibold text-slate-700">No B2B sales invoices recorded</p>
-                  <p className="text-xs text-slate-400 mt-1 max-w-sm">
-                    Switch to "Create New Invoice" to draft and record itemized tax invoices.
-                  </p>
+                  <p className="text-xs text-slate-400 mt-1 max-w-sm">Switch to "Create New Invoice" to draft and record tax invoices.</p>
                 </div>
               ) : (
                 <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
@@ -1233,44 +1616,26 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
                         <tr key={inv.id} className="hover:bg-slate-50/70 transition">
                           <td className="py-3 px-4 font-mono font-bold text-slate-900 whitespace-nowrap">
                             <div>{inv.invoiceNumber}</div>
-                            <span className="text-[10px] text-slate-400 font-sans font-semibold">
-                              {inv.invoiceType || "Tax Invoice"}
-                            </span>
+                            <span className="text-[10px] text-slate-400 font-sans font-semibold">{inv.invoiceType || "Tax Invoice"}</span>
                           </td>
-                          <td className="py-3 px-4 font-mono text-slate-600 whitespace-nowrap">
-                            {inv.poNumber || "-"}
-                          </td>
-                          <td className="py-3 px-4 font-mono text-slate-500 whitespace-nowrap">
-                            {inv.invoiceDate}
-                          </td>
+                          <td className="py-3 px-4 font-mono text-slate-600 whitespace-nowrap">{inv.poNumber || "-"}</td>
+                          <td className="py-3 px-4 font-mono text-slate-500 whitespace-nowrap">{inv.invoiceDate}</td>
                           <td className="py-3 px-4">
                             <p className="font-bold text-slate-900">{inv.customerName}</p>
-                            <p className="font-mono text-[10px] text-slate-400">
-                              {inv.customerCountry !== "India" ? `${inv.customerCountry} (Export)` : (inv.customerGstin || "Unregistered")}
-                            </p>
+                            <p className="font-mono text-[10px] text-slate-400">{inv.customerCountry !== "India" ? `${inv.customerCountry} (Export)` : (inv.customerGstin || "Unregistered")}</p>
                           </td>
-                          <td className="py-3 px-4 text-right font-mono text-slate-700">
-                            {inv.totalQuantity || 0}
-                          </td>
-                          <td className="py-3 px-4 text-right font-mono text-slate-800">
-                            ₹{inv.taxableAmount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                          </td>
-                          <td className="py-3 px-4 text-right font-mono font-bold text-emerald-700">
-                            ₹{inv.grandTotal.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                          </td>
+                          <td className="py-3 px-4 text-right font-mono text-slate-700">{inv.totalQuantity || 0}</td>
+                          <td className="py-3 px-4 text-right font-mono text-slate-800">₹{inv.taxableAmount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
+                          <td className="py-3 px-4 text-right font-mono font-bold text-emerald-700">₹{inv.grandTotal.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
                           <td className="py-3 px-4 text-center whitespace-nowrap">
                             <div className="inline-flex items-center gap-1.5">
                               <button
-                                onClick={() => {
-                                  setSelectedInvoiceForPrint(inv);
-                                  setShowPrintModal(true);
-                                }}
+                                onClick={() => { setSelectedInvoiceForPrint(inv); setShowPrintModal(true); }}
                                 className="inline-flex items-center gap-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-[11px] px-2.5 py-1.5 rounded transition"
                                 title="Print or Save PDF"
                               >
                                 <Printer className="w-3.5 h-3.5" /> Print / PDF
                               </button>
-                              
                               <button
                                 onClick={() => handleDeleteInvoice(inv)}
                                 className="text-slate-400 hover:text-rose-600 hover:bg-rose-50 p-1.5 rounded transition"
@@ -1291,27 +1656,47 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
         </div>
       )}
 
-      {/* POS-BASED SALES WORKSPACE: DIRECT JOURNAL VOUCHERS ONLY */}
+      {/* TRACK 2: POS CONSOLIDATED SALES (2 DEDICATED TABS & CLEAN LIST BOARD) */}
       {activeCategory === "pos_sales" && (
         <div className="flex-1 flex flex-col overflow-hidden">
-          {/* ACTION BAR */}
-          <div className="px-8 py-3.5 flex items-center justify-between border-b border-slate-200 bg-white shrink-0">
-            <div className="flex items-center gap-2">
-              <Scale className="w-4 h-4 text-indigo-600" />
-              <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
-                Sales Journal Vouchers ({posJournals.length})
-              </h3>
-              <span className="text-[11px] text-slate-400">
-                (Aggregated & Balanced automatically @ 5% Inclusive GST)
-              </span>
+          {/* ACTION & SUB-TAB BAR */}
+          <div className="px-8 pt-4 pb-0 flex items-center justify-between border-b border-slate-200 bg-white shrink-0">
+            <div className="flex items-center gap-6">
+              <button
+                onClick={() => setPosSubTab("all_entries")}
+                className={`pb-3 text-xs font-bold transition flex items-center gap-2 border-b-2 ${
+                  posSubTab === "all_entries"
+                    ? "border-slate-900 text-slate-900"
+                    : "border-transparent text-slate-400 hover:text-slate-600"
+                }`}
+              >
+                <Scale className="w-4 h-4" /> All Sales Journal Entries
+                <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-slate-900 text-white font-mono">
+                  {posJournals.length}
+                </span>
+              </button>
+
+              <button
+                onClick={() => setPosSubTab("pushed_tally")}
+                className={`pb-3 text-xs font-bold transition flex items-center gap-2 border-b-2 ${
+                  posSubTab === "pushed_tally"
+                    ? "border-slate-900 text-slate-900"
+                    : "border-transparent text-slate-400 hover:text-slate-600"
+                }`}
+              >
+                <Check className="w-4 h-4 text-emerald-600" /> Pushed to Tally
+                <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-emerald-700 text-white font-mono">
+                  {pushedJvs.length}
+                </span>
+              </button>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 pb-2">
               <button
                 onClick={handleDownloadPosTemplate}
-                className="flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold px-3.5 py-1.5 rounded-lg transition"
+                className="flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold px-3 py-1.5 rounded-lg transition"
               >
-                <Download className="w-3.5 h-3.5" /> Download Template (.xlsx)
+                <Download className="w-3.5 h-3.5" /> Template (.xlsx)
               </button>
 
               <input
@@ -1325,9 +1710,9 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
               <button
                 onClick={() => fileInputRef.current?.click()}
                 disabled={isUploading}
-                className="flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold px-3.5 py-1.5 rounded-lg transition disabled:opacity-50"
+                className="flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold px-3 py-1.5 rounded-lg transition disabled:opacity-50"
               >
-                <Upload className="w-3.5 h-3.5" /> {isUploading ? "Processing Sheet..." : "Upload Excel to Journal"}[cite: 7]
+                <Upload className="w-3.5 h-3.5" /> {isUploading ? "Reading..." : "Upload Sheet"}
               </button>
 
               <button
@@ -1339,215 +1724,299 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
             </div>
           </div>
 
-          {/* VOUCHERS LIST */}
-          <div className="flex-1 p-8 overflow-y-auto space-y-6">
-            {posJournals.length === 0 ? (
-              <div className="bg-white rounded-xl border border-slate-200 p-16 flex flex-col items-center justify-center text-center shadow-sm">
+          {/* COMPACT BOARD VIEW (FEW DETAILS ON BOARD: DATE, VOUCHER NUMBER, AMOUNT) */}
+          <div className="flex-1 p-8 overflow-y-auto">
+            {activeJvList.length === 0 ? (
+              <div className="bg-white rounded-xl border border-slate-200 p-16 flex flex-col items-center justify-center text-center shadow-sm max-w-xl mx-auto">
                 <FileSpreadsheet className="w-12 h-12 text-slate-300 mb-3" />
-                <p className="text-sm font-semibold text-slate-700">No Sales Journal Vouchers Passed Yet</p>
-                <p className="text-xs text-slate-400 mt-1 max-w-md">
-                  Upload your POS register spreadsheet[cite: 7] or click <strong>+ Manual Entry</strong>. The system will calculate and create the double-entry journal voucher directly.
+                <p className="text-sm font-semibold text-slate-700">
+                  {posSubTab === "all_entries" ? "No Sales Journal Entries Found" : "No Vouchers Pushed to Tally Yet"}
+                </p>
+                <p className="text-xs text-slate-400 mt-1 max-w-sm">
+                  {posSubTab === "all_entries"
+                    ? "Upload your POS Excel report or click + Manual Entry. Only voucher summaries will be displayed here."
+                    : "Push any generated journal voucher from 'All Sales Journal Entries' to see it listed here."}
                 </p>
               </div>
             ) : (
-              posJournals.map((jv) => (
-                <div key={jv.id} className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm max-w-5xl mx-auto">
-                  {/* HEADER */}
-                  <div className="px-6 py-3.5 border-b border-slate-200 bg-slate-50/80 flex items-center justify-between">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-bold text-slate-900 uppercase">
-                          Double-Entry Sales Journal Voucher[cite: 8]
-                        </span>
-                        <span className="text-[11px] font-mono font-bold bg-slate-200 text-slate-800 px-2 py-0.5 rounded">
-                          Period: {jv.periodLabel}
-                        </span>
-                      </div>
-                      <p className="text-[10px] text-slate-400 mt-0.5 font-mono">
-                        Voucher Date: {jv.voucherDate} | Ref: {jv.id}
-                      </p>
-                    </div>
-
-                    <div className="flex items-center gap-3">
-                      <span className="text-xs font-mono font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded">
-                        Gross: ₹{jv.totalDebits.toLocaleString("en-IN", { minimumFractionDigits: 2 })}[cite: 8]
-                      </span>
-
-                      {/* PUSH TO TALLY ACTION BUTTON */}
-                      <button
-                        onClick={() => handlePushJournalToTally(jv)}
-                        className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-bold shadow-sm transition ${
-                          jv.pushedToTally
-                            ? "bg-slate-100 text-slate-600 border border-slate-200 hover:bg-slate-200"
-                            : "bg-emerald-600 hover:bg-emerald-700 text-white"
-                        }`}
+              <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm max-w-5xl mx-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 font-semibold uppercase text-[10px]">
+                    <tr>
+                      <th className="py-3 px-5">Voucher Date</th>
+                      <th className="py-3 px-5">Voucher Number</th>
+                      <th className="py-3 px-5">Sales Coverage Period</th>
+                      <th className="py-3 px-5 text-right">Taxable Turnover (₹)</th>
+                      <th className="py-3 px-5 text-right">Gross Total (₹)</th>
+                      <th className="py-3 px-5 text-center">Status</th>
+                      <th className="py-3 px-5 text-center">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
+                    {activeJvList.map((jv) => (
+                      <tr
+                        key={jv.id}
+                        onClick={() => setViewingJvDetails(jv)}
+                        className="hover:bg-slate-50/80 cursor-pointer transition"
                       >
-                        <Send className="w-3.5 h-3.5" />
-                        {jv.pushedToTally ? "Re-Push to Tally" : "Push to Tally"}
-                      </button>
+                        <td className="py-3.5 px-5 font-mono font-bold text-slate-900 whitespace-nowrap">
+                          {jv.voucherDate}
+                        </td>
+                        <td className="py-3.5 px-5 font-mono font-bold text-indigo-700 whitespace-nowrap">
+                          {jv.voucherNumber}
+                        </td>
+                        <td className="py-3.5 px-5 text-slate-600 whitespace-nowrap">
+                          {jv.periodLabel}
+                        </td>
+                        <td className="py-3.5 px-5 text-right font-mono text-slate-800">
+                          ₹{Number(jv.totalTaxable || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                        </td>
+                        <td className="py-3.5 px-5 text-right font-mono font-black text-slate-900">
+                          ₹{Number(jv.totalDebits || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                        </td>
+                        <td className="py-3.5 px-5 text-center whitespace-nowrap">
+                          {jv.pushedToTally ? (
+                            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
+                              <CheckCircle2 className="w-3 h-3 text-emerald-600" /> Pushed to Tally
+                            </span>
+                          ) : (
+                            <span className="text-[10px] font-bold text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">
+                              Pending
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-3.5 px-5 text-center whitespace-nowrap">
+                          <div className="inline-flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                            <button
+                              onClick={() => setViewingJvDetails(jv)}
+                              className="text-slate-500 hover:text-slate-800 p-1.5 rounded hover:bg-slate-100 transition"
+                              title="View Full Balanced Journal Entry"
+                            >
+                              <Eye className="w-4 h-4" />
+                            </button>
 
-                      <button
-                        onClick={() => handleDeletePosJournal(jv.id)}
-                        className="text-slate-300 hover:text-rose-600 p-1.5 rounded transition"
-                        title="Delete Voucher"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
-                  </div>
+                            <button
+                              onClick={(e) => handlePushJournalToTally(jv, e)}
+                              className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold transition shadow-xs ${
+                                jv.pushedToTally
+                                  ? "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                                  : "bg-emerald-600 hover:bg-emerald-700 text-white"
+                              }`}
+                            >
+                              <Send className="w-3 h-3" />
+                              {jv.pushedToTally ? "Re-Push" : "Push to Tally"}
+                            </button>
 
-                  {/* TABLE (SCREENSHOT 2 EXACT REPLICA) */}
-                  <table className="w-full text-left text-xs font-mono">
-                    <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-bold uppercase text-[10px]">
-                      <tr>
-                        <th className="py-2.5 px-6 text-center w-16">Type</th>
-                        <th className="py-2.5 px-6">Particular</th>
-                        <th className="py-2.5 px-6 text-right w-44">Amount (Debit)</th>
-                        <th className="py-2.5 px-6 text-right w-44">Amount (Credit)</th>
-                        <th className="py-2.5 px-6 text-slate-400 font-normal">Remarks</th>
+                            <button
+                              onClick={(e) => handleDeletePosJournal(jv.id, e)}
+                              className="text-slate-300 hover:text-rose-600 p-1.5 rounded transition"
+                              title="Delete Record"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </td>
                       </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100 text-slate-800 font-medium">
-                      <tr>
-                        <td className="py-2 px-6 text-center font-bold text-slate-500">Dr</td>
-                        <td className="py-2 px-6 font-bold text-slate-900">AR-Zomato Delivery</td>
-                        <td className="py-2 px-6 text-right font-bold">{jv.dr.zomatoDelivery > 0 ? jv.dr.zomatoDelivery.toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "-"}</td>
-                        <td className="py-2 px-6 text-right text-slate-300">-</td>
-                        <td className="py-2 px-6 text-[11px] text-slate-400"></td>
-                      </tr>
-                      <tr>
-                        <td className="py-2 px-6 text-center font-bold text-slate-500">Dr</td>
-                        <td className="py-2 px-6 font-bold text-slate-900">AR-Zomato Dine In</td>
-                        <td className="py-2 px-6 text-right font-bold">{jv.dr.zomatoDineIn > 0 ? jv.dr.zomatoDineIn.toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "-"}</td>
-                        <td className="py-2 px-6 text-right text-slate-300">-</td>
-                        <td className="py-2 px-6 text-[11px] text-slate-400"></td>
-                      </tr>
-                      <tr>
-                        <td className="py-2 px-6 text-center font-bold text-slate-500">Dr</td>
-                        <td className="py-2 px-6 font-bold text-slate-900">AR-Swiggy Delivery</td>
-                        <td className="py-2 px-6 text-right font-bold">{jv.dr.swiggyDelivery > 0 ? jv.dr.swiggyDelivery.toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "-"}</td>
-                        <td className="py-2 px-6 text-right text-slate-300">-</td>
-                        <td className="py-2 px-6 text-[11px] text-slate-400"></td>
-                      </tr>
-                      <tr>
-                        <td className="py-2 px-6 text-center font-bold text-slate-500">Dr</td>
-                        <td className="py-2 px-6 font-bold text-slate-900">AR-Swiggy Dine In</td>
-                        <td className="py-2 px-6 text-right font-bold">{jv.dr.swiggyDineIn > 0 ? jv.dr.swiggyDineIn.toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "-"}</td>
-                        <td className="py-2 px-6 text-right text-slate-300">-</td>
-                        <td className="py-2 px-6 text-[11px] text-slate-400"></td>
-                      </tr>
-                      <tr>
-                        <td className="py-2 px-6 text-center font-bold text-slate-500">Dr</td>
-                        <td className="py-2 px-6 font-bold text-slate-900">AR-Eazy Dine In</td>
-                        <td className="py-2 px-6 text-right font-bold">{jv.dr.eazyDineIn > 0 ? jv.dr.eazyDineIn.toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "-"}</td>
-                        <td className="py-2 px-6 text-right text-slate-300">-</td>
-                        <td className="py-2 px-6 text-[11px] text-slate-400"></td>
-                      </tr>
-                      <tr>
-                        <td className="py-2 px-6 text-center font-bold text-slate-500">Dr</td>
-                        <td className="py-2 px-6 font-bold text-slate-900">Cash</td>
-                        <td className="py-2 px-6 text-right font-bold">{jv.dr.cash > 0 ? jv.dr.cash.toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "-"}</td>
-                        <td className="py-2 px-6 text-right text-slate-300">-</td>
-                        <td className="py-2 px-6 text-[11px] text-slate-400"></td>
-                      </tr>
-                      <tr>
-                        <td className="py-2 px-6 text-center font-bold text-slate-500">Dr</td>
-                        <td className="py-2 px-6 font-bold text-slate-900">UPI Collection</td>
-                        <td className="py-2 px-6 text-right font-bold">{jv.dr.upi > 0 ? jv.dr.upi.toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "-"}</td>
-                        <td className="py-2 px-6 text-right text-slate-300">-</td>
-                        <td className="py-2 px-6 text-[11px] text-slate-400"></td>
-                      </tr>
-                      <tr>
-                        <td className="py-2 px-6 text-center font-bold text-slate-500">Dr</td>
-                        <td className="py-2 px-6 font-bold text-slate-900">Bank In Transit - VISA/Rupee/Master</td>
-                        <td className="py-2 px-6 text-right font-bold">{jv.dr.bankInTransit > 0 ? jv.dr.bankInTransit.toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "-"}</td>
-                        <td className="py-2 px-6 text-right text-slate-300">-</td>
-                        <td className="py-2 px-6 text-[11px] text-slate-400"></td>
-                      </tr>
-                      <tr>
-                        <td className="py-2 px-6 text-center font-bold text-slate-500">Dr</td>
-                        <td className="py-2 px-6 font-bold text-slate-900">AR- Other Receivables</td>
-                        <td className="py-2 px-6 text-right font-bold">{jv.dr.otherReceivables > 0 ? jv.dr.otherReceivables.toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "-"}</td>
-                        <td className="py-2 px-6 text-right text-slate-300">-</td>
-                        <td className="py-2 px-6 text-[11px] text-slate-400 italic">Due, BQR, Razorpay[cite: 8]</td>
-                      </tr>
-
-                      {/* CREDITS */}
-                      <tr className="bg-slate-50/50">
-                        <td className="py-2 px-6 text-center font-bold text-slate-500">Cr</td>
-                        <td className="py-2 px-6 font-bold text-slate-900">Sales - Café</td>
-                        <td className="py-2 px-6 text-right text-slate-300">-</td>
-                        <td className="py-2 px-6 text-right font-bold">{jv.credits.salesCafe > 0 ? jv.credits.salesCafe.toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "-"}</td>
-                        <td className="py-2 px-6 text-[11px] text-slate-400">Taxable In-Store</td>
-                      </tr>
-                      <tr className="bg-slate-50/50">
-                        <td className="py-2 px-6 text-center font-bold text-slate-500">Cr</td>
-                        <td className="py-2 px-6 font-bold text-slate-900">Sales - Zomato Delivery</td>
-                        <td className="py-2 px-6 text-right text-slate-300">-</td>
-                        <td className="py-2 px-6 text-right font-bold">{jv.credits.salesZomatoDel > 0 ? jv.credits.salesZomatoDel.toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "-"}</td>
-                        <td className="py-2 px-6 text-[11px] text-slate-400">Taxable Zomato</td>
-                      </tr>
-                      <tr className="bg-slate-50/50">
-                        <td className="py-2 px-6 text-center font-bold text-slate-500">Cr</td>
-                        <td className="py-2 px-6 font-bold text-slate-900">Sales - Zomato Dine In</td>
-                        <td className="py-2 px-6 text-right text-slate-300">-</td>
-                        <td className="py-2 px-6 text-right font-bold">{jv.credits.salesZomatoDine > 0 ? jv.credits.salesZomatoDine.toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "-"}</td>
-                        <td className="py-2 px-6 text-[11px] text-slate-400"></td>
-                      </tr>
-                      <tr className="bg-slate-50/50">
-                        <td className="py-2 px-6 text-center font-bold text-slate-500">Cr</td>
-                        <td className="py-2 px-6 font-bold text-slate-900">Sales - Swiggy Delivery</td>
-                        <td className="py-2 px-6 text-right text-slate-300">-</td>
-                        <td className="py-2 px-6 text-right font-bold">{jv.credits.salesSwiggyDel > 0 ? jv.credits.salesSwiggyDel.toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "-"}</td>
-                        <td className="py-2 px-6 text-[11px] text-slate-400">Taxable Swiggy</td>
-                      </tr>
-                      <tr className="bg-slate-50/50">
-                        <td className="py-2 px-6 text-center font-bold text-slate-500">Cr</td>
-                        <td className="py-2 px-6 font-bold text-slate-900">Sales - Swiggy Dine In</td>
-                        <td className="py-2 px-6 text-right text-slate-300">-</td>
-                        <td className="py-2 px-6 text-right font-bold">{jv.credits.salesSwiggyDine > 0 ? jv.credits.salesSwiggyDine.toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "-"}</td>
-                        <td className="py-2 px-6 text-[11px] text-slate-400"></td>
-                      </tr>
-                      <tr className="bg-slate-50/50">
-                        <td className="py-2 px-6 text-center font-bold text-slate-500">Cr</td>
-                        <td className="py-2 px-6 font-bold text-slate-900">Sales - Eazy Dine In</td>
-                        <td className="py-2 px-6 text-right text-slate-300">-</td>
-                        <td className="py-2 px-6 text-right font-bold">{jv.credits.salesEazyDine > 0 ? jv.credits.salesEazyDine.toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "-"}</td>
-                        <td className="py-2 px-6 text-[11px] text-slate-400"></td>
-                      </tr>
-                      <tr className="bg-slate-50/50">
-                        <td className="py-2 px-6 text-center font-bold text-slate-500">Cr</td>
-                        <td className="py-2 px-6 font-bold text-slate-900">CGST 2.5%</td>
-                        <td className="py-2 px-6 text-right text-slate-300">-</td>
-                        <td className="py-2 px-6 text-right font-bold text-indigo-700">{jv.credits.cgst25 > 0 ? jv.credits.cgst25.toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "-"}</td>
-                        <td className="py-2 px-6 text-[11px] text-slate-400">5% GST Output</td>
-                      </tr>
-                      <tr className="bg-slate-50/50">
-                        <td className="py-2 px-6 text-center font-bold text-slate-500">Cr</td>
-                        <td className="py-2 px-6 font-bold text-slate-900">SGST 2.5%</td>
-                        <td className="py-2 px-6 text-right text-slate-300">-</td>
-                        <td className="py-2 px-6 text-right font-bold text-indigo-700">{jv.credits.sgst25 > 0 ? jv.credits.sgst25.toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "-"}</td>
-                        <td className="py-2 px-6 text-[11px] text-slate-400">5% GST Output</td>
-                      </tr>
-                    </tbody>
-                    <tfoot>
-                      <tr className="bg-slate-900 text-white font-bold text-xs border-t-2 border-slate-900">
-                        <td className="py-3 px-6 text-center"></td>
-                        <td className="py-3 px-6 text-sm font-black">Total</td>
-                        <td className="py-3 px-6 text-right font-black text-emerald-400">₹{jv.totalDebits.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
-                        <td className="py-3 px-6 text-right font-black text-emerald-400">₹{jv.totalCredits.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
-                        <td className="py-3 px-6 font-mono text-[10px] text-emerald-300 font-normal">✓ Balanced[cite: 8]</td>
-                      </tr>
-                    </tfoot>
-                  </table>
-                </div>
-              ))
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             )}
           </div>
         </div>
       )}
 
-      {/* MODAL: MANUAL POS ENTRY DIRECT TO SALES JOURNAL */}
+      {/* MODAL: FULL BALANCED DOUBLE-ENTRY JOURNAL INSPECTOR (OPENS ON ROW CLICK) */}
+      {viewingJvDetails && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-3xl w-full p-6 space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div>
+                <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                  <Scale className="w-4 h-4 text-indigo-600" />
+                  Double-Entry Sales Journal Voucher: #{viewingJvDetails.voucherNumber}
+                </h3>
+                <p className="text-[11px] text-slate-500 mt-0.5">
+                  Voucher Date: {viewingJvDetails.voucherDate} | Period: {viewingJvDetails.periodLabel}
+                </p>
+              </div>
+              <button onClick={() => setViewingJvDetails(null)} className="text-slate-400 hover:text-slate-600">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="border border-slate-200 rounded-xl overflow-hidden max-h-[60vh] overflow-y-auto">
+              <table className="w-full text-left text-xs font-mono">
+                <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-bold uppercase text-[10px]">
+                  <tr>
+                    <th className="py-2.5 px-4 text-center w-14">Type</th>
+                    <th className="py-2.5 px-4">Particular (Ledger Name)</th>
+                    <th className="py-2.5 px-4 text-right w-36">Amount (Debit)</th>
+                    <th className="py-2.5 px-4 text-right w-36">Amount (Credit)</th>
+                    <th className="py-2.5 px-4 text-slate-400 font-normal">Remarks</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 text-slate-800 font-medium">
+                  {/* DEBITS */}
+                  <tr>
+                    <td className="py-2 px-4 text-center font-bold text-slate-500">Dr</td>
+                    <td className="py-2 px-4 font-bold text-slate-900">AR-Zomato Delivery</td>
+                    <td className="py-2 px-4 text-right font-bold">{viewingJvDetails.dr.zomatoDelivery > 0 ? viewingJvDetails.dr.zomatoDelivery.toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "-"}</td>
+                    <td className="py-2 px-4 text-right text-slate-300">-</td>
+                    <td className="py-2 px-4 text-[11px] text-slate-400"></td>
+                  </tr>
+                  <tr>
+                    <td className="py-2 px-4 text-center font-bold text-slate-500">Dr</td>
+                    <td className="py-2 px-4 font-bold text-slate-900">AR-Zomato Dine In</td>
+                    <td className="py-2 px-4 text-right font-bold">{viewingJvDetails.dr.zomatoDineIn > 0 ? viewingJvDetails.dr.zomatoDineIn.toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "-"}</td>
+                    <td className="py-2 px-4 text-right text-slate-300">-</td>
+                    <td className="py-2 px-4 text-[11px] text-slate-400"></td>
+                  </tr>
+                  <tr>
+                    <td className="py-2 px-4 text-center font-bold text-slate-500">Dr</td>
+                    <td className="py-2 px-4 font-bold text-slate-900">AR-Swiggy Delivery</td>
+                    <td className="py-2 px-4 text-right font-bold">{viewingJvDetails.dr.swiggyDelivery > 0 ? viewingJvDetails.dr.swiggyDelivery.toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "-"}</td>
+                    <td className="py-2 px-4 text-right text-slate-300">-</td>
+                    <td className="py-2 px-4 text-[11px] text-slate-400"></td>
+                  </tr>
+                  <tr>
+                    <td className="py-2 px-4 text-center font-bold text-slate-500">Dr</td>
+                    <td className="py-2 px-4 font-bold text-slate-900">AR-Swiggy Dine In</td>
+                    <td className="py-2 px-4 text-right font-bold">{viewingJvDetails.dr.swiggyDineIn > 0 ? viewingJvDetails.dr.swiggyDineIn.toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "-"}</td>
+                    <td className="py-2 px-4 text-right text-slate-300">-</td>
+                    <td className="py-2 px-4 text-[11px] text-slate-400"></td>
+                  </tr>
+                  <tr>
+                    <td className="py-2 px-4 text-center font-bold text-slate-500">Dr</td>
+                    <td className="py-2 px-4 font-bold text-slate-900">AR-Eazy Dine In</td>
+                    <td className="py-2 px-4 text-right font-bold">{viewingJvDetails.dr.eazyDineIn > 0 ? viewingJvDetails.dr.eazyDineIn.toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "-"}</td>
+                    <td className="py-2 px-4 text-right text-slate-300">-</td>
+                    <td className="py-2 px-4 text-[11px] text-slate-400"></td>
+                  </tr>
+                  <tr>
+                    <td className="py-2 px-4 text-center font-bold text-slate-500">Dr</td>
+                    <td className="py-2 px-4 font-bold text-slate-900">Cash</td>
+                    <td className="py-2 px-4 text-right font-bold">{viewingJvDetails.dr.cash > 0 ? viewingJvDetails.dr.cash.toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "-"}</td>
+                    <td className="py-2 px-4 text-right text-slate-300">-</td>
+                    <td className="py-2 px-4 text-[11px] text-slate-400"></td>
+                  </tr>
+                  <tr>
+                    <td className="py-2 px-4 text-center font-bold text-slate-500">Dr</td>
+                    <td className="py-2 px-4 font-bold text-slate-900">UPI Collection</td>
+                    <td className="py-2 px-4 text-right font-bold">{viewingJvDetails.dr.upi > 0 ? viewingJvDetails.dr.upi.toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "-"}</td>
+                    <td className="py-2 px-4 text-right text-slate-300">-</td>
+                    <td className="py-2 px-4 text-[11px] text-slate-400"></td>
+                  </tr>
+                  <tr>
+                    <td className="py-2 px-4 text-center font-bold text-slate-500">Dr</td>
+                    <td className="py-2 px-4 font-bold text-slate-900">Bank In Transit - VISA/Rupee/Master</td>
+                    <td className="py-2 px-4 text-right font-bold">{viewingJvDetails.dr.bankInTransit > 0 ? viewingJvDetails.dr.bankInTransit.toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "-"}</td>
+                    <td className="py-2 px-4 text-right text-slate-300">-</td>
+                    <td className="py-2 px-4 text-[11px] text-slate-400"></td>
+                  </tr>
+                  <tr>
+                    <td className="py-2 px-4 text-center font-bold text-slate-500">Dr</td>
+                    <td className="py-2 px-4 font-bold text-slate-900">AR- Other Receivables</td>
+                    <td className="py-2 px-4 text-right font-bold">{viewingJvDetails.dr.otherReceivables > 0 ? viewingJvDetails.dr.otherReceivables.toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "-"}</td>
+                    <td className="py-2 px-4 text-right text-slate-300">-</td>
+                    <td className="py-2 px-4 text-[11px] text-slate-400 italic">Due, BQR, Razorpay</td>
+                  </tr>
+
+                  {/* CREDITS */}
+                  <tr className="bg-slate-50/50">
+                    <td className="py-2 px-4 text-center font-bold text-slate-500">Cr</td>
+                    <td className="py-2 px-4 font-bold text-slate-900">Sales - Café</td>
+                    <td className="py-2 px-4 text-right text-slate-300">-</td>
+                    <td className="py-2 px-4 text-right font-bold">{viewingJvDetails.credits.salesCafe > 0 ? viewingJvDetails.credits.salesCafe.toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "-"}</td>
+                    <td className="py-2 px-4 text-[11px] text-slate-400">Taxable In-Store</td>
+                  </tr>
+                  <tr className="bg-slate-50/50">
+                    <td className="py-2 px-4 text-center font-bold text-slate-500">Cr</td>
+                    <td className="py-2 px-4 font-bold text-slate-900">Sales - Zomato Delivery</td>
+                    <td className="py-2 px-4 text-right text-slate-300">-</td>
+                    <td className="py-2 px-4 text-right font-bold">{viewingJvDetails.credits.salesZomatoDel > 0 ? viewingJvDetails.credits.salesZomatoDel.toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "-"}</td>
+                    <td className="py-2 px-4 text-[11px] text-slate-400">Taxable Zomato</td>
+                  </tr>
+                  <tr className="bg-slate-50/50">
+                    <td className="py-2 px-4 text-center font-bold text-slate-500">Cr</td>
+                    <td className="py-2 px-4 font-bold text-slate-900">Sales - Zomato Dine In</td>
+                    <td className="py-2 px-4 text-right text-slate-300">-</td>
+                    <td className="py-2 px-4 text-right font-bold">{viewingJvDetails.credits.salesZomatoDine > 0 ? viewingJvDetails.credits.salesZomatoDine.toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "-"}</td>
+                    <td className="py-2 px-4 text-[11px] text-slate-400"></td>
+                  </tr>
+                  <tr className="bg-slate-50/50">
+                    <td className="py-2 px-4 text-center font-bold text-slate-500">Cr</td>
+                    <td className="py-2 px-4 font-bold text-slate-900">Sales - Swiggy Delivery</td>
+                    <td className="py-2 px-4 text-right text-slate-300">-</td>
+                    <td className="py-2 px-4 text-right font-bold">{viewingJvDetails.credits.salesSwiggyDel > 0 ? viewingJvDetails.credits.salesSwiggyDel.toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "-"}</td>
+                    <td className="py-2 px-4 text-[11px] text-slate-400">Taxable Swiggy</td>
+                  </tr>
+                  <tr className="bg-slate-50/50">
+                    <td className="py-2 px-4 text-center font-bold text-slate-500">Cr</td>
+                    <td className="py-2 px-4 font-bold text-slate-900">Sales - Swiggy Dine In</td>
+                    <td className="py-2 px-4 text-right text-slate-300">-</td>
+                    <td className="py-2 px-4 text-right font-bold">{viewingJvDetails.credits.salesSwiggyDine > 0 ? viewingJvDetails.credits.salesSwiggyDine.toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "-"}</td>
+                    <td className="py-2 px-4 text-[11px] text-slate-400"></td>
+                  </tr>
+                  <tr className="bg-slate-50/50">
+                    <td className="py-2 px-4 text-center font-bold text-slate-500">Cr</td>
+                    <td className="py-2 px-4 font-bold text-slate-900">Sales - Eazy Dine In</td>
+                    <td className="py-2 px-4 text-right text-slate-300">-</td>
+                    <td className="py-2 px-4 text-right font-bold">{viewingJvDetails.credits.salesEazyDine > 0 ? viewingJvDetails.credits.salesEazyDine.toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "-"}</td>
+                    <td className="py-2 px-4 text-[11px] text-slate-400"></td>
+                  </tr>
+                  <tr className="bg-slate-50/50">
+                    <td className="py-2 px-4 text-center font-bold text-slate-500">Cr</td>
+                    <td className="py-2 px-4 font-bold text-slate-900">CGST 2.5%</td>
+                    <td className="py-2 px-4 text-right text-slate-300">-</td>
+                    <td className="py-2 px-4 text-right font-bold text-indigo-700">{viewingJvDetails.credits.cgst25 > 0 ? viewingJvDetails.credits.cgst25.toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "-"}</td>
+                    <td className="py-2 px-4 text-[11px] text-slate-400">5% GST Output</td>
+                  </tr>
+                  <tr className="bg-slate-50/50">
+                    <td className="py-2 px-4 text-center font-bold text-slate-500">Cr</td>
+                    <td className="py-2 px-4 font-bold text-slate-900">SGST 2.5%</td>
+                    <td className="py-2 px-4 text-right text-slate-300">-</td>
+                    <td className="py-2 px-4 text-right font-bold text-indigo-700">{viewingJvDetails.credits.sgst25 > 0 ? viewingJvDetails.credits.sgst25.toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "-"}</td>
+                    <td className="py-2 px-4 text-[11px] text-slate-400">5% GST Output</td>
+                  </tr>
+                </tbody>
+                <tfoot>
+                  <tr className="bg-slate-900 text-white font-bold text-xs border-t-2 border-slate-900">
+                    <td className="py-2.5 px-4 text-center"></td>
+                    <td className="py-2.5 px-4 text-sm font-black">Total</td>
+                    <td className="py-2.5 px-4 text-right font-black text-emerald-400">₹{viewingJvDetails.totalDebits.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
+                    <td className="py-2.5 px-4 text-right font-black text-emerald-400">₹{viewingJvDetails.totalCredits.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
+                    <td className="py-2.5 px-4 font-mono text-[10px] text-emerald-300 font-normal">✓ Balanced</td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+
+            <div className="flex items-center justify-between pt-2">
+              <span className="text-xs text-slate-500">
+                Status: {viewingJvDetails.pushedToTally ? <strong className="text-emerald-600">Pushed to Tally</strong> : <span className="text-amber-600">Pending Tally Transmission</span>}
+              </span>
+
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setViewingJvDetails(null)}
+                  className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg"
+                >
+                  Close
+                </button>
+                <button
+                  onClick={() => handlePushJournalToTally(viewingJvDetails)}
+                  className="flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg shadow-sm"
+                >
+                  <Send className="w-3.5 h-3.5" /> Push This Voucher to Tally
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: MANUAL POS SUMMARY FORM */}
       {showManualPosModal && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full p-6 space-y-4">
@@ -1585,7 +2054,6 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
                 </div>
               </div>
 
-              {/* IN-STORE */}
               <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg space-y-2">
                 <h4 className="text-[11px] font-bold text-slate-700 uppercase">In-Store Direct Tenders (₹)</h4>
                 <div className="grid grid-cols-3 gap-2">
@@ -1625,7 +2093,6 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
                 </div>
               </div>
 
-              {/* AGGREGATORS */}
               <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg space-y-2">
                 <h4 className="text-[11px] font-bold text-slate-700 uppercase">Aggregator Deliveries & Dine-In (₹)</h4>
                 <div className="grid grid-cols-3 gap-2">
@@ -1687,7 +2154,6 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
                 </div>
               </div>
 
-              {/* OTHER RECEIVABLES */}
               <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg space-y-2">
                 <h4 className="text-[11px] font-bold text-slate-700 uppercase">Other Receivables (₹)</h4>
                 <div className="grid grid-cols-3 gap-2">
@@ -1739,7 +2205,7 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
                   type="submit"
                   className="px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-bold shadow-sm"
                 >
-                  Pass Sales Journal Voucher[cite: 8]
+                  Pass Sales Journal Voucher
                 </button>
               </div>
             </form>
@@ -1945,9 +2411,7 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
 
               <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                    Selling Price (Excl. Tax) ₹
-                  </label>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">Selling Price (Excl. Tax) ₹</label>
                   <input
                     type="number"
                     step="0.01"
@@ -1957,9 +2421,7 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
                   />
                 </div>
                 <div>
-                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                    Selling Price (Incl. Tax) ₹
-                  </label>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">Selling Price (Incl. Tax) ₹</label>
                   <input
                     type="number"
                     step="0.01"
@@ -2105,7 +2567,7 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
         </div>
       )}
 
-      {/* TOAST ALERTS */}
+      {/* TOAST NOTIFICATION */}
       {notification && (
         <div
           className={`fixed bottom-6 right-6 px-4 py-2.5 rounded-lg text-white text-xs font-semibold flex items-center gap-2 shadow-lg transition-all z-50 ${
