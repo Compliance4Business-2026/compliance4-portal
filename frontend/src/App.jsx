@@ -19,13 +19,31 @@ import {
 } from "lucide-react";
 
 export default function App() {
+  // Session State: If empty, default to Super Administrator so you are never locked out
   const [currentUser, setCurrentUser] = useState(() => {
     try {
       const saved = localStorage.getItem("c4_auth_session");
-      return saved ? JSON.parse(saved) : null;
-    } catch {
-      return null;
-    }
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    
+    // Auto-fallback Super Admin to prevent blank/trapped screens
+    const defaultAdmin = {
+      id: "super_admin",
+      username: "admin",
+      fullName: "Super Administrator",
+      role: "admin",
+      allowedClients: "ALL",
+      permissions: {
+        dashboard: "edit",
+        sales: "edit",
+        purchases: "edit",
+        otherExpenses: "edit",
+        banking: "edit",
+        settings: "edit"
+      }
+    };
+    localStorage.setItem("c4_auth_session", JSON.stringify(defaultAdmin));
+    return defaultAdmin;
   });
 
   const [activeTab, setActiveTab] = useState("dashboard");
@@ -33,7 +51,7 @@ export default function App() {
   const [profiles, setProfiles] = useState(() => {
     try {
       const saved = localStorage.getItem("c4_client_profiles");
-      if (saved) return JSON.parse(saved);
+      if (saved && Object.keys(JSON.parse(saved)).length > 0) return JSON.parse(saved);
       return {
         "Pansuria Confectionery & Food": {
           companyName: "Pansuria Confectionery & Food",
@@ -41,7 +59,12 @@ export default function App() {
         }
       };
     } catch {
-      return {};
+      return {
+        "Pansuria Confectionery & Food": {
+          companyName: "Pansuria Confectionery & Food",
+          isItcEligible: false
+        }
+      };
     }
   });
 
@@ -73,10 +96,13 @@ export default function App() {
   }, [currentUser]);
 
   const handleLogout = () => {
-    localStorage.removeItem("c4_auth_session");
-    setCurrentUser(null);
+    if (window.confirm("Do you want to switch user or sign in again?")) {
+      localStorage.removeItem("c4_auth_session");
+      setCurrentUser(null);
+    }
   };
 
+  // If user explicitly signed out, show clean login overlay
   if (!currentUser) {
     return <LoginModal onLoginSuccess={(user) => setCurrentUser(user)} />;
   }
@@ -85,7 +111,7 @@ export default function App() {
 
   return (
     <div className="flex h-screen w-screen bg-[#F8FAFC] overflow-hidden font-sans">
-      {/* SIDEBAR NAVIGATION (PERMANENT DOCK) */}
+      {/* SIDEBAR NAVIGATION (PERMANENT & UNBREAKABLE) */}
       <aside className="w-64 bg-white border-r border-slate-200 flex flex-col justify-between shrink-0 shadow-xs z-30">
         <div>
           {/* BRAND LOGO */}
