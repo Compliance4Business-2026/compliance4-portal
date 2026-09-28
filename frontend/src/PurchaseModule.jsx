@@ -24,7 +24,8 @@ import {
   ShieldCheck, 
   ShieldAlert, 
   AlertTriangle, 
-  Sparkles 
+  Sparkles,
+  Search
 } from "lucide-react";
 
 const API_BASE_URL = 
@@ -117,23 +118,24 @@ function validateGSTIN(gstin) {
   };
 }
 
-// SEARCHABLE TYPEAHEAD COMBOBOX COMPONENT
-function SearchableLedgerSelect({ value, onChange, options, coaList = [], placeholder = "Type to search ledger..." }) {
+// ROBUST POP-OUT SEARCHABLE TYPEAHEAD COMBOBOX
+function SearchableLedgerSelect({ value, onChange, coaList = [], fallbackOptions = [], placeholder = "Type ledger name..." }) {
   const [isOpen, setIsOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const dropdownRef = useRef(null);
 
-  // Group and filter ledgers based on typed query
+  // Group all available P&L ledgers
   const filteredGroups = useMemo(() => {
     const term = searchTerm.toLowerCase().trim();
     const groups = {};
 
+    // 1. Prioritize client's actual uploaded Chart of Accounts
     if (coaList && coaList.length > 0) {
       coaList
         .filter((l) => l.statementType === "P&L")
         .forEach((l) => {
           const name = l.name || "";
-          const cat = l.category || "Purchases & Direct Costs";
+          const cat = l.category || "General Expenses";
           if (!term || name.toLowerCase().includes(term) || cat.toLowerCase().includes(term)) {
             if (!groups[cat]) groups[cat] = [];
             groups[cat].push(l);
@@ -141,16 +143,16 @@ function SearchableLedgerSelect({ value, onChange, options, coaList = [], placeh
         });
     }
 
-    // Fallback if client has no P&L ledgers in COA yet
+    // 2. If client has no P&L ledgers yet, use standard fallback list
     if (Object.keys(groups).length === 0) {
-      const defaultGroup = "General Expenses";
-      groups[defaultGroup] = options
+      const defaultGroup = "Standard Purchase Accounts";
+      groups[defaultGroup] = fallbackOptions
         .filter((name) => !term || name.toLowerCase().includes(term))
         .map((name) => ({ name, category: defaultGroup }));
     }
 
     return groups;
-  }, [coaList, options, searchTerm]);
+  }, [coaList, fallbackOptions, searchTerm]);
 
   useEffect(() => {
     const handleOutsideClick = (e) => {
@@ -164,32 +166,39 @@ function SearchableLedgerSelect({ value, onChange, options, coaList = [], placeh
 
   return (
     <div className="relative w-full" ref={dropdownRef}>
-      <input
-        type="text"
-        placeholder={placeholder}
-        value={isOpen ? searchTerm : (value || "")}
-        onFocus={() => {
-          setSearchTerm("");
-          setIsOpen(true);
-        }}
-        onChange={(e) => {
-          setSearchTerm(e.target.value);
-          setIsOpen(true);
-        }}
-        className="w-full text-xs p-1 rounded font-medium border border-slate-300 bg-white text-slate-800 focus:outline-none focus:ring-1 focus:ring-slate-900"
-      />
+      <div className="relative">
+        <input
+          type="text"
+          placeholder={placeholder}
+          value={isOpen ? searchTerm : (value || "")}
+          onFocus={() => {
+            setSearchTerm("");
+            setIsOpen(true);
+          }}
+          onChange={(e) => {
+            setSearchTerm(e.target.value);
+            setIsOpen(true);
+          }}
+          className="w-full text-xs font-semibold border border-slate-300 rounded p-1.5 bg-white text-slate-800 pr-7 focus:outline-none focus:ring-1 focus:ring-slate-900"
+        />
+        <Search className="w-3.5 h-3.5 text-slate-400 absolute right-2 top-2.5 pointer-events-none" />
+      </div>
 
       {isOpen && (
-        <div className="absolute left-0 top-full mt-1 w-full max-h-56 bg-white border border-slate-200 rounded-lg shadow-xl overflow-y-auto z-50 divide-y divide-slate-100">
+        <div 
+          className="absolute left-0 top-full mt-1 w-[320px] max-h-64 bg-white border border-slate-200 rounded-xl shadow-2xl overflow-y-auto z-[999] divide-y divide-slate-100"
+          style={{ minWidth: "100%" }}
+        >
           {Object.keys(filteredGroups).length === 0 ? (
             <div className="p-3 text-xs text-slate-400 text-center italic">
-              No matching ledger found
+              No matching ledger in Client COA
             </div>
           ) : (
             Object.entries(filteredGroups).map(([groupName, ledgers]) => (
               <div key={groupName} className="py-1">
-                <div className="px-3 py-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider bg-slate-50">
-                  {groupName}
+                <div className="px-3 py-1 text-[10px] font-bold text-slate-500 uppercase tracking-wider bg-slate-50 flex items-center justify-between">
+                  <span>{groupName}</span>
+                  <span className="font-mono text-[9px] text-slate-400">{ledgers.length}</span>
                 </div>
                 {ledgers.map((l) => (
                   <button
@@ -199,16 +208,14 @@ function SearchableLedgerSelect({ value, onChange, options, coaList = [], placeh
                       onChange(l.name);
                       setIsOpen(false);
                     }}
-                    className={`w-full text-left px-3 py-1.5 text-xs font-medium transition flex items-center justify-between hover:bg-slate-100 ${
-                      value === l.name ? "bg-indigo-50 text-indigo-700 font-bold" : "text-slate-800"
+                    className={`w-full text-left px-3 py-2 text-xs transition flex items-center justify-between hover:bg-slate-100 ${
+                      value === l.name ? "bg-indigo-50 text-indigo-700 font-bold" : "text-slate-800 font-medium"
                     }`}
                   >
-                    <span>{l.name}</span>
-                    {l.cogsClassification && (
-                      <span className="text-[10px] text-slate-400 font-mono">
-                        {l.cogsClassification === "COGS" ? "COGS" : "Overhead"}
-                      </span>
-                    )}
+                    <span className="truncate pr-2">{l.name}</span>
+                    <span className="shrink-0 text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-100 text-slate-500">
+                      {l.cogsClassification === "COGS" ? "COGS" : "Overhead"}
+                    </span>
                   </button>
                 ))}
               </div>
@@ -220,10 +227,10 @@ function SearchableLedgerSelect({ value, onChange, options, coaList = [], placeh
   );
 }
 
-export default function PurchaseModule({ activeClient = "Panasuria Confectionery" }) {
+export default function PurchaseModule({ activeClient = "Pansuria Confectionery & Food" }) {
   const [purchaseSubTab, setPurchaseSubTab] = useState("needs_review");
 
-  // Persistent Stores scoped to activeClient
+  // Persistent Stores scoped strictly to activeClient
   const [pendingBills, setPendingBills] = useState(() => {
     try {
       const saved = localStorage.getItem(`c4_pending_bills_${activeClient}`);
@@ -251,7 +258,6 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
     }
   });
 
-  // Learned Item-to-Ledger Rules scoped to activeClient
   const [itemRules, setItemRules] = useState(() => {
     try {
       const saved = localStorage.getItem(`c4_purchase_item_rules_${activeClient}`);
@@ -271,7 +277,7 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
     }
   }, [activeClient]);
 
-  // Dynamic P&L Ledgers for Purchases (falling back to default if COA not yet imported)
+  // Dynamic P&L Ledgers for Purchases
   const dynamicExpenseLedgers = useMemo(() => {
     const plLedgers = clientCoa.filter((l) => l.statementType === "P&L").map((l) => l.name);
     if (plLedgers.length > 0) return plLedgers;
@@ -310,14 +316,12 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
   const [uploadProgress, setUploadProgress] = useState("");
   const [notification, setNotification] = useState(null);
 
-  // Review & Form State
   const [activeReviewBill, setActiveReviewBill] = useState(null);
   const [voucherMode, setVoucherMode] = useState("accounting");
   const [zoomLevel, setZoomLevel] = useState(1);
   const [showAllocationModal, setShowAllocationModal] = useState(false);
   const [voucherData, setVoucherData] = useState(null);
 
-  // Expanded Month Folders State in "Pushed to Tally"
   const [expandedFolders, setExpandedFolders] = useState({});
 
   const toggleFolder = (folderKey) => {
@@ -710,7 +714,6 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
     notify("Downloaded Tally-compliant XML import file!", "success");
   };
 
-  // Group pushed bills month-wise based on invoice/voucher date
   const groupedPushedBills = useMemo(() => {
     const groups = {};
     pushedBills.forEach(b => {
@@ -810,7 +813,6 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
           </div>
         </header>
 
-        {/* DUPLICATE WARNING BAR */}
         {duplicateMatch && (
           <div className="bg-amber-50 border-b border-amber-200 px-6 py-2 flex items-center justify-between text-xs text-amber-900">
             <div className="flex items-center gap-2">
@@ -951,7 +953,7 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
                 </div>
               </div>
 
-              {/* VENDOR DETAILS WITH SUNDRY CREDITORS AUTOCOMPLETE */}
+              {/* VENDOR DETAILS */}
               <div className="border-t border-slate-100 pt-4 space-y-3">
                 <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400">Vendor Details</h4>
                 <div className="grid grid-cols-2 gap-4">
@@ -1126,7 +1128,7 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
                 </div>
               )}
 
-              {/* ACCOUNTING MODE — DYNAMIC P&L LEDGERS WITH SEARCHABLE AUTOCOMPLETE */}
+              {/* ACCOUNTING MODE — OVERFLOW VISIBLE FOR CLEAN FLOATING SEARCH PALETTE */}
               {voucherMode === "accounting" && (
                 <div className="border-t border-slate-100 pt-4 space-y-3">
                   <div className="flex items-center justify-between">
@@ -1149,12 +1151,13 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
                     </button>
                   </div>
 
-                  <div className="border border-slate-200 rounded-lg overflow-hidden">
+                  {/* SET TO overflow-visible SO SEARCH RESULTS FLOAT OVER THE REST OF THE PAGE */}
+                  <div className="border border-slate-200 rounded-lg overflow-visible">
                     <table className="w-full text-left text-xs">
                       <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-semibold">
                         <tr>
                           <th className="p-2.5">Item Description</th>
-                          <th className="p-2.5">Ledger Name</th>
+                          <th className="p-2.5 w-60">Ledger Name</th>
                           <th className="p-2.5 w-28">Amount (₹)</th>
                           <th className="p-2.5 w-8"></th>
                         </tr>
@@ -1172,7 +1175,7 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
                                     updated[idx].description = e.target.value;
                                     setVoucherData({ ...voucherData, accounting_ledgers: updated });
                                   }}
-                                  className="w-full text-xs p-1 border border-slate-200 rounded"
+                                  className="w-full text-xs p-1.5 border border-slate-200 rounded"
                                 />
                                 {it.isAutoMatched && (
                                   <span title="Auto-mapped from memorized rules" className="text-indigo-600 shrink-0">
@@ -1181,14 +1184,14 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
                                 )}
                               </div>
                             </td>
-                            <td className="p-2">
-                              {/* REPLACED WITH SEARCHABLE TYPEAHEAD COMBOBOX */}
+                            <td className="p-2 relative overflow-visible">
+                              {/* FLOATING AUTOCOMPLETE TYPEAHEAD */}
                               <SearchableLedgerSelect
                                 value={it.ledger_name}
                                 onChange={(selected) => handleLedgerSelection(idx, selected, it.description)}
-                                options={dynamicExpenseLedgers}
                                 coaList={clientCoa}
-                                placeholder="Type to search ledger..."
+                                fallbackOptions={dynamicExpenseLedgers}
+                                placeholder="Type to search COA..."
                               />
                             </td>
                             <td className="p-2">
@@ -1201,7 +1204,7 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
                                   updated[idx].amount = parseFloat(e.target.value) || 0;
                                   updateTotals({ ...voucherData, accounting_ledgers: updated });
                                 }}
-                                className="w-full text-xs font-mono p-1 border border-slate-200 rounded font-medium"
+                                className="w-full text-xs font-mono p-1.5 border border-slate-200 rounded font-medium"
                               />
                             </td>
                             <td className="p-2 text-right">
@@ -1647,7 +1650,6 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
 
                 return (
                   <div key={group.monthLabel} className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
-                    {/* FOLDER BANNER HEADER */}
                     <div
                       onClick={() => toggleFolder(group.monthLabel)}
                       className="px-6 py-4 bg-slate-50/80 hover:bg-slate-100/80 border-b border-slate-200 flex items-center justify-between cursor-pointer transition select-none"
@@ -1684,7 +1686,6 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
                       </div>
                     </div>
 
-                    {/* FOLDER CONTENTS */}
                     {isExpanded && (
                       <table className="w-full text-left text-xs text-slate-600">
                         <thead className="bg-white border-b border-slate-200 uppercase font-semibold text-slate-400 text-[10px]">
