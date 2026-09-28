@@ -592,19 +592,64 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
     const check = validateGSTIN(cleanGst);
     setNewCust(prev => ({ ...prev, gstin: cleanGst, state: check.isValid ? check.stateName : prev.state }));
   };
+const handleSaveCustomerModal = () => {
+  if (!newCust.name.trim()) {
+    notify("Customer Name is required", "error");
+    return;
+  }
 
-  const handleSaveCustomerModal = () => {
-    if (!newCust.name.trim()) {
-      notify("Customer Name is required", "error");
-      return;
-    }
-    const created = { ...newCust, id: `cust_${Date.now()}` };
-    setCustomers(prev => [created, ...prev]);
-    setShowAddCustomerModal(false);
-    selectCustomer(created);
-    notify(`Customer "${created.name}" created!`, "success");
-    setNewCust({ country: "India", gstin: "", name: "", address: "", pincode: "", state: "Gujarat", phone: "", email: "", discountPercent: 0 });
+  const createdCustomer = { 
+    ...newCust, 
+    id: `cust_${Date.now()}` 
   };
+
+  // 1. Save to Client Customer Directory
+  setCustomers((prev) => [createdCustomer, ...prev]);
+
+  // 2. Automatically register into Client Chart of Accounts as Sundry Debtor
+  try {
+    const rawCoa = localStorage.getItem(`c4_coa_${activeClient}`);
+    const currentCoa = rawCoa ? JSON.parse(rawCoa) : [];
+
+    const alreadyExists = currentCoa.some(
+      (ledger) => ledger.name.trim().toLowerCase() === createdCustomer.name.trim().toLowerCase()
+    );
+
+    if (!alreadyExists) {
+      const newDebtorLedger = {
+        id: `coa_deb_${Date.now()}`,
+        name: createdCustomer.name.trim(),
+        statementType: "Balance Sheet",
+        category: "Sundry Debtors",
+        subCategory: createdCustomer.country === "India" ? "Domestic Debtors" : "Foreign / Export Debtors",
+        balanceType: "Debit",
+        gstin: createdCustomer.gstin || "",
+        state: createdCustomer.state || ""
+      };
+
+      const updatedCoa = [...currentCoa, newDebtorLedger];
+      localStorage.setItem(`c4_coa_${activeClient}`, JSON.stringify(updatedCoa));
+    }
+  } catch (err) {
+    console.error("Failed to sync new customer to COA:", err);
+  }
+
+  setShowAddCustomerModal(false);
+  selectCustomer(createdCustomer);
+  notify(`Customer "${createdCustomer.name}" added and mapped to Sundry Debtors in COA!`, "success");
+
+  setNewCust({
+    country: "India",
+    gstin: "",
+    name: "",
+    address: "",
+    pincode: "",
+    state: "Gujarat",
+    phone: "",
+    email: "",
+    discountPercent: 0
+  });
+};
 
   const selectCustomer = (c) => {
     const isForeign = c.country && c.country !== "India";
