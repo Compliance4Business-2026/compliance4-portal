@@ -51,14 +51,22 @@ export default function OtherExpensesModule({ activeClient = "The Marx Ventures"
     }
   }, [activeClient]);
 
-  const allLedgers = clientCoa;
+  const allLedgers = Array.isArray(clientCoa) ? clientCoa : [];
 
   useEffect(() => {
-    localStorage.setItem(`c4_other_expenses_${activeClient}`, JSON.stringify(expenses));
+    try {
+      localStorage.setItem(`c4_other_expenses_${activeClient}`, JSON.stringify(expenses));
+    } catch (e) {
+      console.error(e);
+    }
   }, [expenses, activeClient]);
 
   useEffect(() => {
-    localStorage.setItem(`c4_other_expenses_pushed_${activeClient}`, JSON.stringify(pushedExpenses));
+    try {
+      localStorage.setItem(`c4_other_expenses_pushed_${activeClient}`, JSON.stringify(pushedExpenses));
+    } catch (e) {
+      console.error(e);
+    }
   }, [pushedExpenses, activeClient]);
 
   const [notification, setNotification] = useState(null);
@@ -89,18 +97,6 @@ export default function OtherExpensesModule({ activeClient = "The Marx Ventures"
     narration: ""
   });
 
-  useEffect(() => {
-    if (clientCoa.length > 0) {
-      const defaultDebit = clientCoa.find((l) => l.statementType === "P&L")?.name || clientCoa[0]?.name;
-      const defaultCredit = clientCoa.find((l) => l.statementType === "Balance Sheet")?.name || clientCoa[0]?.name;
-      setFormData((prev) => ({
-        ...prev,
-        expenseLedger: prev.expenseLedger || defaultDebit,
-        creditLedger: prev.creditLedger || defaultCredit
-      }));
-    }
-  }, [clientCoa]);
-
   const handleSaveExpense = (e) => {
     e.preventDefault();
     const gross = parseFloat(formData.amount) || 0;
@@ -120,12 +116,13 @@ export default function OtherExpensesModule({ activeClient = "The Marx Ventures"
     let taxable = gross;
     let cgst = 0, sgst = 0;
     if (formData.includesGst) {
-      taxable = gross / (1 + formData.gstRate / 100);
-      cgst = (taxable * (formData.gstRate / 2)) / 100;
-      sgst = (taxable * (formData.gstRate / 2)) / 100;
+      const rate = parseFloat(formData.gstRate) || 18;
+      taxable = gross / (1 + rate / 100);
+      cgst = (taxable * (rate / 2)) / 100;
+      sgst = (taxable * (rate / 2)) / 100;
     }
 
-    const matchedLedger = clientCoa.find((l) => l.name === formData.expenseLedger);
+    const matchedLedger = allLedgers.find((l) => l.name === formData.expenseLedger);
     const categoryGroup = matchedLedger?.category || "Operational Expenses";
 
     const created = {
@@ -141,7 +138,7 @@ export default function OtherExpensesModule({ activeClient = "The Marx Ventures"
       sgst,
       igst: 0,
       grandTotal: gross,
-      narration: formData.narration,
+      narration: formData.narration || "",
       pushedToTally: false
     };
 
@@ -164,34 +161,39 @@ export default function OtherExpensesModule({ activeClient = "The Marx Ventures"
   };
 
   const buildSingleXmlVoucher = (exp) => {
-    const tallyDate = (exp.voucherDate || "20260901").replace(/[^0-9]/g, "");
+    const tallyDate = String(exp.voucherDate || exp.date || "20260901").replace(/[^0-9]/g, "");
+    const taxableVal = (parseFloat(exp.taxableAmount || exp.amount || 0)).toFixed(2);
+    const grandVal = (parseFloat(exp.grandTotal || exp.amount || 0)).toFixed(2);
+    const cgstVal = (parseFloat(exp.cgst || 0)).toFixed(2);
+    const sgstVal = (parseFloat(exp.sgst || 0)).toFixed(2);
+
     return `
     <VOUCHER VCHTYPE="Journal" ACTION="Create">
       <DATE>${tallyDate}</DATE>
       <VOUCHERTYPENAME>Journal</VOUCHERTYPENAME>
-      <REFERENCE>${exp.id}</REFERENCE>
-      <NARRATION>${exp.narration || `Expense for ${exp.expenseLedger}`} - Party: ${exp.payeeName}</NARRATION>
+      <REFERENCE>${exp.id || "EXP"}</REFERENCE>
+      <NARRATION>${(exp.narration || `Expense for ${exp.expenseLedger}`).replace(/&/g, "&amp;")} - Party: ${(exp.payeeName || "").replace(/&/g, "&amp;")}</NARRATION>
       <ALLLEDGERENTRIES.LIST>
-        <LEDGERNAME>${exp.expenseLedger}</LEDGERNAME>
+        <LEDGERNAME>${exp.expenseLedger || "Office Expenses"}</LEDGERNAME>
         <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
-        <AMOUNT>-${parseFloat(exp.taxableAmount || 0).toFixed(2)}</AMOUNT>
+        <AMOUNT>-${taxableVal}</AMOUNT>
       </ALLLEDGERENTRIES.LIST>
-      ${exp.cgst > 0 ? `
+      ${parseFloat(cgstVal) > 0 ? `
       <ALLLEDGERENTRIES.LIST>
         <LEDGERNAME>Input CGST</LEDGERNAME>
         <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
-        <AMOUNT>-${parseFloat(exp.cgst || 0).toFixed(2)}</AMOUNT>
+        <AMOUNT>-${cgstVal}</AMOUNT>
       </ALLLEDGERENTRIES.LIST>` : ""}
-      ${exp.sgst > 0 ? `
+      ${parseFloat(sgstVal) > 0 ? `
       <ALLLEDGERENTRIES.LIST>
         <LEDGERNAME>Input SGST</LEDGERNAME>
         <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
-        <AMOUNT>-${parseFloat(exp.sgst || 0).toFixed(2)}</AMOUNT>
+        <AMOUNT>-${sgstVal}</AMOUNT>
       </ALLLEDGERENTRIES.LIST>` : ""}
       <ALLLEDGERENTRIES.LIST>
-        <LEDGERNAME>${exp.creditLedger}</LEDGERNAME>
+        <LEDGERNAME>${exp.creditLedger || "Cash"}</LEDGERNAME>
         <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
-        <AMOUNT>${parseFloat(exp.grandTotal || 0).toFixed(2)}</AMOUNT>
+        <AMOUNT>${grandVal}</AMOUNT>
       </ALLLEDGERENTRIES.LIST>
     </VOUCHER>`;
   };
@@ -218,7 +220,7 @@ export default function OtherExpensesModule({ activeClient = "The Marx Ventures"
         headers: { "Content-Type": "text/xml;charset=utf-8" },
         body: xmlPayload
       });
-    } catch {
+    } catch (err) {
       // Dispatched to local listener
     }
 
@@ -230,7 +232,7 @@ export default function OtherExpensesModule({ activeClient = "The Marx Ventures"
 
     setExpenses((prev) => prev.filter((e) => e.id !== exp.id));
     setPushedExpenses((prev) => [pushedRecord, ...prev]);
-    notify(`Expense voucher pushed to Tally & transferred to Pushed tab!`, "success");
+    notify(`Expense voucher pushed to Tally & moved to Pushed tab!`, "success");
   };
 
   const handlePushAllToTally = async () => {
@@ -259,7 +261,7 @@ export default function OtherExpensesModule({ activeClient = "The Marx Ventures"
         headers: { "Content-Type": "text/xml;charset=utf-8" },
         body: fullXml
       });
-    } catch {
+    } catch (err) {
       // Dispatched
     }
 
@@ -273,7 +275,7 @@ export default function OtherExpensesModule({ activeClient = "The Marx Ventures"
     setPushedExpenses((prev) => [...updatedPushed, ...prev]);
     setExpenses([]);
     setIsPushingAll(false);
-    notify(`Successfully pushed ${updatedPushed.length} expense vouchers to Tally!`, "success");
+    notify(`Pushed ${updatedPushed.length} vouchers to Tally!`, "success");
     setActiveTab("pushed");
   };
 
@@ -290,15 +292,15 @@ export default function OtherExpensesModule({ activeClient = "The Marx Ventures"
     ];
 
     const rows = list.map(e => [
-      `"${e.voucherDate || ""}"`,
+      `"${e.voucherDate || e.date || ""}"`,
       `"${(e.expenseLedger || "").replace(/"/g, '""')}"`,
       `"${(e.creditLedger || "").replace(/"/g, '""')}"`,
       `"${(e.payeeName || "").replace(/"/g, '""')}"`,
       `"${(e.group || "").replace(/"/g, '""')}"`,
-      e.taxableAmount || 0,
-      e.cgst || 0,
-      e.sgst || 0,
-      e.grandTotal || 0,
+      Number(e.taxableAmount || e.amount || 0).toFixed(2),
+      Number(e.cgst || 0).toFixed(2),
+      Number(e.sgst || 0).toFixed(2),
+      Number(e.grandTotal || e.amount || 0).toFixed(2),
       `"${(e.narration || "").replace(/"/g, '""')}"`,
       e.pushedToTally ? "Yes" : "No"
     ]);
@@ -355,7 +357,7 @@ export default function OtherExpensesModule({ activeClient = "The Marx Ventures"
 
       if (rawDate) {
         try {
-          const parts = rawDate.split(/[\/\-]/);
+          const parts = String(rawDate).split(/[\/\-]/);
           let dateObj = null;
           if (parts.length === 3) {
             if (parts[0].length === 4) {
@@ -371,7 +373,7 @@ export default function OtherExpensesModule({ activeClient = "The Marx Ventures"
           if (dateObj && !isNaN(dateObj.getTime())) {
             monthYear = dateObj.toLocaleString("en-US", { month: "long", year: "numeric" });
           }
-        } catch {
+        } catch (e) {
           monthYear = "Other / Undated";
         }
       }
@@ -385,13 +387,21 @@ export default function OtherExpensesModule({ activeClient = "The Marx Ventures"
       }
 
       groups[monthYear].expenses.push(exp);
-      groups[monthYear].totalAmount += parseFloat(exp.grandTotal || exp.taxableAmount || 0);
+      const val = parseFloat(exp.grandTotal || exp.taxableAmount || exp.amount || 0);
+      groups[monthYear].totalAmount += val;
     });
 
     return Object.values(groups);
   }, [pushedExpenses]);
 
-  const totalOverheads = [...expenses, ...pushedExpenses].reduce((acc, e) => acc + (parseFloat(e.taxableAmount) || 0), 0);
+  // Safe Total Turnover computation
+  const totalOverheads = useMemo(() => {
+    const all = [...expenses, ...pushedExpenses];
+    return all.reduce((acc, e) => {
+      const amt = parseFloat(e.taxableAmount || e.grandTotal || e.amount || 0);
+      return acc + (isNaN(amt) ? 0 : amt);
+    }, 0);
+  }, [expenses, pushedExpenses]);
 
   return (
     <div className="flex-1 flex flex-col h-full bg-[#F8FAFC] overflow-hidden">
@@ -420,7 +430,7 @@ export default function OtherExpensesModule({ activeClient = "The Marx Ventures"
           <div className="border-l border-slate-200 pl-3 text-right">
             <span className="text-[10px] font-bold text-slate-400 uppercase">Total Overheads</span>
             <p className="text-sm font-black font-mono text-slate-900">
-              ₹{totalOverheads.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+              ₹{Number(totalOverheads || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
             </p>
           </div>
         </div>
@@ -508,10 +518,10 @@ export default function OtherExpensesModule({ activeClient = "The Marx Ventures"
                     className="w-full text-xs font-bold border border-slate-300 rounded-lg p-2.5 bg-white text-slate-900"
                     required
                   >
-                    <option value="" disabled>Select from Client COA...</option>
+                    <option value="">-- Choose Account from COA --</option>
                     {allLedgers.map((l) => (
-                      <option key={l.id} value={l.name}>
-                        {l.name} [{l.category}]
+                      <option key={l.id || l.name} value={l.name}>
+                        {l.name} [{l.category || "General"}]
                       </option>
                     ))}
                   </select>
@@ -528,10 +538,10 @@ export default function OtherExpensesModule({ activeClient = "The Marx Ventures"
                     className="w-full text-xs font-bold border border-slate-300 rounded-lg p-2.5 bg-white text-slate-900"
                     required
                   >
-                    <option value="" disabled>Select from Client COA...</option>
+                    <option value="">-- Choose Account from COA --</option>
                     {allLedgers.map((l) => (
-                      <option key={l.id} value={l.name}>
-                        {l.name} [{l.category}]
+                      <option key={l.id || l.name} value={l.name}>
+                        {l.name} [{l.category || "General"}]
                       </option>
                     ))}
                   </select>
@@ -623,15 +633,15 @@ export default function OtherExpensesModule({ activeClient = "The Marx Ventures"
                   <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
                     {expenses.map((exp) => (
                       <tr key={exp.id} className="hover:bg-slate-50/70 transition">
-                        <td className="py-3 px-4 font-mono">{exp.voucherDate}</td>
+                        <td className="py-3 px-4 font-mono">{exp.voucherDate || exp.date}</td>
                         <td className="py-3 px-4 font-bold text-slate-900">{exp.expenseLedger}</td>
                         <td className="py-3 px-4 text-slate-600">{exp.creditLedger}</td>
                         <td className="py-3 px-4 font-medium text-slate-500">{exp.group}</td>
                         <td className="py-3 px-4 text-right font-mono font-semibold">
-                          ₹{exp.taxableAmount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                          ₹{Number(exp.taxableAmount || exp.amount || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                         </td>
                         <td className="py-3 px-4 text-right font-mono font-black text-slate-900">
-                          ₹{exp.grandTotal.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                          ₹{Number(exp.grandTotal || exp.amount || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                         </td>
                         <td className="py-3 px-4 text-center">
                           <div className="inline-flex items-center gap-2">
@@ -703,7 +713,7 @@ export default function OtherExpensesModule({ activeClient = "The Marx Ventures"
                         <div className="text-right">
                           <span className="text-[10px] uppercase font-bold text-slate-400">Total Monthly Cost</span>
                           <p className="text-sm font-black font-mono text-slate-900">
-                            ₹{group.totalAmount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                            ₹{Number(group.totalAmount || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                           </p>
                         </div>
                         <div className="p-1 rounded bg-white border border-slate-200 text-slate-500">
@@ -730,7 +740,7 @@ export default function OtherExpensesModule({ activeClient = "The Marx Ventures"
                           {group.expenses.map((exp, idx) => (
                             <tr key={exp.id || idx} className="hover:bg-slate-50/60 transition">
                               <td className="px-6 py-3.5 font-mono text-slate-900 font-bold">
-                                {exp.voucherDate}
+                                {exp.voucherDate || exp.date}
                               </td>
                               <td className="px-6 py-3.5 font-semibold text-slate-900">
                                 {exp.expenseLedger}
@@ -745,7 +755,7 @@ export default function OtherExpensesModule({ activeClient = "The Marx Ventures"
                                 {exp.pushed_at || "Recent"}
                               </td>
                               <td className="px-6 py-3.5 font-mono font-bold text-slate-800 text-right">
-                                ₹{(parseFloat(exp.grandTotal || exp.taxableAmount) || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                                ₹{Number(exp.grandTotal || exp.taxableAmount || exp.amount || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                               </td>
                               <td className="px-6 py-3.5 text-right">
                                 <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded">
