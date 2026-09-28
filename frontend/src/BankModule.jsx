@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import {
   Upload,
   Download,
@@ -10,7 +10,11 @@ import {
   Trash2,
   Sparkles,
   ArrowDownLeft,
-  ArrowUpRight
+  ArrowUpRight,
+  Folder,
+  FolderOpen,
+  ChevronDown,
+  ChevronRight
 } from "lucide-react";
 
 const DEFAULT_BANK_LEDGERS = [
@@ -82,6 +86,38 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
     }
   });
 
+  // Client-Scoped Dynamic Chart of Accounts
+  const clientCoa = useMemo(() => {
+    try {
+      const saved = localStorage.getItem(`c4_coa_${activeClient}`);
+      if (saved && JSON.parse(saved).length > 0) {
+        return JSON.parse(saved);
+      }
+      const profiles = JSON.parse(localStorage.getItem("c4_client_profiles") || "{}");
+      for (const clientName of Object.keys(profiles)) {
+        const altCoa = localStorage.getItem(`c4_coa_${clientName}`);
+        if (altCoa && JSON.parse(altCoa).length > 0) {
+          return JSON.parse(altCoa);
+        }
+      }
+      return [];
+    } catch {
+      return [];
+    }
+  }, [activeClient]);
+
+  // Group ledgers by Category for select dropdown
+  const groupedLedgers = useMemo(() => {
+    if (!clientCoa || clientCoa.length === 0) return null;
+    const groups = {};
+    clientCoa.forEach((l) => {
+      const cat = l.category || "General Accounts";
+      if (!groups[cat]) groups[cat] = [];
+      groups[cat].push(l.name);
+    });
+    return groups;
+  }, [clientCoa]);
+
   useEffect(() => {
     localStorage.setItem(`c4_bank_transactions_${activeClient}`, JSON.stringify(transactions));
   }, [transactions, activeClient]);
@@ -101,11 +137,19 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
   const [isUploading, setIsUploading] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [notification, setNotification] = useState(null);
+  const [expandedFolders, setExpandedFolders] = useState({});
   const fileInputRef = useRef(null);
 
   const notify = (msg, type = "info") => {
     setNotification({ msg, type });
     setTimeout(() => setNotification(null), 4000);
+  };
+
+  const toggleFolder = (folderKey) => {
+    setExpandedFolders((prev) => ({
+      ...prev,
+      [folderKey]: !prev[folderKey]
+    }));
   };
 
   const findMatchingLedger = (narration) => {
@@ -135,6 +179,43 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
     link.click();
     document.body.removeChild(link);
     notify("Template downloaded successfully!", "success");
+  };
+
+  // 1. EXCEL DOWNLOAD OPTION FOR ALL APPROVED TRANSACTIONS
+  const handleDownloadApprovedExcel = () => {
+    if (approvedTransactions.length === 0) {
+      notify("No approved transactions available to export.", "error");
+      return;
+    }
+
+    const headers = [
+      "Date",
+      "Type",
+      "Narration / Description",
+      "Reference No",
+      "Allocated Ledger (COA)",
+      "Amount (₹)",
+      "Approved At"
+    ];
+
+    const rows = approvedTransactions.map((tx) => [
+      `"${tx.date || ""}"`,
+      `"${tx.type || ""}"`,
+      `"${(tx.narration || "").replace(/"/g, '""')}"`,
+      `"${tx.refNo || "-"}"`,
+      `"${(tx.allocatedLedger || "").replace(/"/g, '""')}"`,
+      Number(tx.amount || 0).toFixed(2),
+      `"${tx.approvedAt || ""}"`
+    ]);
+
+    const csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows.map((r) => r.join(","))].join("\n");
+    const link = document.createElement("a");
+    link.href = encodeURI(csvContent);
+    link.download = `Approved_Bank_Transactions_${activeClient.replace(/\s+/g, "_")}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    notify(`Exported ${approvedTransactions.length} approved transactions to CSV!`, "success");
   };
 
   const handleFileUpload = async (e) => {
@@ -250,11 +331,9 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
     }
   };
 
-  // 1. AUTO-APPROVE ON LEDGER SELECTION
   const handleLedgerSelectAndAutoApprove = (tx, newLedger) => {
     if (!newLedger) return;
 
-    // Learn keyword pattern from narration
     if (tx.narration && tx.narration.trim().length > 3) {
       const cleanPattern = tx.narration.trim().split(" ")[0].toLowerCase();
       if (cleanPattern.length >= 3) {
@@ -265,10 +344,8 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
       }
     }
 
-    // Immediately remove from Needs Review
     setTransactions((prev) => prev.filter((t) => t.id !== tx.id));
 
-    // Shift to Approved queue
     const approvedTx = {
       ...tx,
       allocatedLedger: newLedger,
@@ -280,14 +357,12 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
     notify(`Assigned "${newLedger}" & auto-approved!`, "success");
   };
 
-  // Manual Approve Single
   const handleApproveSingle = (tx) => {
     setTransactions((prev) => prev.filter((t) => t.id !== tx.id));
     setApprovedTransactions((prev) => [{ ...tx, approvedAt: new Date().toLocaleString() }, ...prev]);
     notify("Transaction approved & moved to Approved queue!", "success");
   };
 
-  // Approve All
   const handleApproveAll = () => {
     if (transactions.length === 0) return;
     const toApprove = transactions.map((t) => ({ ...t, approvedAt: new Date().toLocaleString() }));
@@ -297,7 +372,6 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
     notify(`Approved all ${toApprove.length} transactions!`, "success");
   };
 
-  // 2. DISCARD ALL TRANSACTIONS (FOR CURRENT ACTIVE SUB-TAB)
   const handleDiscardAll = () => {
     if (bankSubTab === "needs_review") {
       if (transactions.length === 0) return;
@@ -312,19 +386,16 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
     }
   };
 
-  // 3. DELETE SINGLE APPROVED TRANSACTION
   const handleDeleteApproved = (txId) => {
     setApprovedTransactions((prev) => prev.filter((t) => t.id !== txId));
     notify("Transaction removed from Approved queue.", "info");
   };
 
-  // Delete Single Needs Review Transaction
   const handleDeleteNeedsReview = (txId) => {
     setTransactions((prev) => prev.filter((t) => t.id !== txId));
     notify("Transaction dismissed.", "info");
   };
 
-  // Push single voucher to Tally
   const pushVoucherToTallyXml = async (tx) => {
     const tallyDate = (tx.date || "").replace(/[^0-9]/g, "");
     const isReceipt = tx.type === "Receipt";
@@ -343,7 +414,8 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
             <DATE>${tallyDate || "20260901"}</DATE>
             <VOUCHERTYPENAME>${isReceipt ? "Receipt" : "Payment"}</VOUCHERTYPENAME>
             <REFERENCE>${tx.refNo !== "-" ? tx.refNo : tx.id}</REFERENCE>
-            <NARRATION>${tx.narration} [Synced via Compliance4]</NARRATION>
+            <PARTYLEDGERNAME>${tx.allocatedLedger}</PARTYLEDGERNAME>
+            <NARRATION>${(tx.narration || "").replace(/&/g, "&amp;")} [Synced via Compliance4]</NARRATION>
             <ALLLEDGERENTRIES.LIST>
               <LEDGERNAME>${tx.allocatedLedger}</LEDGERNAME>
               <ISDEEMEDPOSITIVE>${isReceipt ? "No" : "Yes"}</ISDEEMEDPOSITIVE>
@@ -398,6 +470,51 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
     notify(`Batch pushed ${toPush.length} transactions directly to Tally Prime!`, "success");
   };
 
+  // 3. GROUP PUSHED TRANSACTIONS MONTH-WISE BASED ON TRANSACTION DATE
+  const groupedPushedTransactions = useMemo(() => {
+    const groups = {};
+    pushedTransactions.forEach((tx) => {
+      const rawDate = tx.date;
+      let monthYear = "Other / Undated";
+
+      if (rawDate) {
+        try {
+          const parts = String(rawDate).split(/[\/\-]/);
+          let dateObj = null;
+          if (parts.length === 3) {
+            if (parts[0].length === 4) {
+              dateObj = new Date(parts[0], parseInt(parts[1]) - 1, parts[2]);
+            } else {
+              const yr = parts[2].length === 2 ? `20${parts[2]}` : parts[2];
+              dateObj = new Date(yr, parseInt(parts[1]) - 1, parts[0]);
+            }
+          } else {
+            dateObj = new Date(rawDate);
+          }
+
+          if (dateObj && !isNaN(dateObj.getTime())) {
+            monthYear = dateObj.toLocaleString("en-US", { month: "long", year: "numeric" });
+          }
+        } catch (e) {
+          monthYear = "Other / Undated";
+        }
+      }
+
+      if (!groups[monthYear]) {
+        groups[monthYear] = {
+          monthLabel: monthYear,
+          transactions: [],
+          totalAmount: 0
+        };
+      }
+
+      groups[monthYear].transactions.push(tx);
+      groups[monthYear].totalAmount += parseFloat(tx.amount || 0);
+    });
+
+    return Object.values(groups);
+  }, [pushedTransactions]);
+
   const displayedList =
     bankSubTab === "needs_review"
       ? transactions
@@ -424,6 +541,17 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
 
         {/* ACTIONS */}
         <div className="flex items-center gap-3">
+          {/* EXCEL DOWNLOAD FOR ALL APPROVED TRANSACTIONS */}
+          {approvedTransactions.length > 0 && (
+            <button
+              onClick={handleDownloadApprovedExcel}
+              className="flex items-center gap-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 text-xs font-semibold px-3 py-2 rounded-lg transition"
+              title="Download CSV of all approved transactions"
+            >
+              <Download className="w-3.5 h-3.5" /> Export Approved (Excel)
+            </button>
+          )}
+
           <button
             onClick={handleDownloadTemplate}
             className="flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold px-3.5 py-2 rounded-lg transition"
@@ -556,140 +684,266 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
 
       {/* TABLE VIEW */}
       <div className="flex-1 p-8 overflow-y-auto">
-        {displayedList.length === 0 ? (
-          <div className="bg-white rounded-xl border border-slate-200 p-16 flex flex-col items-center justify-center text-center shadow-sm">
-            <FileSpreadsheet className="w-12 h-12 text-slate-300 mb-3" />
-            <p className="text-sm font-semibold text-slate-700">
-              No transactions in {bankSubTab === "needs_review" ? "Needs Review" : bankSubTab === "approved" ? "Approved" : "Pushed"}
-            </p>
-            <p className="text-xs text-slate-400 mt-1 max-w-sm">
-              Upload bank statements in <strong>Excel (.xlsx, .xls)</strong> or <strong>CSV</strong> format to extract and auto-classify transactions.
-            </p>
-          </div>
-        ) : (
-          <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
-            <table className="w-full text-left text-xs">
-              <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 font-semibold uppercase text-[10px]">
-                <tr>
-                  <th className="py-3 px-4">Date</th>
-                  <th className="py-3 px-4">Type</th>
-                  <th className="py-3 px-4">Narration / Description</th>
-                  <th className="py-3 px-4">Ledger Allocation</th>
-                  <th className="py-3 px-4 text-right">Amount (₹)</th>
-                  <th className="py-3 px-4 text-center">Action</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
-                {displayedList.map((tx) => (
-                  <tr key={tx.id} className="hover:bg-slate-50/70 transition">
-                    <td className="py-3 px-4 whitespace-nowrap text-slate-500 font-mono">
-                      {tx.date}
-                    </td>
+        {/* TABS 1 & 2: NEEDS REVIEW & APPROVED */}
+        {bankSubTab !== "pushed" && (
+          <>
+            {displayedList.length === 0 ? (
+              <div className="bg-white rounded-xl border border-slate-200 p-16 flex flex-col items-center justify-center text-center shadow-sm">
+                <FileSpreadsheet className="w-12 h-12 text-slate-300 mb-3" />
+                <p className="text-sm font-semibold text-slate-700">
+                  No transactions in {bankSubTab === "needs_review" ? "Needs Review" : "Approved"}
+                </p>
+                <p className="text-xs text-slate-400 mt-1 max-w-sm">
+                  Upload bank statements in <strong>Excel (.xlsx, .xls)</strong> or <strong>CSV</strong> format to extract and auto-classify transactions.
+                </p>
+              </div>
+            ) : (
+              <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 font-semibold uppercase text-[10px]">
+                    <tr>
+                      <th className="py-3 px-4">Date</th>
+                      <th className="py-3 px-4">Type</th>
+                      <th className="py-3 px-4">Narration / Description</th>
+                      <th className="py-3 px-4">Ledger Allocation</th>
+                      <th className="py-3 px-4 text-right">Amount (₹)</th>
+                      <th className="py-3 px-4 text-center">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
+                    {displayedList.map((tx) => (
+                      <tr key={tx.id} className="hover:bg-slate-50/70 transition">
+                        <td className="py-3 px-4 whitespace-nowrap text-slate-500 font-mono">
+                          {tx.date}
+                        </td>
 
-                    <td className="py-3 px-4 whitespace-nowrap">
-                      {tx.type === "Receipt" ? (
-                        <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
-                          <ArrowDownLeft className="w-3 h-3 text-emerald-600" /> Receipt
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 text-[11px] font-bold text-rose-700 bg-rose-50 px-2 py-0.5 rounded border border-rose-200">
-                          <ArrowUpRight className="w-3 h-3 text-rose-600" /> Payment
-                        </span>
-                      )}
-                    </td>
-
-                    <td className="py-3 px-4 max-w-md">
-                      <p className="font-semibold text-slate-900 leading-tight truncate">{tx.narration}</p>
-                      <p className="font-mono text-[10px] text-slate-400 mt-0.5">Ref: {tx.refNo}</p>
-                    </td>
-
-                    <td className="py-3 px-4">
-                      {bankSubTab === "needs_review" ? (
-                        <div className="flex items-center gap-1.5">
-                          {/* AUTO-TRIGGER ON USER SELECTION */}
-                          <select
-                            defaultValue=""
-                            onChange={(e) => {
-                              if (e.target.value) {
-                                handleLedgerSelectAndAutoApprove(tx, e.target.value);
-                              }
-                            }}
-                            className="bg-white border border-slate-300 hover:border-slate-400 rounded px-2.5 py-1 text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-slate-900 transition max-w-xs text-slate-800"
-                          >
-                            <option value="" disabled>
-                              Select Ledger to Approve →
-                            </option>
-                            {DEFAULT_BANK_LEDGERS.map((opt) => (
-                              <option key={opt} value={opt}>
-                                {opt}
-                              </option>
-                            ))}
-                          </select>
-                          {tx.isAutoMatched && (
-                            <span title={`Auto-suggested: ${tx.allocatedLedger}`} className="text-indigo-600 shrink-0">
-                              <Sparkles className="w-3.5 h-3.5" />
+                        <td className="py-3 px-4 whitespace-nowrap">
+                          {tx.type === "Receipt" ? (
+                            <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                              <ArrowDownLeft className="w-3 h-3 text-emerald-600" /> Receipt
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 text-[11px] font-bold text-rose-700 bg-rose-50 px-2 py-0.5 rounded border border-rose-200">
+                              <ArrowUpRight className="w-3 h-3 text-rose-600" /> Payment
                             </span>
                           )}
+                        </td>
+
+                        <td className="py-3 px-4 max-w-md">
+                          <p className="font-semibold text-slate-900 leading-tight truncate">{tx.narration}</p>
+                          <p className="font-mono text-[10px] text-slate-400 mt-0.5">Ref: {tx.refNo}</p>
+                        </td>
+
+                        <td className="py-3 px-4">
+                          {bankSubTab === "needs_review" ? (
+                            <div className="flex items-center gap-1.5">
+                              {/* 2. DYNAMIC LEDGER SELECTION OPTION FROM COA OF RESPECTIVE CLIENT */}
+                              <select
+                                defaultValue=""
+                                onChange={(e) => {
+                                  if (e.target.value) {
+                                    handleLedgerSelectAndAutoApprove(tx, e.target.value);
+                                  }
+                                }}
+                                className="bg-white border border-slate-300 hover:border-slate-400 rounded px-2.5 py-1 text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-slate-900 transition max-w-xs text-slate-800"
+                              >
+                                <option value="" disabled>
+                                  Select Ledger to Approve →
+                                </option>
+
+                                {groupedLedgers ? (
+                                  Object.entries(groupedLedgers).map(([catName, ledgers]) => (
+                                    <optgroup key={catName} label={`📂 ${catName}`}>
+                                      {ledgers.map((opt) => (
+                                        <option key={opt} value={opt}>
+                                          {opt}
+                                        </option>
+                                      ))}
+                                    </optgroup>
+                                  ))
+                                ) : (
+                                  DEFAULT_BANK_LEDGERS.map((opt) => (
+                                    <option key={opt} value={opt}>
+                                      {opt}
+                                    </option>
+                                  ))
+                                )}
+                              </select>
+                              {tx.isAutoMatched && (
+                                <span title={`Auto-suggested: ${tx.allocatedLedger}`} className="text-indigo-600 shrink-0">
+                                  <Sparkles className="w-3.5 h-3.5" />
+                                </span>
+                              )}
+                            </div>
+                          ) : (
+                            <span className="bg-slate-100 text-slate-800 px-2.5 py-1 rounded text-xs font-semibold">
+                              {tx.allocatedLedger}
+                            </span>
+                          )}
+                        </td>
+
+                        <td className="py-3 px-4 text-right whitespace-nowrap font-mono font-bold text-slate-900">
+                          ₹{Number(tx.amount || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                        </td>
+
+                        <td className="py-3 px-4 text-center whitespace-nowrap">
+                          {bankSubTab === "needs_review" && (
+                            <div className="inline-flex items-center gap-1.5">
+                              <button
+                                onClick={() => handleApproveSingle(tx)}
+                                className="px-3 py-1 bg-slate-900 hover:bg-slate-800 text-white rounded font-semibold text-[11px] shadow-sm transition"
+                              >
+                                Approve
+                              </button>
+                              <button
+                                onClick={() => handleDeleteNeedsReview(tx.id)}
+                                className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded transition"
+                                title="Dismiss Transaction"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          )}
+
+                          {bankSubTab === "approved" && (
+                            <div className="inline-flex items-center gap-1.5">
+                              <button
+                                onClick={() => handlePushSingle(tx)}
+                                className="inline-flex items-center gap-1 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-[11px] px-3 py-1 rounded shadow-sm transition"
+                              >
+                                <Send className="w-3 h-3" /> Push
+                              </button>
+                              <button
+                                onClick={() => handleDeleteApproved(tx.id)}
+                                className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded transition"
+                                title="Remove from Approved"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </>
+        )}
+
+        {/* 3. TAB 3: PUSHED TO TALLY — ORGANIZED IN MONTH-WISE FOLDERS */}
+        {bankSubTab === "pushed" && (
+          <div className="space-y-4">
+            {groupedPushedTransactions.length === 0 ? (
+              <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-16 text-center">
+                <FileSpreadsheet className="w-8 h-8 text-blue-300 mx-auto mb-2" />
+                <p className="text-sm font-semibold text-slate-700">No transactions pushed to Tally yet</p>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Transactions pushed to Tally Prime will be organized into monthly folders here.
+                </p>
+              </div>
+            ) : (
+              groupedPushedTransactions.map((group) => {
+                const isExpanded = expandedFolders[group.monthLabel] !== false; // Default expanded
+
+                return (
+                  <div key={group.monthLabel} className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+                    {/* FOLDER BANNER HEADER */}
+                    <div
+                      onClick={() => toggleFolder(group.monthLabel)}
+                      className="px-6 py-4 bg-slate-50/80 hover:bg-slate-100/80 border-b border-slate-200 flex items-center justify-between cursor-pointer transition select-none"
+                    >
+                      <div className="flex items-center gap-3">
+                        {isExpanded ? (
+                          <FolderOpen className="w-5 h-5 text-indigo-600" />
+                        ) : (
+                          <Folder className="w-5 h-5 text-slate-400" />
+                        )}
+                        <div>
+                          <h4 className="text-xs font-bold text-slate-900 tracking-wide uppercase flex items-center gap-2">
+                            {group.monthLabel}
+                            <span className="text-[10px] bg-indigo-50 text-indigo-700 border border-indigo-200 px-2 py-0.5 rounded-full font-mono font-bold lowercase">
+                              {group.transactions.length} entries
+                            </span>
+                          </h4>
+                          <p className="text-[11px] text-slate-500 mt-0.5">
+                            Bank activity for {group.monthLabel}
+                          </p>
                         </div>
-                      ) : (
-                        <span className="bg-slate-100 text-slate-800 px-2.5 py-1 rounded text-xs font-semibold">
-                          {tx.allocatedLedger}
-                        </span>
-                      )}
-                    </td>
+                      </div>
 
-                    <td className="py-3 px-4 text-right whitespace-nowrap font-mono font-bold text-slate-900">
-                      ₹{Number(tx.amount || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                    </td>
-
-                    <td className="py-3 px-4 text-center whitespace-nowrap">
-                      {bankSubTab === "needs_review" && (
-                        <div className="inline-flex items-center gap-1.5">
-                          <button
-                            onClick={() => handleApproveSingle(tx)}
-                            className="px-3 py-1 bg-slate-900 hover:bg-slate-800 text-white rounded font-semibold text-[11px] shadow-sm transition"
-                          >
-                            Approve
-                          </button>
-                          <button
-                            onClick={() => handleDeleteNeedsReview(tx.id)}
-                            className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded transition"
-                            title="Dismiss Transaction"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
+                      <div className="flex items-center gap-4">
+                        <div className="text-right">
+                          <span className="text-[10px] uppercase font-bold text-slate-400">Total Volume</span>
+                          <p className="text-sm font-black font-mono text-slate-900">
+                            ₹{Number(group.totalAmount || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                          </p>
                         </div>
-                      )}
-
-                      {bankSubTab === "approved" && (
-                        <div className="inline-flex items-center gap-1.5">
-                          <button
-                            onClick={() => handlePushSingle(tx)}
-                            className="inline-flex items-center gap-1 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-[11px] px-3 py-1 rounded shadow-sm transition"
-                          >
-                            <Send className="w-3 h-3" /> Push
-                          </button>
-                          {/* DELETE SINGLE APPROVED TRANSACTION */}
-                          <button
-                            onClick={() => handleDeleteApproved(tx.id)}
-                            className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded transition"
-                            title="Remove from Approved"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
+                        <div className="p-1 rounded bg-white border border-slate-200 text-slate-500">
+                          {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
                         </div>
-                      )}
+                      </div>
+                    </div>
 
-                      {bankSubTab === "pushed" && (
-                        <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">
-                          In Tally
-                        </span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                    {/* FOLDER CONTENTS */}
+                    {isExpanded && (
+                      <table className="w-full text-left text-xs text-slate-600">
+                        <thead className="bg-white border-b border-slate-200 uppercase font-semibold text-slate-400 text-[10px]">
+                          <tr>
+                            <th className="px-6 py-3">Date</th>
+                            <th className="px-6 py-3">Type</th>
+                            <th className="px-6 py-3">Narration / Description</th>
+                            <th className="px-6 py-3">Allocated Ledger (COA)</th>
+                            <th className="px-6 py-3">Pushed At</th>
+                            <th className="px-6 py-3 text-right">Amount (₹)</th>
+                            <th className="px-6 py-3 text-right">Status</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {group.transactions.map((tx, idx) => (
+                            <tr key={tx.id || idx} className="hover:bg-slate-50/60 transition">
+                              <td className="px-6 py-3.5 font-mono text-slate-900 font-bold whitespace-nowrap">
+                                {tx.date}
+                              </td>
+                              <td className="px-6 py-3.5 whitespace-nowrap">
+                                {tx.type === "Receipt" ? (
+                                  <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                                    <ArrowDownLeft className="w-3 h-3 text-emerald-600" /> Receipt
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 text-[11px] font-bold text-rose-700 bg-rose-50 px-2 py-0.5 rounded border border-rose-200">
+                                    <ArrowUpRight className="w-3 h-3 text-rose-600" /> Payment
+                                  </span>
+                                )}
+                              </td>
+                              <td className="px-6 py-3.5 text-slate-800 max-w-xs truncate" title={tx.narration}>
+                                <p className="font-semibold text-slate-900 leading-tight truncate">{tx.narration}</p>
+                                <p className="font-mono text-[10px] text-slate-400 mt-0.5">Ref: {tx.refNo}</p>
+                              </td>
+                              <td className="px-6 py-3.5 font-semibold text-indigo-900">
+                                {tx.allocatedLedger}
+                              </td>
+                              <td className="px-6 py-3.5 text-slate-400 text-[11px]">
+                                {tx.pushedAt || "Recent"}
+                              </td>
+                              <td className="px-6 py-3.5 font-mono font-bold text-slate-800 text-right">
+                                ₹{Number(tx.amount || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                              </td>
+                              <td className="px-6 py-3.5 text-right">
+                                <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded">
+                                  <Check className="w-3 h-3" /> In Tally
+                                </span>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                  </div>
+                );
+              })
+            )}
           </div>
         )}
       </div>
