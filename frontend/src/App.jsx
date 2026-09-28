@@ -85,7 +85,7 @@ export default function App() {
 
   return (
     <div className="flex h-screen w-screen bg-[#F8FAFC] overflow-hidden font-sans">
-      {/* SIDEBAR NAVIGATION (FIXED & ALWAYS VISIBLE) */}
+      {/* SIDEBAR NAVIGATION */}
       <aside className="w-64 bg-white border-r border-slate-200 flex flex-col justify-between shrink-0 shadow-xs z-30">
         <div>
           {/* BRAND LOGO */}
@@ -188,7 +188,6 @@ export default function App() {
               </button>
             )}
 
-            {/* SETTINGS IS ACCESSIBLE TO SUPER ADMIN */}
             {currentUser.role === "admin" && (
               <button
                 onClick={() => setActiveTab("settings")}
