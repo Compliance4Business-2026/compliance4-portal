@@ -10,6 +10,15 @@ import {
 
 export default function DashboardModule({ activeClient = "Pansuria Confectionery & Food" }) {
   // STRICT CLIENT DATA EXTRACTION (ONLY from activeClient)
+  const clientCoa = useMemo(() => {
+    try {
+      const data = localStorage.getItem(`c4_coa_${activeClient}`);
+      return data ? JSON.parse(data) : [];
+    } catch {
+      return [];
+    }
+  }, [activeClient]);
+
   const normalSales = useMemo(() => {
     try {
       const data = localStorage.getItem(`c4_normal_sales_invoices_${activeClient}`);
@@ -85,6 +94,7 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
   const allPurchases = useMemo(() => [...approvedBills, ...pushedBills], [approvedBills, pushedBills]);
   const allOverheads = useMemo(() => [...unpushedExpenses, ...pushedExpenses], [unpushedExpenses, pushedExpenses]);
 
+  // Date parser
   const parseToDate = (raw) => {
     if (!raw) return null;
     const s = String(raw).trim();
@@ -101,6 +111,104 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
     return isNaN(d.getTime()) ? null : d;
   };
 
+  // CHECK COA EXPLICIT COLUMN: cogsClassification === "COGS"
+  const isExplicitCogsLedger = (ledgerName, coaList) => {
+    if (!ledgerName) return true;
+    const clean = ledgerName.trim().toLowerCase();
+    const matched = coaList.find((l) => l.name.trim().toLowerCase() === clean);
+
+    if (matched) {
+      // Direct user-chosen flag from COA
+      if (matched.cogsClassification === "COGS") return true;
+      if (matched.cogsClassification === "Indirect") return false;
+
+      // Fallback if not yet explicitly saved on this ledger
+      const cat = (matched.category || "").toLowerCase();
+      if (
+        cat.includes("cogs") ||
+        cat.includes("cost of goods") ||
+        cat.includes("direct") ||
+        cat.includes("raw material")
+      ) {
+        return true;
+      }
+      return false;
+    }
+
+    // Default heuristics if ledger is not found in COA
+    const isIndirect = 
+      clean.includes("stationery") ||
+      clean.includes("marketing") ||
+      clean.includes("advertisement") ||
+      clean.includes("printing") ||
+      clean.includes("repair") ||
+      clean.includes("software") ||
+      clean.includes("audit") ||
+      clean.includes("legal") ||
+      clean.includes("rent");
+
+    return !isIndirect;
+  };
+
+  const getCategoryForLedger = (ledgerName, coaList) => {
+    if (!ledgerName) return "Administrative & General Expenses";
+    const clean = ledgerName.trim().toLowerCase();
+    const matched = coaList.find((l) => l.name.trim().toLowerCase() === clean);
+    if (matched && matched.category) {
+      return matched.category;
+    }
+    if (clean.includes("marketing") || clean.includes("advertisement")) {
+      return "Selling & Distribution Expenses";
+    }
+    if (clean.includes("repair") || clean.includes("maintenance")) {
+      return "Repairs & Maintenance";
+    }
+    return "Administrative & General Expenses";
+  };
+
+  // P&L SCHEDULE CLASSIFICATION
+  const plBreakdown = useMemo(() => {
+    let directCogs = 0;
+    const indirectCategories = {};
+
+    // 1. Process Purchase Register line by line
+    allPurchases.forEach((bill) => {
+      const lines = bill.accounting_ledgers || bill.items || [];
+      if (lines.length > 0) {
+        lines.forEach((line) => {
+          const lName = line.ledger_name || line.ledger || "";
+          const amt = parseFloat(line.amount) || 0;
+
+          if (isExplicitCogsLedger(lName, clientCoa)) {
+            directCogs += amt;
+          } else {
+            const cat = getCategoryForLedger(lName, clientCoa);
+            indirectCategories[cat] = (indirectCategories[cat] || 0) + amt;
+          }
+        });
+      } else {
+        const bAmt = parseFloat(bill.taxableAmount) || 0;
+        directCogs += bAmt;
+      }
+    });
+
+    // 2. Process Other Expenses vouchers
+    allOverheads.forEach((exp) => {
+      const cat = exp.group || "Administrative & General Expenses";
+      const amt = parseFloat(exp.taxableAmount || exp.amount) || 0;
+      indirectCategories[cat] = (indirectCategories[cat] || 0) + amt;
+    });
+
+    const totalIndirect = Object.values(indirectCategories).reduce((acc, v) => acc + v, 0);
+
+    return {
+      directCogs,
+      indirectCategories,
+      totalIndirect
+    };
+  }, [allPurchases, allOverheads, clientCoa]);
+
+  // TOP 4 KPI CALCULATIONS
   const kpiData = useMemo(() => {
     const normalRev = normalSales.reduce((acc, inv) => acc + (parseFloat(inv.taxableAmount) || 0), 0);
     const posRev = posJournals.reduce((acc, jv) => acc + (parseFloat(jv.totalTaxable) || 0), 0);
@@ -110,10 +218,7 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
     const posGross = posJournals.reduce((acc, jv) => acc + (parseFloat(jv.totalDebits) || 0), 0);
     const totalGross = normalGross + posGross;
 
-    const cogsPurchases = allPurchases.reduce((acc, b) => acc + (parseFloat(b.taxableAmount) || 0), 0);
-    const indirectOverheads = allOverheads.reduce((acc, e) => acc + (parseFloat(e.taxableAmount || e.amount) || 0), 0);
-    const totalCost = cogsPurchases + indirectOverheads;
-
+    const totalCost = plBreakdown.directCogs + plBreakdown.totalIndirect;
     const netProfit = totalRevenue - totalCost;
     const netMargin = totalRevenue > 0 ? (netProfit / totalRevenue) * 100 : 0;
 
@@ -143,22 +248,11 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
       netMargin,
       accountsPayable,
       accountsReceivable,
-      cogsPurchases,
-      indirectOverheads,
       salesCount: normalSales.length + posJournals.length
     };
-  }, [normalSales, posJournals, allPurchases, allOverheads, bankTransactions, bankPushed]);
+  }, [normalSales, posJournals, allPurchases, allOverheads, bankTransactions, bankPushed, plBreakdown]);
 
-  const overheadsByCategory = useMemo(() => {
-    const groups = {};
-    allOverheads.forEach((e) => {
-      const cat = e.group || "Administrative & General Expenses";
-      const amt = parseFloat(e.taxableAmount || e.amount) || 0;
-      groups[cat] = (groups[cat] || 0) + amt;
-    });
-    return groups;
-  }, [allOverheads]);
-
+  // LAST 6 MONTHS TREND
   const last6MonthsData = useMemo(() => {
     const months = [];
     const now = new Date(2026, 8, 28);
@@ -260,15 +354,15 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
     );
   };
 
+  const grossProfit = kpiData.totalRevenue - plBreakdown.directCogs;
+  const grossMargin = kpiData.totalRevenue > 0 ? (grossProfit / kpiData.totalRevenue) * 100 : 0;
+
   return (
     <div className="flex-1 flex flex-col h-full bg-[#F8FAFC] overflow-y-auto p-6 font-sans">
       <div className="max-w-7xl mx-auto w-full flex flex-col gap-4">
         
-        {/* ========================================================= */}
-        {/* 1. TOP: 4 KPI CARDS                                      */}
-        {/* ========================================================= */}
+        {/* 1. TOP: 4 KPI CARDS */}
         <div className="grid grid-cols-4 gap-4 shrink-0">
-          {/* CARD 1: REVENUE FROM OPERATIONS */}
           <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm flex flex-col justify-between">
             <div className="flex items-center justify-between">
               <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
@@ -289,7 +383,6 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
             </div>
           </div>
 
-          {/* CARD 2: NET OPERATING PROFIT */}
           <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm flex flex-col justify-between">
             <div className="flex items-center justify-between">
               <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
@@ -310,7 +403,6 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
             </div>
           </div>
 
-          {/* CARD 3: ACCOUNTS PAYABLE */}
           <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm flex flex-col justify-between">
             <div className="flex items-center justify-between">
               <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
@@ -329,7 +421,6 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
             </div>
           </div>
 
-          {/* CARD 4: ACCOUNTS RECEIVABLE */}
           <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm flex flex-col justify-between">
             <div className="flex items-center justify-between">
               <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
@@ -351,9 +442,7 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
           </div>
         </div>
 
-        {/* ========================================================= */}
-        {/* 2. MIDDLE: PROFIT AND LOSS STATEMENT (COMPACT & CLEAN)   */}
-        {/* ========================================================= */}
+        {/* 2. MIDDLE: PROFIT AND LOSS STATEMENT */}
         <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden flex flex-col">
           <div className="px-6 py-3.5 border-b border-slate-200 bg-slate-50/70 flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -363,7 +452,7 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
               </h3>
             </div>
             <span className="text-[11px] text-slate-400 font-medium">
-              Grouped strictly by Client's Uploaded COA
+              Schedule III Classified by Client COA
             </span>
           </div>
 
@@ -384,42 +473,45 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
                 </td>
               </tr>
 
+              {/* DIRECT COGS PURCHASES ONLY */}
               <tr className="hover:bg-slate-50/50">
                 <td className="py-2 px-6 pl-9 text-slate-600">Less: Cost of Goods Sold / Purchases (COGS)</td>
-                <td className="py-2 px-6 font-mono text-slate-400 text-[11px]">Purchase Register</td>
+                <td className="py-2 px-6 font-mono text-slate-400 text-[11px]">COGS Tagged Purchases</td>
                 <td className="py-2 px-6 text-right font-mono text-rose-600">
-                  -₹{kpiData.cogsPurchases.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                  -₹{plBreakdown.directCogs.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                 </td>
               </tr>
 
+              {/* TRUE GROSS PROFIT */}
               <tr className="bg-slate-50/80 font-bold border-y border-slate-200">
                 <td className="py-2.5 px-6 text-slate-900 font-black">GROSS PROFIT (I – COGS)</td>
                 <td className="py-2.5 px-6 font-mono text-indigo-700 text-[11px]">
-                  {kpiData.totalRevenue > 0 ? (((kpiData.totalRevenue - kpiData.cogsPurchases) / kpiData.totalRevenue) * 100).toFixed(1) : 0}% GP
+                  {grossMargin.toFixed(1)}% GP
                 </td>
                 <td className="py-2.5 px-6 text-right font-mono font-black text-slate-900">
-                  ₹{(kpiData.totalRevenue - kpiData.cogsPurchases).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                  ₹{grossProfit.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                 </td>
               </tr>
 
               <tr className="bg-white">
-                <td colSpan="3" className="py-2 px-6 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                <td colSpan="3" className="py-1.5 px-6 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
                   II. Indirect Operating Expenses (Client P&L Heads)
                 </td>
               </tr>
 
-              {Object.keys(overheadsByCategory).length === 0 ? (
+              {/* DYNAMIC COMBINED OVERHEADS */}
+              {Object.keys(plBreakdown.indirectCategories).length === 0 ? (
                 <tr>
-                  <td className="py-2 px-6 pl-9 text-slate-400 italic">No indirect overheads recorded</td>
-                  <td className="py-2 px-6 font-mono text-slate-400 text-[11px]">Uploaded COA</td>
-                  <td className="py-2 px-6 text-right font-mono text-slate-400">₹0.00</td>
+                  <td className="py-1.5 px-6 pl-9 text-slate-400 italic">No indirect operating expenses recorded</td>
+                  <td className="py-1.5 px-6 font-mono text-slate-400 text-[11px]">Uploaded COA</td>
+                  <td className="py-1.5 px-6 text-right font-mono text-slate-400">₹0.00</td>
                 </tr>
               ) : (
-                Object.entries(overheadsByCategory).map(([cat, amt]) => (
+                Object.entries(plBreakdown.indirectCategories).map(([cat, amt]) => (
                   <tr key={cat} className="hover:bg-slate-50/50">
-                    <td className="py-2 px-6 pl-9 text-slate-700">{cat}</td>
-                    <td className="py-2 px-6 font-mono text-slate-400 text-[11px]">Uploaded COA</td>
-                    <td className="py-2 px-6 text-right font-mono text-rose-600">
+                    <td className="py-1.5 px-6 pl-9 text-slate-700">{cat}</td>
+                    <td className="py-1.5 px-6 font-mono text-slate-400 text-[11px]">P&L Indirect Overhead</td>
+                    <td className="py-1.5 px-6 text-right font-mono text-rose-600">
                       -₹{amt.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                     </td>
                   </tr>
@@ -427,10 +519,10 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
               )}
 
               <tr className="border-t border-slate-100 font-semibold text-slate-700">
-                <td className="py-2.5 px-6 text-slate-800">Total Indirect Expenses</td>
-                <td className="py-2.5 px-6 text-slate-400">-</td>
-                <td className="py-2.5 px-6 text-right font-mono text-rose-600 font-bold">
-                  -₹{kpiData.indirectOverheads.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                <td className="py-2 px-6 text-slate-800">Total Indirect Expenses</td>
+                <td className="py-2 px-6 text-slate-400">-</td>
+                <td className="py-2 px-6 text-right font-mono text-rose-600 font-bold">
+                  -₹{plBreakdown.totalIndirect.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                 </td>
               </tr>
             </tbody>
@@ -449,11 +541,8 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
           </div>
         </div>
 
-        {/* ========================================================= */}
-        {/* 3. BOTTOM: 3 EXPANDED LINE GRAPHS (LAST 6 MONTHS)         */}
-        {/* ========================================================= */}
+        {/* 3. BOTTOM: 3 EXPANDED LINE GRAPHS (LAST 6 MONTHS) */}
         <div className="grid grid-cols-3 gap-4 shrink-0 pb-2">
-          
           {/* GRAPH 1: SALES LINE GRAPH */}
           <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex flex-col justify-between">
             <div className="flex items-center justify-between pb-1 border-b border-slate-100">
@@ -504,7 +593,6 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
             </div>
             {renderLineChart(last6MonthsData, "netProfit", "#6366f1", "#6366f1")}
           </div>
-
         </div>
 
       </div>
