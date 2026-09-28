@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import {
   Upload,
   Download,
@@ -14,7 +14,9 @@ import {
   Folder,
   FolderOpen,
   ChevronDown,
-  ChevronRight
+  ChevronRight,
+  Edit2,
+  RotateCcw
 } from "lucide-react";
 
 const DEFAULT_BANK_LEDGERS = [
@@ -46,7 +48,7 @@ const loadSheetJS = () => {
   });
 };
 
-export default function BankModule({ activeClient = "Panasuria Confectionery" }) {
+export default function BankModule({ activeClient = "Panasuria Confectionery & Food" }) {
   const [bankSubTab, setBankSubTab] = useState("needs_review"); // 'needs_review' | 'approved' | 'pushed'
 
   // Client-scoped persistent state
@@ -138,11 +140,12 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
   const [isSyncing, setIsSyncing] = useState(false);
   const [notification, setNotification] = useState(null);
   const [expandedFolders, setExpandedFolders] = useState({});
+  const [editingApprovedId, setEditingApprovedId] = useState(null);
   const fileInputRef = useRef(null);
 
   const notify = (msg, type = "info") => {
     setNotification({ msg, type });
-    setTimeout(() => setNotification(null), 4000);
+    setTimeout(() => setNotification(null), 5000);
   };
 
   const toggleFolder = (folderKey) => {
@@ -181,7 +184,7 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
     notify("Template downloaded successfully!", "success");
   };
 
-  // 1. EXCEL DOWNLOAD OPTION FOR ALL APPROVED TRANSACTIONS
+  // EXCEL DOWNLOAD FOR ALL APPROVED TRANSACTIONS
   const handleDownloadApprovedExcel = () => {
     if (approvedTransactions.length === 0) {
       notify("No approved transactions available to export.", "error");
@@ -357,6 +360,23 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
     notify(`Assigned "${newLedger}" & auto-approved!`, "success");
   };
 
+  // 1. EDIT LEDGER IN APPROVED TRANSACTIONS TAB
+  const handleUpdateApprovedLedger = (txId, newLedger) => {
+    if (!newLedger) return;
+    setApprovedTransactions((prev) =>
+      prev.map((t) => (t.id === txId ? { ...t, allocatedLedger: newLedger } : t))
+    );
+    setEditingApprovedId(null);
+    notify(`Updated ledger to "${newLedger}"!`, "success");
+  };
+
+  // REVERT APPROVED TRANSACTION BACK TO NEEDS REVIEW
+  const handleRevertToReview = (tx) => {
+    setApprovedTransactions((prev) => prev.filter((t) => t.id !== tx.id));
+    setTransactions((prev) => [tx, ...prev]);
+    notify("Transaction reverted to Needs Review tab.", "info");
+  };
+
   const handleApproveSingle = (tx) => {
     setTransactions((prev) => prev.filter((t) => t.id !== tx.id));
     setApprovedTransactions((prev) => [{ ...tx, approvedAt: new Date().toLocaleString() }, ...prev]);
@@ -396,6 +416,7 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
     notify("Transaction dismissed.", "info");
   };
 
+  // 2. STRICT VERIFICATION FOR TALLY TRANSMISSION (NO BLIND SHIFTING)
   const pushVoucherToTallyXml = async (tx) => {
     const tallyDate = (tx.date || "").replace(/[^0-9]/g, "");
     const isReceipt = tx.type === "Receipt";
@@ -433,44 +454,74 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
   </BODY>
 </ENVELOPE>`;
 
-    try {
-      await fetch("http://localhost:9000", {
-        method: "POST",
-        headers: { "Content-Type": "text/xml;charset=utf-8" },
-        body: tallyXml
-      });
-    } catch (e) {
-      console.warn("Direct port 9000 dispatch:", e);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 2500);
+
+    const response = await fetch("http://localhost:9000", {
+      method: "POST",
+      headers: { "Content-Type": "text/xml;charset=utf-8" },
+      body: tallyXml,
+      signal: controller.signal
+    });
+
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      throw new Error(`Tally server responded with status: ${response.status}`);
     }
+
+    return await response.text();
   };
 
   const handlePushSingle = async (tx) => {
-    await pushVoucherToTallyXml(tx);
-    setApprovedTransactions((prev) => prev.filter((t) => t.id !== tx.id));
-    setPushedTransactions((prev) => [{ ...tx, pushedAt: new Date().toLocaleString() }, ...prev]);
-    notify(`Transaction #${tx.id} synced to Tally!`, "success");
+    try {
+      await pushVoucherToTallyXml(tx);
+      setApprovedTransactions((prev) => prev.filter((t) => t.id !== tx.id));
+      setPushedTransactions((prev) => [{ ...tx, pushedAt: new Date().toLocaleString() }, ...prev]);
+      notify(`Transaction #${tx.id} synced to Tally!`, "success");
+    } catch (err) {
+      notify(
+        "Could not connect to Tally Prime on Port 9000. Please ensure Tally Prime is open with XML/ODBC enabled.",
+        "error"
+      );
+    }
   };
 
   const handlePushAllApproved = async () => {
     if (approvedTransactions.length === 0) return;
     setIsSyncing(true);
+
+    let pushedCount = 0;
     const toPush = [...approvedTransactions];
+    const successfullyPushed = [];
 
     for (const tx of toPush) {
-      await pushVoucherToTallyXml(tx);
+      try {
+        await pushVoucherToTallyXml(tx);
+        successfullyPushed.push({ ...tx, pushedAt: new Date().toLocaleString() });
+        pushedCount++;
+      } catch (err) {
+        break; // Stop immediately if Tally port is unreachable
+      }
     }
 
-    setPushedTransactions((prev) => [
-      ...toPush.map((t) => ({ ...t, pushedAt: new Date().toLocaleString() })),
-      ...prev
-    ]);
-    setApprovedTransactions([]);
+    if (pushedCount > 0) {
+      const pushedIds = new Set(successfullyPushed.map((s) => s.id));
+      setApprovedTransactions((prev) => prev.filter((t) => !pushedIds.has(t.id)));
+      setPushedTransactions((prev) => [...successfullyPushed, ...prev]);
+      notify(`Pushed ${pushedCount} transactions to Tally Prime!`, "success");
+      setBankSubTab("pushed");
+    } else {
+      notify(
+        "Tally Prime is offline on Port 9000. No transactions were moved.",
+        "error"
+      );
+    }
+
     setIsSyncing(false);
-    setBankSubTab("pushed");
-    notify(`Batch pushed ${toPush.length} transactions directly to Tally Prime!`, "success");
   };
 
-  // 3. GROUP PUSHED TRANSACTIONS MONTH-WISE BASED ON TRANSACTION DATE
+  // Group pushed bank transactions month-wise
   const groupedPushedTransactions = useMemo(() => {
     const groups = {};
     pushedTransactions.forEach((tx) => {
@@ -495,7 +546,7 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
           if (dateObj && !isNaN(dateObj.getTime())) {
             monthYear = dateObj.toLocaleString("en-US", { month: "long", year: "numeric" });
           }
-        } catch (e) {
+        } catch {
           monthYear = "Other / Undated";
         }
       }
@@ -541,7 +592,6 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
 
         {/* ACTIONS */}
         <div className="flex items-center gap-3">
-          {/* EXCEL DOWNLOAD FOR ALL APPROVED TRANSACTIONS */}
           {approvedTransactions.length > 0 && (
             <button
               onClick={handleDownloadApprovedExcel}
@@ -734,10 +784,10 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
                           <p className="font-mono text-[10px] text-slate-400 mt-0.5">Ref: {tx.refNo}</p>
                         </td>
 
+                        {/* LEDGER ALLOCATION WITH INLINE EDIT FOR APPROVED TRANSACTIONS */}
                         <td className="py-3 px-4">
                           {bankSubTab === "needs_review" ? (
                             <div className="flex items-center gap-1.5">
-                              {/* 2. DYNAMIC LEDGER SELECTION OPTION FROM COA OF RESPECTIVE CLIENT */}
                               <select
                                 defaultValue=""
                                 onChange={(e) => {
@@ -750,7 +800,6 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
                                 <option value="" disabled>
                                   Select Ledger to Approve →
                                 </option>
-
                                 {groupedLedgers ? (
                                   Object.entries(groupedLedgers).map(([catName, ledgers]) => (
                                     <optgroup key={catName} label={`📂 ${catName}`}>
@@ -775,10 +824,54 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
                                 </span>
                               )}
                             </div>
+                          ) : editingApprovedId === tx.id ? (
+                            <div className="flex items-center gap-1.5">
+                              <select
+                                defaultValue={tx.allocatedLedger}
+                                onChange={(e) => handleUpdateApprovedLedger(tx.id, e.target.value)}
+                                className="bg-white border border-indigo-400 rounded px-2 py-1 text-xs font-bold text-indigo-900 focus:outline-none focus:ring-1 focus:ring-indigo-600"
+                              >
+                                <option value="" disabled>
+                                  Change Allocated Ledger...
+                                </option>
+                                {groupedLedgers ? (
+                                  Object.entries(groupedLedgers).map(([catName, ledgers]) => (
+                                    <optgroup key={catName} label={`📂 ${catName}`}>
+                                      {ledgers.map((opt) => (
+                                        <option key={opt} value={opt}>
+                                          {opt}
+                                        </option>
+                                      ))}
+                                    </optgroup>
+                                  ))
+                                ) : (
+                                  DEFAULT_BANK_LEDGERS.map((opt) => (
+                                    <option key={opt} value={opt}>
+                                      {opt}
+                                    </option>
+                                  ))
+                                )}
+                              </select>
+                              <button
+                                onClick={() => setEditingApprovedId(null)}
+                                className="text-slate-400 hover:text-slate-600 text-xs px-1"
+                              >
+                                Cancel
+                              </button>
+                            </div>
                           ) : (
-                            <span className="bg-slate-100 text-slate-800 px-2.5 py-1 rounded text-xs font-semibold">
-                              {tx.allocatedLedger}
-                            </span>
+                            <div className="flex items-center gap-2">
+                              <span className="bg-slate-100 text-slate-800 px-2.5 py-1 rounded text-xs font-semibold">
+                                {tx.allocatedLedger}
+                              </span>
+                              <button
+                                onClick={() => setEditingApprovedId(tx.id)}
+                                className="p-1 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition"
+                                title="Change Assigned Ledger"
+                              >
+                                <Edit2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
                           )}
                         </td>
 
@@ -814,6 +907,13 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
                                 <Send className="w-3 h-3" /> Push
                               </button>
                               <button
+                                onClick={() => handleRevertToReview(tx)}
+                                className="p-1 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition"
+                                title="Move back to Needs Review"
+                              >
+                                <RotateCcw className="w-3.5 h-3.5" />
+                              </button>
+                              <button
                                 onClick={() => handleDeleteApproved(tx.id)}
                                 className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded transition"
                                 title="Remove from Approved"
@@ -832,7 +932,7 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
           </>
         )}
 
-        {/* 3. TAB 3: PUSHED TO TALLY — ORGANIZED IN MONTH-WISE FOLDERS */}
+        {/* TAB 3: PUSHED TO TALLY — ORGANIZED IN MONTH-WISE FOLDERS */}
         {bankSubTab === "pushed" && (
           <div className="space-y-4">
             {groupedPushedTransactions.length === 0 ? (
@@ -845,7 +945,7 @@ export default function BankModule({ activeClient = "Panasuria Confectionery" })
               </div>
             ) : (
               groupedPushedTransactions.map((group) => {
-                const isExpanded = expandedFolders[group.monthLabel] !== false; // Default expanded
+                const isExpanded = expandedFolders[group.monthLabel] !== false;
 
                 return (
                   <div key={group.monthLabel} className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
