@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Lock, User, ShieldCheck, AlertCircle } from "lucide-react";
+import { Lock, User, AlertCircle } from "lucide-react";
 
 export default function LoginModal({ onLoginSuccess }) {
   const [username, setUsername] = useState("");
@@ -12,12 +12,22 @@ export default function LoginModal({ onLoginSuccess }) {
 
     const cleanUser = username.trim().toLowerCase();
 
-    // 1. Check Default Super Admin
-    if (cleanUser === "admin" && password === "admin123") {
+    // 1. Fetch Dynamic Admin Credentials (or default admin/admin123)
+    let adminCreds = { username: "admin", password: "admin123", fullName: "Super Administrator" };
+    try {
+      const savedAdmin = localStorage.getItem("c4_admin_credentials");
+      if (savedAdmin) {
+        adminCreds = JSON.parse(savedAdmin);
+      }
+    } catch {
+      // Fallback
+    }
+
+    if (cleanUser === adminCreds.username.toLowerCase() && password === adminCreds.password) {
       const adminSession = {
         id: "super_admin",
-        username: "admin",
-        fullName: "Super Administrator",
+        username: adminCreds.username,
+        fullName: adminCreds.fullName || "Super Administrator",
         role: "admin",
         allowedClients: "ALL",
         permissions: {
@@ -27,6 +37,11 @@ export default function LoginModal({ onLoginSuccess }) {
           otherExpenses: "edit",
           banking: "edit",
           settings: "edit"
+        },
+        salesSubPerms: {
+          allowNormal: true,
+          allowPos: true,
+          allowedDocTypes: ["Tax Invoice", "Bill of Supply", "Export Invoice"]
         }
       };
       localStorage.setItem("c4_auth_session", JSON.stringify(adminSession));
@@ -34,7 +49,7 @@ export default function LoginModal({ onLoginSuccess }) {
       return;
     }
 
-    // 2. Check Custom Created Users
+    // 2. Check Custom Staff / Client Accounts
     try {
       const users = JSON.parse(localStorage.getItem("c4_user_accounts") || "[]");
       const matched = users.find(
@@ -54,14 +69,12 @@ export default function LoginModal({ onLoginSuccess }) {
       // Fallback
     }
 
-    setError("Invalid Username or Password. Try 'admin' / 'admin123'.");
+    setError("Invalid Username or Password.");
   };
 
   return (
     <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 z-[9999]">
-      <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl max-w-sm w-full p-8 space-y-6 animate-in fade-in zoom-in-95 duration-200">
-        
-        {/* LOGO & HEADING */}
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl max-w-sm w-full p-8 space-y-6">
         <div className="text-center space-y-2">
           <div className="w-12 h-12 bg-slate-900 text-white rounded-xl mx-auto flex items-center justify-center font-black text-xl shadow-md">
             C4
@@ -84,7 +97,7 @@ export default function LoginModal({ onLoginSuccess }) {
               <input
                 type="text"
                 required
-                placeholder="e.g. admin or staff_pansuria"
+                placeholder="Username"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 className="w-full pl-9 pr-3 py-2.5 border border-slate-300 rounded-xl font-medium focus:outline-none focus:ring-2 focus:ring-slate-900"
@@ -115,10 +128,6 @@ export default function LoginModal({ onLoginSuccess }) {
             Authenticate & Open Workspace
           </button>
         </form>
-
-        <div className="pt-2 text-center text-[11px] text-slate-400">
-          Default Super Admin: <span className="font-mono font-bold text-slate-600">admin</span> / <span className="font-mono font-bold text-slate-600">admin123</span>
-        </div>
       </div>
     </div>
   );
