@@ -1,1203 +1,619 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useMemo } from "react";
 import { 
-  Building2, 
-  Save, 
-  Plus, 
-  Trash2, 
+  TrendingUp, 
+  TrendingDown, 
   CreditCard, 
-  AlertCircle, 
-  CheckCircle2, 
-  Layers, 
-  BookOpen,
-  Download,
-  Upload,
-  Image as ImageIcon,
-  PenTool,
-  ChevronRight,
-  ArrowLeft,
-  Filter,
-  Edit2,
-  Sparkles,
-  X
+  ArrowDownRight, 
+  Scale, 
+  Activity
 } from "lucide-react";
 
-const loadSheetJS = () => {
-  return new Promise((resolve, reject) => {
-    if (window.XLSX) {
-      resolve(window.XLSX);
-      return;
-    }
-    const script = document.createElement("script");
-    script.src = "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js";
-    script.onload = () => resolve(window.XLSX);
-    script.onerror = () => reject(new Error("Failed to load spreadsheet engine"));
-    document.head.appendChild(script);
-  });
-};
-
-const getFreshProfileState = (clientName, savedProfiles) => {
-  if (savedProfiles[clientName]) {
-    return { ...savedProfiles[clientName], companyName: clientName };
-  }
-  return {
-    companyName: clientName,
-    gstin: "",
-    pan: "",
-    contactPerson: "",
-    phone: "",
-    email: "",
-    website: "",
-    address: "",
-    bankName: "",
-    accountNo: "",
-    ifscCode: "",
-    branch: "",
-    terms: "1. Goods once sold will not be taken back.\n2. Subject to local Jurisdiction.",
-    logoUrl: "",
-    signatureUrl: ""
-  };
-};
-
-// Precise accounting classification helper
-const getPlNature = (ledger) => {
-  if (ledger.statementType !== "P&L") return null;
-
-  const cat = (ledger.category || "").toLowerCase();
-  const name = (ledger.name || "").toLowerCase();
-
-  // 1. REVENUE FROM OPERATIONS (SALES)
-  if (
-    cat.includes("sales") || 
-    cat.includes("revenue") || 
-    cat.includes("turnover") ||
-    name.startsWith("sales") ||
-    name.includes("dine-in") ||
-    name.includes("delivery sale")
-  ) {
-    return "Revenue";
-  }
-
-  // 2. OTHER NON-OPERATING INCOMES
-  if (
-    cat.includes("other income") || 
-    cat.includes("interest income") || 
-    cat.includes("indirect income") ||
-    name.includes("interest received") ||
-    name === "other income" ||
-    name === "interest"
-  ) {
-    return "Other Income";
-  }
-
-  // 3. EXPENSES: COGS OR INDIRECT
-  if (ledger.cogsClassification === "COGS") return "COGS";
-  if (ledger.cogsClassification === "Indirect") return "Indirect";
-
-  // Heuristic fallbacks for expenses
-  if (
-    cat.includes("purchase") ||
-    cat.includes("direct cost") ||
-    name.includes("purchase") ||
-    name.includes("raw material") ||
-    name.includes("dairy") ||
-    name.includes("groceries") ||
-    name.includes("sauces") ||
-    name.includes("vegetable") ||
-    name.includes("ingredient")
-  ) {
-    return "COGS";
-  }
-
-  return "Indirect";
-};
-
-export default function SettingsModule({ activeClient, setActiveClient }) {
-  const [viewMode, setViewMode] = useState("directory"); // 'directory' | 'manage'
-  const [manageSubTab, setManageSubTab] = useState("profile"); // 'profile' | 'coa'
-
-  const [profiles, setProfiles] = useState(() => {
+export default function DashboardModule({ activeClient = "Pansuria Confectionery & Food" }) {
+  // STRICT CLIENT DATA EXTRACTION (ONLY from activeClient)
+  const clientCoa = useMemo(() => {
     try {
-      const saved = localStorage.getItem("c4_client_profiles");
-      if (saved) return JSON.parse(saved);
-      return {
-        [activeClient]: {
-          companyName: activeClient,
-          gstin: "",
-          pan: "",
-          address: ""
-        }
-      };
-    } catch {
-      return {};
-    }
-  });
-
-  const [clientCoa, setClientCoa] = useState(() => {
-    try {
-      const saved = localStorage.getItem(`c4_coa_${activeClient}`);
-      return saved ? JSON.parse(saved) : [];
+      const data = localStorage.getItem(`c4_coa_${activeClient}`);
+      return data ? JSON.parse(data) : [];
     } catch {
       return [];
     }
-  });
+  }, [activeClient]);
 
-  const [currentForm, setCurrentForm] = useState(() => getFreshProfileState(activeClient, profiles));
-  const [coaFilter, setCoaFilter] = useState("ALL");
-
-  useEffect(() => {
+  const normalSales = useMemo(() => {
     try {
-      const savedProfiles = JSON.parse(localStorage.getItem("c4_client_profiles") || "{}");
-      setCurrentForm(getFreshProfileState(activeClient, savedProfiles));
+      const data = localStorage.getItem(`c4_normal_sales_invoices_${activeClient}`);
+      return data ? JSON.parse(data) : [];
     } catch {
-      setCurrentForm(getFreshProfileState(activeClient, {}));
-    }
-
-    try {
-      const savedCoa = localStorage.getItem(`c4_coa_${activeClient}`);
-      setClientCoa(savedCoa ? JSON.parse(savedCoa) : []);
-    } catch {
-      setClientCoa([]);
+      return [];
     }
   }, [activeClient]);
 
-  // Form State for Adding Single Ledger
-  const [newLedgerName, setNewLedgerName] = useState("");
-  const [newStatementType, setNewStatementType] = useState("P&L");
-  const [newLedgerCategory, setNewLedgerCategory] = useState("");
-  const [newCostNature, setNewCostNature] = useState("COGS"); // 'COGS' | 'Indirect' | 'Revenue' | 'Other Income'
-
-  const [editingLedger, setEditingLedger] = useState(null);
-  const [isUploading, setIsUploading] = useState(false);
-  const [notification, setNotification] = useState(null);
-
-  const logoInputRef = useRef(null);
-  const signatureInputRef = useRef(null);
-  const fileInputRef = useRef(null);
-
-  useEffect(() => {
-    localStorage.setItem("c4_client_profiles", JSON.stringify(profiles));
-  }, [profiles]);
-
-  useEffect(() => {
-    localStorage.setItem(`c4_coa_${activeClient}`, JSON.stringify(clientCoa));
-  }, [clientCoa, activeClient]);
-
-  const notify = (msg, type = "success") => {
-    setNotification({ msg, type });
-    setTimeout(() => setNotification(null), 4000);
-  };
-
-  const handleImageUpload = (e, field) => {
-    const file = e.target.files[0];
-    if (!file) return;
-
-    if (file.size > 2 * 1024 * 1024) {
-      notify("Image size should be less than 2MB", "error");
-      return;
-    }
-
-    const reader = new FileReader();
-    reader.onload = () => {
-      setCurrentForm((prev) => ({ ...prev, [field]: reader.result }));
-      notify(`${field === "logoUrl" ? "Company Logo" : "Signature"} uploaded!`, "success");
-    };
-    reader.readAsDataURL(file);
-  };
-
-  const handleOpenClient = (clientName) => {
-    setActiveClient(clientName);
-    const savedProfiles = JSON.parse(localStorage.getItem("c4_client_profiles") || "{}");
-    setCurrentForm(getFreshProfileState(clientName, savedProfiles));
-    setViewMode("manage");
-    setManageSubTab("profile");
-  };
-
-  const handleAddNewClient = () => {
-    const newClientName = window.prompt("Enter Legal or Trade Name for the New Client:");
-    if (!newClientName || !newClientName.trim()) return;
-
-    const trimmed = newClientName.trim();
-    if (profiles[trimmed]) {
-      notify(`Client "${trimmed}" already exists!`, "error");
-      handleOpenClient(trimmed);
-      return;
-    }
-
-    const newProfile = {
-      companyName: trimmed,
-      gstin: "",
-      pan: "",
-      contactPerson: "",
-      phone: "",
-      email: "",
-      website: "",
-      address: "",
-      bankName: "",
-      accountNo: "",
-      ifscCode: "",
-      branch: "",
-      terms: "1. Goods once sold will not be taken back.\n2. Subject to local Jurisdiction.",
-      logoUrl: "",
-      signatureUrl: ""
-    };
-
-    const updated = { ...profiles, [trimmed]: newProfile };
-    setProfiles(updated);
-    localStorage.setItem("c4_client_profiles", JSON.stringify(updated));
-    localStorage.setItem(`c4_coa_${trimmed}`, JSON.stringify([]));
-
-    setActiveClient(trimmed);
-    setCurrentForm(newProfile);
-    setClientCoa([]);
-    setViewMode("manage");
-    setManageSubTab("profile");
-
-    notify(`Client "${trimmed}" created!`, "success");
-  };
-
-  const handleDeleteClient = (clientNameToDelete, e) => {
-    e.stopPropagation();
-    const clientKeys = Object.keys(profiles);
-    if (clientKeys.length <= 1) {
-      notify("You must maintain at least one client entity in the portal.", "error");
-      return;
-    }
-
-    if (!window.confirm(`Are you sure you want to delete "${clientNameToDelete}"?`)) return;
-
-    const updated = { ...profiles };
-    delete updated[clientNameToDelete];
-    setProfiles(updated);
-    localStorage.setItem("c4_client_profiles", JSON.stringify(updated));
-
-    if (activeClient === clientNameToDelete) {
-      const remainingKey = Object.keys(updated)[0];
-      setActiveClient(remainingKey);
-    }
-
-    notify(`Client "${clientNameToDelete}" removed.`, "info");
-  };
-
-  const handleSaveProfile = () => {
-    if (!currentForm.companyName.trim()) {
-      notify("Please provide a Legal Company Name", "error");
-      return;
-    }
-    const targetName = currentForm.companyName.trim();
-    const updatedProfiles = {
-      ...profiles,
-      [targetName]: { ...currentForm, companyName: targetName }
-    };
-    setProfiles(updatedProfiles);
-    localStorage.setItem("c4_client_profiles", JSON.stringify(updatedProfiles));
-    setActiveClient(targetName);
-    notify(`Complete profile for "${targetName}" saved successfully!`, "success");
-  };
-
-  const handleAddLedger = (e) => {
-    e.preventDefault();
-    if (!newLedgerName.trim()) {
-      notify("Ledger Name cannot be blank", "error");
-      return;
-    }
-    if (!newLedgerCategory.trim()) {
-      notify("Please assign a Category name", "error");
-      return;
-    }
-
-    if (clientCoa.some((l) => l.name.toLowerCase() === newLedgerName.trim().toLowerCase())) {
-      notify(`Ledger "${newLedgerName}" already exists for this client!`, "error");
-      return;
-    }
-
-    const created = {
-      id: `coa_${Date.now()}`,
-      name: newLedgerName.trim(),
-      statementType: newStatementType,
-      category: newLedgerCategory.trim(),
-      cogsClassification: newStatementType === "P&L" ? newCostNature : null
-    };
-
-    setClientCoa((prev) => [...prev, created]);
-    setNewLedgerName("");
-    setNewLedgerCategory("");
-    setNewCostNature("COGS");
-    notify(`Ledger "${created.name}" saved under ${created.category}!`, "success");
-  };
-
-  // Toggle for Expenses (COGS <-> Indirect)
-  const handleToggleCogsClassification = (id) => {
-    setClientCoa((prev) =>
-      prev.map((l) => {
-        if (l.id === id) {
-          const currentNature = getPlNature(l);
-          if (currentNature === "Revenue" || currentNature === "Other Income") {
-            return l;
-          }
-          const next = currentNature === "COGS" ? "Indirect" : "COGS";
-          notify(`Changed "${l.name}" to ${next === "COGS" ? "Direct (COGS)" : "Indirect Expense"}!`, "info");
-          return { ...l, cogsClassification: next };
-        }
-        return l;
-      })
-    );
-  };
-
-  // Batch auto-tag purchases to COGS (ignores Sales & Incomes)
-  const handleAutoFixPurchasesToCogs = () => {
-    let updatedCount = 0;
-    setClientCoa((prev) =>
-      prev.map((l) => {
-        if (l.statementType === "P&L") {
-          const nature = getPlNature(l);
-          if (nature === "Revenue" || nature === "Other Income") {
-            return l; // Do not touch sales or incomes
-          }
-
-          const lowerName = l.name.toLowerCase();
-          const lowerCat = (l.category || "").toLowerCase();
-
-          const isPurchase =
-            lowerCat.includes("purchase") ||
-            lowerName.includes("purchase") ||
-            lowerName.includes("dairy") ||
-            lowerName.includes("groceries") ||
-            lowerName.includes("beverage") ||
-            lowerName.includes("dessert") ||
-            lowerName.includes("frozen") ||
-            lowerName.includes("sauces") ||
-            lowerName.includes("vegetable") ||
-            lowerName.includes("packing") ||
-            lowerName.includes("ingredient") ||
-            lowerName.includes("gas");
-
-          if (isPurchase && l.cogsClassification !== "COGS") {
-            updatedCount++;
-            return { ...l, cogsClassification: "COGS" };
-          }
-        }
-        return l;
-      })
-    );
-
-    if (updatedCount > 0) {
-      notify(`Auto-tagged ${updatedCount} purchase ledgers to Direct (COGS)!`, "success");
-    } else {
-      notify("All purchase ledgers are already classified as COGS.", "info");
-    }
-  };
-
-  const handleSaveEditLedger = () => {
-    if (!editingLedger || !editingLedger.name.trim()) return;
-
-    setClientCoa((prev) =>
-      prev.map((l) =>
-        l.id === editingLedger.id
-          ? {
-              ...l,
-              name: editingLedger.name.trim(),
-              category: editingLedger.category.trim(),
-              statementType: editingLedger.statementType,
-              cogsClassification:
-                editingLedger.statementType === "P&L"
-                  ? editingLedger.cogsClassification
-                  : null
-            }
-          : l
-      )
-    );
-
-    notify(`Updated ledger "${editingLedger.name}"!`, "success");
-    setEditingLedger(null);
-  };
-
-  const handleDeleteLedger = (id, name) => {
-    if (!window.confirm(`Delete ledger "${name}"?`)) return;
-    setClientCoa((prev) => prev.filter((l) => l.id !== id));
-    notify(`Ledger "${name}" deleted.`, "info");
-  };
-
-  const handleDownloadTemplate = async () => {
+  const posJournals = useMemo(() => {
     try {
-      const XLSX = await loadSheetJS();
-      const templateData = [
-        ["Ledger Name", "Statement Type", "Category", "P&L Nature"],
-        ["Sales: Dine In", "P&L", "Sales", "Revenue"],
-        ["Sales: Delivery", "P&L", "Sales", "Revenue"],
-        ["Interest Received", "P&L", "Other Income", "Other Income"],
-        ["Purchases - Dairy Products", "P&L", "Purchases", "COGS"],
-        ["Purchases - Groceries", "P&L", "Purchases", "COGS"],
-        ["Supplies - Stationery", "P&L", "Administrative Expenses", "Indirect"],
-        ["Office Rent", "P&L", "Rent & Occupancy Costs", "Indirect"],
-        ["HDFC Bank A/c", "Balance Sheet", "Cash & Bank Balances", ""]
-      ];
-
-      const ws = XLSX.utils.aoa_to_sheet(templateData);
-      const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, "Chart_of_Accounts");
-      XLSX.writeFile(wb, `COA_Template_${activeClient.replace(/\s+/g, "_")}.xlsx`);
-      notify("COA Template downloaded!", "success");
+      const data = localStorage.getItem(`c4_pos_journals_${activeClient}`);
+      return data ? JSON.parse(data) : [];
     } catch {
-      const csvContent =
-        "Ledger Name,Statement Type,Category,P&L Nature\n" +
-        "Sales: Dine In,P&L,Sales,Revenue\n" +
-        "Sales: Delivery,P&L,Sales,Revenue\n" +
-        "Interest Received,P&L,Other Income,Other Income\n" +
-        "Purchases - Dairy Products,P&L,Purchases,COGS\n" +
-        "Purchases - Groceries,P&L,Purchases,COGS\n" +
-        "Supplies - Stationery,P&L,Administrative Expenses,Indirect\n" +
-        "Office Rent,P&L,Rent & Occupancy Costs,Indirect\n" +
-        "HDFC Bank A/c,Balance Sheet,Cash & Bank Balances,\n";
-      const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.setAttribute("download", `COA_Template_${activeClient.replace(/\s+/g, "_")}.csv`);
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
+      return [];
     }
-  };
+  }, [activeClient]);
 
-  const handleFileUpload = async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-
-    setIsUploading(true);
-    const fileName = file.name.toLowerCase();
-
+  const approvedBills = useMemo(() => {
     try {
-      const XLSX = await loadSheetJS();
-      const reader = new FileReader();
-
-      reader.onload = (event) => {
-        try {
-          let rawRows = [];
-
-          if (fileName.endsWith(".csv") || fileName.endsWith(".txt")) {
-            const text = new TextDecoder().decode(event.target.result);
-            const lines = text.split(/\r\n|\n/).filter((l) => l.trim().length > 0);
-            rawRows = lines.map((line) => line.split(",").map((c) => c.replace(/["']/g, "").trim()));
-          } else {
-            const data = new Uint8Array(event.target.result);
-            const workbook = XLSX.read(data, { type: "array" });
-            const firstSheet = workbook.SheetNames[0];
-            rawRows = XLSX.utils.sheet_to_json(workbook.Sheets[firstSheet], { header: 1, defval: "" });
-          }
-
-          if (!rawRows || rawRows.length < 2) {
-            notify("Uploaded file has no data rows.", "error");
-            setIsUploading(false);
-            return;
-          }
-
-          const headers = (rawRows[0] || []).map((h) => String(h || "").trim().toLowerCase());
-          const nameIdx = headers.findIndex((h) => h.includes("ledger") || h.includes("account") || h.includes("name"));
-          const typeIdx = headers.findIndex((h) => h.includes("statement") || h.includes("type") || h.includes("sheet") || h.includes("p&l"));
-          const catIdx = headers.findIndex((h) => h.includes("category") || h.includes("group") || h.includes("head"));
-          const natureIdx = headers.findIndex((h) => h.includes("nature") || h.includes("cogs") || h.includes("cost"));
-
-          if (nameIdx === -1) {
-            notify("Missing 'Ledger Name' column in header.", "error");
-            setIsUploading(false);
-            return;
-          }
-
-          const parsedLedgers = [];
-          for (let i = 1; i < rawRows.length; i++) {
-            const row = rawRows[i] || [];
-            const name = String(row[nameIdx] || "").trim();
-            if (!name) continue;
-
-            let statementType = "P&L";
-            if (typeIdx !== -1 && row[typeIdx]) {
-              const rawType = String(row[typeIdx]).trim().toLowerCase();
-              if (rawType.includes("balance") || rawType.includes("bs") || rawType.includes("asset") || rawType.includes("liab")) {
-                statementType = "Balance Sheet";
-              }
-            }
-
-            let category = "General Overheads";
-            if (catIdx !== -1 && row[catIdx] && String(row[catIdx]).trim().length > 0) {
-              category = String(row[catIdx]).trim();
-            } else {
-              category = statementType === "Balance Sheet" ? "Balance Sheet Items" : "Operational Expenses";
-            }
-
-            let cogsClassification = null;
-            if (statementType === "P&L") {
-              if (natureIdx !== -1 && row[natureIdx]) {
-                const val = String(row[natureIdx]).trim().toLowerCase();
-                if (val.includes("rev") || val.includes("sale")) cogsClassification = "Revenue";
-                else if (val.includes("income")) cogsClassification = "Other Income";
-                else if (val.includes("cogs") || val.includes("direct")) cogsClassification = "COGS";
-                else cogsClassification = "Indirect";
-              }
-            }
-
-            parsedLedgers.push({
-              id: `coa_${Date.now()}_${i}_${Math.random().toString(36).substr(2, 4)}`,
-              name,
-              statementType,
-              category,
-              cogsClassification
-            });
-          }
-
-          if (parsedLedgers.length === 0) {
-            notify("No valid ledgers detected in spreadsheet.", "error");
-            setIsUploading(false);
-            return;
-          }
-
-          const replaceOption = window.confirm(
-            `Found ${parsedLedgers.length} ledgers!\n\nClick OK to REPLACE the entire Chart of Accounts for ${activeClient}.\nClick CANCEL to APPEND new ledgers.`
-          );
-
-          if (replaceOption) {
-            setClientCoa(parsedLedgers);
-            notify(`Uploaded ${parsedLedgers.length} ledgers for ${activeClient}!`, "success");
-          } else {
-            const existingNames = new Set(clientCoa.map((l) => l.name.toLowerCase()));
-            const newOnly = parsedLedgers.filter((l) => !existingNames.has(l.name.toLowerCase()));
-            setClientCoa((prev) => [...prev, ...newOnly]);
-            notify(`Appended ${newOnly.length} new ledgers!`, "success");
-          }
-        } catch (err) {
-          console.error(err);
-          notify("Failed to parse spreadsheet file.", "error");
-        } finally {
-          setIsUploading(false);
-          if (fileInputRef.current) fileInputRef.current.value = "";
-        }
-      };
-
-      reader.readAsArrayBuffer(file);
-    } catch (err) {
-      console.error(err);
-      notify("Failed to initialize spreadsheet reader.", "error");
-      setIsUploading(false);
+      const data = localStorage.getItem(`c4_approved_bills_${activeClient}`);
+      return data ? JSON.parse(data) : [];
+    } catch {
+      return [];
     }
+  }, [activeClient]);
+
+  const pushedBills = useMemo(() => {
+    try {
+      const data = localStorage.getItem(`c4_pushed_bills_${activeClient}`);
+      return data ? JSON.parse(data) : [];
+    } catch {
+      return [];
+    }
+  }, [activeClient]);
+
+  const unpushedExpenses = useMemo(() => {
+    try {
+      const data = localStorage.getItem(`c4_other_expenses_${activeClient}`);
+      return data ? JSON.parse(data) : [];
+    } catch {
+      return [];
+    }
+  }, [activeClient]);
+
+  const pushedExpenses = useMemo(() => {
+    try {
+      const data = localStorage.getItem(`c4_other_expenses_pushed_${activeClient}`);
+      return data ? JSON.parse(data) : [];
+    } catch {
+      return [];
+    }
+  }, [activeClient]);
+
+  const bankTransactions = useMemo(() => {
+    try {
+      const data = localStorage.getItem(`c4_bank_transactions_${activeClient}`);
+      return data ? JSON.parse(data) : [];
+    } catch {
+      return [];
+    }
+  }, [activeClient]);
+
+  const bankPushed = useMemo(() => {
+    try {
+      const data = localStorage.getItem(`c4_bank_pushed_${activeClient}`);
+      return data ? JSON.parse(data) : [];
+    } catch {
+      return [];
+    }
+  }, [activeClient]);
+
+  const allPurchases = useMemo(() => [...approvedBills, ...pushedBills], [approvedBills, pushedBills]);
+  const allOverheads = useMemo(() => [...unpushedExpenses, ...pushedExpenses], [unpushedExpenses, pushedExpenses]);
+
+  // Date parser
+  const parseToDate = (raw) => {
+    if (!raw) return null;
+    const s = String(raw).trim();
+    if (!isNaN(s) && Number(s) > 20000 && Number(s) < 60000) {
+      return new Date(Math.round((Number(s) - 25569) * 86400 * 1000));
+    }
+    const parts = s.split(/[\/\-]/);
+    if (parts.length === 3) {
+      if (parts[0].length === 4) return new Date(parts[0], parseInt(parts[1]) - 1, parts[2]);
+      const yr = parts[2].length === 2 ? `20${parts[2]}` : parts[2];
+      return new Date(yr, parseInt(parts[1]) - 1, parts[0]);
+    }
+    const d = new Date(raw);
+    return isNaN(d.getTime()) ? null : d;
   };
 
-  const filteredCoa = clientCoa.filter((l) => {
-    if (coaFilter === "ALL") return true;
-    return l.statementType === coaFilter;
-  });
+  // 1. REFINED P&L LEDGER NATURE RESOLVER (SYNCHRONIZED WITH SETTINGS MODULE)
+  const getLedgerPlNature = (ledgerName, coaList) => {
+    if (!ledgerName) return "COGS";
+    const clean = ledgerName.trim().toLowerCase();
+    const matched = coaList.find((l) => l.name.trim().toLowerCase() === clean);
 
-  const categoriesGrouped = filteredCoa.reduce((acc, item) => {
-    const cat = item.category || "Uncategorized";
-    if (!acc[cat]) acc[cat] = [];
-    acc[cat].push(item);
-    return acc;
-  }, {});
+    if (matched) {
+      if (matched.cogsClassification === "COGS") return "COGS";
+      if (matched.cogsClassification === "Indirect") return "Indirect";
+      if (matched.cogsClassification === "Revenue") return "Revenue";
+      if (matched.cogsClassification === "Other Income") return "Other Income";
 
-  const clientListKeys = Object.keys(profiles);
+      // Fallback based on category
+      const cat = (matched.category || "").toLowerCase();
+      if (cat.includes("sales") || cat.includes("revenue") || cat.includes("turnover")) return "Revenue";
+      if (cat.includes("other income") || cat.includes("interest")) return "Other Income";
+      if (cat.includes("cogs") || cat.includes("cost of goods") || cat.includes("direct") || cat.includes("raw material") || cat.includes("purchase")) return "COGS";
+      return "Indirect";
+    }
+
+    // Default heuristic if ledger not found in COA
+    if (clean.includes("sales") || clean.startsWith("sale")) return "Revenue";
+    if (clean.includes("interest") || clean.includes("other income")) return "Other Income";
+    const isIndirect = 
+      clean.includes("stationery") ||
+      clean.includes("marketing") ||
+      clean.includes("advertisement") ||
+      clean.includes("printing") ||
+      clean.includes("repair") ||
+      clean.includes("software") ||
+      clean.includes("audit") ||
+      clean.includes("legal") ||
+      clean.includes("rent");
+    if (isIndirect) return "Indirect";
+
+    return "COGS";
+  };
+
+  const getCategoryForLedger = (ledgerName, coaList) => {
+    if (!ledgerName) return "Administrative & General Expenses";
+    const clean = ledgerName.trim().toLowerCase();
+    const matched = coaList.find((l) => l.name.trim().toLowerCase() === clean);
+    if (matched && matched.category) {
+      return matched.category;
+    }
+    if (clean.includes("marketing") || clean.includes("advertisement")) {
+      return "Selling & Distribution Expenses";
+    }
+    if (clean.includes("repair") || clean.includes("maintenance")) {
+      return "Repairs & Maintenance";
+    }
+    return "Administrative & General Expenses";
+  };
+
+  // 2. SCHEDULE BREAKDOWN
+  const plBreakdown = useMemo(() => {
+    let directCogs = 0;
+    let otherIncomeTotal = 0;
+    const indirectCategories = {};
+
+    // A. Purchase Register Line-Item Inspection
+    allPurchases.forEach((bill) => {
+      const lines = bill.accounting_ledgers || bill.items || [];
+      if (lines.length > 0) {
+        lines.forEach((line) => {
+          const lName = line.ledger_name || line.ledger || "";
+          const amt = parseFloat(line.amount) || 0;
+          const nature = getLedgerPlNature(lName, clientCoa);
+
+          if (nature === "COGS") {
+            directCogs += amt;
+          } else if (nature === "Indirect") {
+            const cat = getCategoryForLedger(lName, clientCoa);
+            indirectCategories[cat] = (indirectCategories[cat] || 0) + amt;
+          }
+        });
+      } else {
+        const bAmt = parseFloat(bill.taxableAmount) || 0;
+        directCogs += bAmt;
+      }
+    });
+
+    // B. Other Expenses Register Vouchers
+    allOverheads.forEach((exp) => {
+      const nature = getLedgerPlNature(exp.expenseLedger, clientCoa);
+      const amt = parseFloat(exp.taxableAmount || exp.amount) || 0;
+
+      if (nature === "Other Income") {
+        otherIncomeTotal += amt;
+      } else if (nature === "COGS") {
+        directCogs += amt;
+      } else {
+        const cat = exp.group || "Administrative & General Expenses";
+        indirectCategories[cat] = (indirectCategories[cat] || 0) + amt;
+      }
+    });
+
+    const totalIndirect = Object.values(indirectCategories).reduce((acc, v) => acc + v, 0);
+
+    return {
+      directCogs,
+      indirectCategories,
+      totalIndirect,
+      otherIncomeTotal
+    };
+  }, [allPurchases, allOverheads, clientCoa]);
+
+  // 3. TOP 4 KPI CALCULATIONS
+  const kpiData = useMemo(() => {
+    const normalRev = normalSales.reduce((acc, inv) => acc + (parseFloat(inv.taxableAmount) || 0), 0);
+    const posRev = posJournals.reduce((acc, jv) => acc + (parseFloat(jv.totalTaxable) || 0), 0);
+    const totalRevenue = normalRev + posRev;
+
+    const normalGross = normalSales.reduce((acc, inv) => acc + (parseFloat(inv.grandTotal) || 0), 0);
+    const posGross = posJournals.reduce((acc, jv) => acc + (parseFloat(jv.totalDebits) || 0), 0);
+    const totalGross = normalGross + posGross;
+
+    const totalCost = plBreakdown.directCogs + plBreakdown.totalIndirect;
+    const netProfit = totalRevenue + plBreakdown.otherIncomeTotal - totalCost;
+    const netMargin = totalRevenue > 0 ? (netProfit / totalRevenue) * 100 : 0;
+
+    const totalVendorBills = allPurchases.reduce((acc, b) => acc + (parseFloat(b.grandTotal || b.taxableAmount) || 0), 0);
+    const totalPayableOverheads = allOverheads.reduce((acc, e) => acc + (parseFloat(e.grandTotal || e.amount) || 0), 0);
+    const bankVendorPayments = [...bankTransactions, ...bankPushed]
+      .filter((t) => t.type === "Payment" && (t.allocatedLedger || "").toLowerCase().includes("creditor"))
+      .reduce((acc, t) => acc + (parseFloat(t.amount) || 0), 0);
+    const accountsPayable = Math.max(totalVendorBills + totalPayableOverheads - bankVendorPayments, 0);
+
+    const totalDebtorInvoices = normalSales.reduce((acc, inv) => acc + (parseFloat(inv.grandTotal) || 0), 0);
+    const bankDebtorReceipts = [...bankTransactions, ...bankPushed]
+      .filter((t) => t.type === "Receipt" && (t.allocatedLedger || "").toLowerCase().includes("debtor"))
+      .reduce((acc, t) => acc + (parseFloat(t.amount) || 0), 0);
+
+    const aggregatorReceivables = posJournals.reduce((acc, jv) => {
+      const zDel = parseFloat(jv.dr?.zomatoDelivery) || 0;
+      const sDel = parseFloat(jv.dr?.swiggyDelivery) || 0;
+      return acc + zDel + sDel;
+    }, 0);
+    const accountsReceivable = Math.max(totalDebtorInvoices - bankDebtorReceipts + aggregatorReceivables, 0);
+
+    return {
+      totalRevenue,
+      totalGross,
+      netProfit,
+      netMargin,
+      accountsPayable,
+      accountsReceivable,
+      salesCount: normalSales.length + posJournals.length
+    };
+  }, [normalSales, posJournals, allPurchases, allOverheads, bankTransactions, bankPushed, plBreakdown]);
+
+  // 4. LAST 6 MONTHS TREND
+  const last6MonthsData = useMemo(() => {
+    const months = [];
+    const now = new Date(2026, 8, 28);
+
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      const label = d.toLocaleString("en-US", { month: "short" });
+      months.push({ key, label, sales: 0, cost: 0, netProfit: 0 });
+    }
+
+    normalSales.forEach((inv) => {
+      const d = parseToDate(inv.invoiceDate || inv.date);
+      if (d) {
+        const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+        const match = months.find((m) => m.key === key);
+        if (match) match.sales += parseFloat(inv.taxableAmount || 0);
+      }
+    });
+
+    posJournals.forEach((jv) => {
+      const d = parseToDate(jv.voucherDate);
+      if (d) {
+        const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+        const match = months.find((m) => m.key === key);
+        if (match) match.sales += parseFloat(jv.totalTaxable || 0);
+      }
+    });
+
+    allPurchases.forEach((b) => {
+      const d = parseToDate(b.billDate || b.date || b.voucherDate);
+      if (d) {
+        const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+        const match = months.find((m) => m.key === key);
+        if (match) match.cost += parseFloat(b.taxableAmount || 0);
+      }
+    });
+
+    allOverheads.forEach((e) => {
+      const d = parseToDate(e.voucherDate || e.date);
+      if (d) {
+        const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+        const match = months.find((m) => m.key === key);
+        if (match) match.cost += parseFloat(e.taxableAmount || e.amount || 0);
+      }
+    });
+
+    months.forEach((m) => {
+      m.netProfit = m.sales - m.cost;
+    });
+
+    return months;
+  }, [normalSales, posJournals, allPurchases, allOverheads]);
+
+  const renderLineChart = (data, dataKey, strokeColor, fillColor) => {
+    const width = 380;
+    const height = 110;
+    const padding = 16;
+
+    const values = data.map((d) => d[dataKey]);
+    let min = Math.min(...values);
+    let max = Math.max(...values);
+    if (min === max) {
+      min = min > 0 ? 0 : min - 100;
+      max = max > 0 ? max * 1.5 : 100;
+    }
+    const range = max - min || 1;
+
+    const points = data.map((d, idx) => {
+      const x = padding + (idx / (data.length - 1)) * (width - 2 * padding);
+      const y = height - padding - ((d[dataKey] - min) / range) * (height - 2 * padding);
+      return { x, y, val: d[dataKey], label: d.label };
+    });
+
+    const pathD = points.reduce((acc, p, idx) => `${acc} ${idx === 0 ? "M" : "L"} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`, "");
+    const areaD = `${pathD} L ${points[points.length - 1].x.toFixed(1)} ${height - padding} L ${points[0].x.toFixed(1)} ${height - padding} Z`;
+
+    return (
+      <div className="w-full flex flex-col justify-end mt-1">
+        <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-24 overflow-visible">
+          <defs>
+            <linearGradient id={`grad-${dataKey}`} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor={fillColor} stopOpacity="0.25" />
+              <stop offset="100%" stopColor={fillColor} stopOpacity="0.0" />
+            </linearGradient>
+          </defs>
+          <path d={areaD} fill={`url(#grad-${dataKey})`} />
+          <path d={pathD} fill="none" stroke={strokeColor} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+          {points.map((p, i) => (
+            <circle key={i} cx={p.x} cy={p.y} r="3.5" fill="#fff" stroke={strokeColor} strokeWidth="2" />
+          ))}
+        </svg>
+        <div className="flex justify-between px-2 pt-1 text-[10px] font-bold text-slate-400 uppercase">
+          {data.map((d) => (
+            <span key={d.key}>{d.label}</span>
+          ))}
+        </div>
+      </div>
+    );
+  };
+
+  const grossProfit = kpiData.totalRevenue - plBreakdown.directCogs;
+  const grossMargin = kpiData.totalRevenue > 0 ? (grossProfit / kpiData.totalRevenue) * 100 : 0;
 
   return (
-    <div className="flex-1 flex flex-col h-full bg-[#F8FAFC] overflow-y-auto font-sans">
-      {/* HEADER BAR */}
-      <header className="bg-white border-b border-slate-200 px-8 py-4 flex items-center justify-between shadow-sm shrink-0">
-        <div>
-          <div className="flex items-center gap-3">
-            {viewMode === "manage" && (
-              <button
-                onClick={() => setViewMode("directory")}
-                className="flex items-center gap-1 text-xs font-bold text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded-lg transition"
-              >
-                <ArrowLeft className="w-3.5 h-3.5" /> Back to All Clients
-              </button>
-            )}
-            <h2 className="text-xl font-bold text-slate-900 tracking-tight">
-              {viewMode === "directory" ? "Client Directory & Masters" : `Managing: ${activeClient}`}
-            </h2>
-          </div>
-          <p className="text-xs text-slate-500 font-medium mt-0.5">
-            {viewMode === "directory"
-              ? "All registered entities on this Compliance4 portal"
-              : "Configuring legal profile, branding, bank accounts, and custom Chart of Accounts"}
-          </p>
-        </div>
-
-        <div className="flex items-center gap-2">
-          {viewMode === "directory" && (
-            <button
-              onClick={handleAddNewClient}
-              className="flex items-center gap-1.5 px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-bold transition shadow-sm"
-            >
-              <Plus className="w-4 h-4" /> + Add New Client
-            </button>
-          )}
-
-          {viewMode === "manage" && manageSubTab === "profile" && (
-            <button
-              onClick={handleSaveProfile}
-              className="flex items-center gap-1.5 px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-semibold transition shadow-sm"
-            >
-              <Save className="w-3.5 h-3.5" /> Save Profile
-            </button>
-          )}
-
-          {viewMode === "manage" && manageSubTab === "coa" && (
-            <div className="flex items-center gap-2">
-              <button
-                onClick={handleAutoFixPurchasesToCogs}
-                className="flex items-center gap-1.5 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 text-xs font-bold px-3.5 py-2 rounded-lg transition"
-                title="Automatically sets purchase ledgers to Direct (COGS) without affecting Sales or Incomes"
-              >
-                <Sparkles className="w-3.5 h-3.5 text-amber-600" /> Auto-Tag Purchases to COGS
-              </button>
-
-              <button
-                onClick={handleDownloadTemplate}
-                className="flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold px-3.5 py-2 rounded-lg transition"
-              >
-                <Download className="w-3.5 h-3.5" /> Download Template
-              </button>
-
-              <input
-                type="file"
-                ref={fileInputRef}
-                onChange={handleFileUpload}
-                accept="*"
-                className="hidden"
-              />
-
-              <button
-                onClick={() => fileInputRef.current?.click()}
-                disabled={isUploading}
-                className="flex items-center gap-1.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold px-4 py-2 rounded-lg transition shadow-sm disabled:opacity-50"
-              >
-                <Upload className="w-3.5 h-3.5" />
-                {isUploading ? "Uploading..." : "Bulk Upload COA"}
-              </button>
-            </div>
-          )}
-        </div>
-      </header>
-
-      {/* MANAGE TABS */}
-      {viewMode === "manage" && (
-        <div className="px-8 pt-3 pb-0 flex items-center gap-6 border-b border-slate-200 bg-white shrink-0">
-          <button
-            onClick={() => setManageSubTab("profile")}
-            className={`pb-3 text-xs font-bold transition flex items-center gap-2 border-b-2 ${
-              manageSubTab === "profile" ? "border-slate-900 text-slate-900" : "border-transparent text-slate-400 hover:text-slate-600"
-            }`}
-          >
-            <Building2 className="w-4 h-4" /> Client Profile, Brand & Bank
-          </button>
-
-          <button
-            onClick={() => setManageSubTab("coa")}
-            className={`pb-3 text-xs font-bold transition flex items-center gap-2 border-b-2 ${
-              manageSubTab === "coa" ? "border-slate-900 text-slate-900" : "border-transparent text-slate-400 hover:text-slate-600"
-            }`}
-          >
-            <BookOpen className="w-4 h-4" /> Chart of Accounts ({clientCoa.length})
-          </button>
-        </div>
-      )}
-
-      {/* BODY VIEWPORT */}
-      <div className="p-8 max-w-5xl mx-auto w-full space-y-6">
-
-        {/* 1. MASTER DIRECTORY */}
-        {viewMode === "directory" && (
-          <div className="space-y-4">
+    <div className="flex-1 flex flex-col h-full bg-[#F8FAFC] overflow-y-auto p-6 font-sans">
+      <div className="max-w-7xl mx-auto w-full flex flex-col gap-4">
+        
+        {/* 1. TOP: 4 KPI CARDS */}
+        <div className="grid grid-cols-4 gap-4 shrink-0">
+          <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm flex flex-col justify-between">
             <div className="flex items-center justify-between">
-              <div>
-                <h3 className="text-sm font-bold text-slate-900">Configured Client Entities ({clientListKeys.length})</h3>
-                <p className="text-xs text-slate-500">
-                  Select <strong>"Manage Client & COA"</strong> to edit that specific client.
-                </p>
-              </div>
+              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                Revenue From Operations
+              </span>
+              <span className="p-2 rounded-lg bg-emerald-50 text-emerald-600">
+                <TrendingUp className="w-4 h-4" />
+              </span>
             </div>
-
-            <div className="grid grid-cols-2 gap-4 pt-2">
-              {clientListKeys.map((clientName) => {
-                const profile = profiles[clientName] || {};
-                const isActive = clientName === activeClient;
-                const coaKey = `c4_coa_${clientName}`;
-                let coaCount = 0;
-                try {
-                  const storedCoa = localStorage.getItem(coaKey);
-                  coaCount = storedCoa ? JSON.parse(storedCoa).length : 0;
-                } catch {
-                  coaCount = 0;
-                }
-
-                return (
-                  <div
-                    key={clientName}
-                    className={`bg-white rounded-xl border p-5 transition shadow-sm hover:shadow-md flex flex-col justify-between ${
-                      isActive ? "border-slate-900 ring-2 ring-slate-900/10" : "border-slate-200"
-                    }`}
-                  >
-                    <div>
-                      <div className="flex items-start justify-between">
-                        <div className="flex items-center gap-3">
-                          {profile.logoUrl ? (
-                            <img
-                              src={profile.logoUrl}
-                              alt="Logo"
-                              className="w-10 h-10 object-contain rounded border border-slate-200 p-0.5 bg-white"
-                            />
-                          ) : (
-                            <div className="w-10 h-10 rounded-lg bg-slate-900 text-white font-bold flex items-center justify-center text-sm">
-                              {clientName.substring(0, 2).toUpperCase()}
-                            </div>
-                          )}
-                          <div>
-                            <h4 className="text-sm font-bold text-slate-900 leading-tight">{clientName}</h4>
-                            <p className="text-[11px] font-mono text-slate-500 mt-0.5">
-                              {profile.gstin ? `GSTIN: ${profile.gstin}` : "No GSTIN Configured"}
-                            </p>
-                          </div>
-                        </div>
-
-                        <div className="flex items-center gap-1.5">
-                          {isActive && (
-                            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
-                              <CheckCircle2 className="w-3 h-3 text-emerald-600" /> Active
-                            </span>
-                          )}
-
-                          <button
-                            onClick={(e) => handleDeleteClient(clientName, e)}
-                            className="text-slate-300 hover:text-rose-600 p-1 rounded transition"
-                            title="Delete Client"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </div>
-                      </div>
-
-                      <div className="mt-4 pt-3 border-t border-slate-100 text-xs text-slate-500 space-y-1">
-                        <p className="truncate">
-                          <strong>Address:</strong> {profile.address ? profile.address : "Pending setup"}
-                        </p>
-                        <p>
-                          <strong>Bank:</strong> {profile.bankName ? `${profile.bankName} (${profile.accountNo || "-"})` : "Not linked"}
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between">
-                      <span className="text-[11px] font-mono font-semibold text-slate-600 bg-slate-100 px-2.5 py-0.5 rounded">
-                        {coaCount} Custom Ledgers
-                      </span>
-
-                      <button
-                        onClick={() => handleOpenClient(clientName)}
-                        className="text-xs font-bold text-white bg-slate-900 hover:bg-slate-800 px-3.5 py-1.5 rounded-lg flex items-center gap-1 transition shadow-sm"
-                      >
-                        Manage Client & COA <ChevronRight className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
+            <p className="text-2xl font-black font-mono text-slate-900 mt-2">
+              ₹{kpiData.totalRevenue.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+            </p>
+            <div className="flex items-center justify-between text-xs text-slate-400 pt-2 mt-2 border-t border-slate-100">
+              <span>Gross: ₹{kpiData.totalGross.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</span>
+              <span className="bg-emerald-50 text-emerald-700 font-bold px-2 py-0.5 rounded text-[10px]">
+                {kpiData.salesCount} Bills / JVs
+              </span>
             </div>
           </div>
-        )}
 
-        {/* 2. PROFILE TAB */}
-        {viewMode === "manage" && manageSubTab === "profile" && (
-          <div className="space-y-6">
-            <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm space-y-4">
-              <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-                <ImageIcon className="w-4 h-4 text-slate-600" /> Entity Branding & Signatures (For Invoices)
-              </h3>
-
-              <div className="grid grid-cols-2 gap-6 pt-2">
-                <div className="border border-dashed border-slate-300 rounded-xl p-4 flex flex-col items-center justify-center text-center bg-slate-50/50">
-                  {currentForm.logoUrl ? (
-                    <div className="relative group mb-3">
-                      <img src={currentForm.logoUrl} alt="Logo" className="max-h-24 max-w-full object-contain rounded border border-slate-200 bg-white p-1" />
-                      <button onClick={() => setCurrentForm((p) => ({ ...p, logoUrl: "" }))} className="absolute -top-2 -right-2 bg-rose-600 text-white rounded-full p-1 shadow hover:bg-rose-700">
-                        <Trash2 className="w-3 h-3" />
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="w-16 h-16 rounded-full bg-slate-100 flex items-center justify-center text-slate-400 mb-2">
-                      <ImageIcon className="w-7 h-7" />
-                    </div>
-                  )}
-                  <input type="file" ref={logoInputRef} onChange={(e) => handleImageUpload(e, "logoUrl")} accept="image/*" className="hidden" />
-                  <button onClick={() => logoInputRef.current?.click()} className="px-3 py-1.5 bg-white border border-slate-300 hover:border-slate-400 rounded-lg text-xs font-semibold text-slate-700 transition">
-                    {currentForm.logoUrl ? "Replace Logo" : "Upload Company Logo"}
-                  </button>
-                  <p className="text-[10px] text-slate-400 mt-1">PNG, JPG up to 2MB</p>
-                </div>
-
-                <div className="border border-dashed border-slate-300 rounded-xl p-4 flex flex-col items-center justify-center text-center bg-slate-50/50">
-                  {currentForm.signatureUrl ? (
-                    <div className="relative group mb-3">
-                      <img src={currentForm.signatureUrl} alt="Signature" className="max-h-24 max-w-full object-contain rounded border border-slate-200 bg-white p-1" />
-                      <button onClick={() => setCurrentForm((p) => ({ ...p, signatureUrl: "" }))} className="absolute -top-2 -right-2 bg-rose-600 text-white rounded-full p-1 shadow hover:bg-rose-700">
-                        <Trash2 className="w-3 h-3" />
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="w-16 h-16 rounded-full bg-slate-100 flex items-center justify-center text-slate-400 mb-2">
-                      <PenTool className="w-7 h-7" />
-                    </div>
-                  )}
-                  <input type="file" ref={signatureInputRef} onChange={(e) => handleImageUpload(e, "signatureUrl")} accept="image/*" className="hidden" />
-                  <button onClick={() => signatureInputRef.current?.click()} className="px-3 py-1.5 bg-white border border-slate-300 hover:border-slate-400 rounded-lg text-xs font-semibold text-slate-700 transition">
-                    {currentForm.signatureUrl ? "Replace Signature" : "Upload Authorized Signatory"}
-                  </button>
-                  <p className="text-[10px] text-slate-400 mt-1">Digital signature image</p>
-                </div>
-              </div>
+          <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm flex flex-col justify-between">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                Net Operating Profit
+              </span>
+              <span className={`p-2 rounded-lg ${kpiData.netProfit >= 0 ? "bg-emerald-50 text-emerald-600" : "bg-rose-50 text-rose-600"}`}>
+                {kpiData.netProfit >= 0 ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
+              </span>
             </div>
-
-            <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm space-y-4">
-              <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-                <Building2 className="w-4 h-4 text-slate-600" /> Legal Entity & Statutory Data
-              </h3>
-
-              <div className="grid grid-cols-3 gap-4">
-                <div className="col-span-2">
-                  <label className="block text-xs font-bold text-slate-700 mb-1">Company / Legal Trade Name</label>
-                  <input type="text" value={currentForm.companyName} onChange={(e) => setCurrentForm({ ...currentForm, companyName: e.target.value })} className="w-full text-xs font-bold border border-slate-300 rounded-lg p-2" />
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">GSTIN</label>
-                  <input type="text" placeholder="24ABCDE1234F1Z5" value={currentForm.gstin} onChange={(e) => setCurrentForm({ ...currentForm, gstin: e.target.value.toUpperCase() })} className="w-full text-xs font-mono font-bold border border-slate-300 rounded-lg p-2" />
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">PAN Number</label>
-                  <input type="text" placeholder="ABCDE1234F" value={currentForm.pan} onChange={(e) => setCurrentForm({ ...currentForm, pan: e.target.value.toUpperCase() })} className="w-full text-xs font-mono font-bold border border-slate-300 rounded-lg p-2" />
-                </div>
-                <div className="col-span-2">
-                  <label className="block text-xs font-bold text-slate-700 mb-1">Registered Business Address</label>
-                  <input type="text" placeholder="Complete Office Address" value={currentForm.address} onChange={(e) => setCurrentForm({ ...currentForm, address: e.target.value })} className="w-full text-xs border border-slate-300 rounded-lg p-2" />
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm space-y-4">
-              <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-                <CreditCard className="w-4 h-4 text-slate-600" /> Primary Settlement Bank
-              </h3>
-              <div className="grid grid-cols-4 gap-4">
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">Bank Name</label>
-                  <input type="text" value={currentForm.bankName} onChange={(e) => setCurrentForm({ ...currentForm, bankName: e.target.value })} className="w-full text-xs border border-slate-300 rounded-lg p-2" />
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">Account Number</label>
-                  <input type="text" value={currentForm.accountNo} onChange={(e) => setCurrentForm({ ...currentForm, accountNo: e.target.value })} className="w-full text-xs font-mono font-bold border border-slate-300 rounded-lg p-2" />
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">IFSC Code</label>
-                  <input type="text" value={currentForm.ifscCode} onChange={(e) => setCurrentForm({ ...currentForm, ifscCode: e.target.value.toUpperCase() })} className="w-full text-xs font-mono font-bold border border-slate-300 rounded-lg p-2" />
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">Branch</label>
-                  <input type="text" value={currentForm.branch} onChange={(e) => setCurrentForm({ ...currentForm, branch: e.target.value })} className="w-full text-xs border border-slate-300 rounded-lg p-2" />
-                </div>
-              </div>
-            </div>
-
-            <div className="flex justify-end">
-              <button onClick={handleSaveProfile} className="flex items-center gap-1.5 px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-bold transition shadow-md">
-                <Save className="w-4 h-4" /> Save Profile & Brand Masters
-              </button>
+            <p className={`text-2xl font-black font-mono mt-2 ${kpiData.netProfit >= 0 ? "text-emerald-700" : "text-rose-600"}`}>
+              {kpiData.netProfit < 0 ? "-" : ""}₹{Math.abs(kpiData.netProfit).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+            </p>
+            <div className="flex items-center justify-between text-xs text-slate-400 pt-2 mt-2 border-t border-slate-100">
+              <span>Margin:</span>
+              <span className={`font-bold text-[10px] px-2 py-0.5 rounded ${kpiData.netProfit >= 0 ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"}`}>
+                {kpiData.netMargin.toFixed(1)}% NP
+              </span>
             </div>
           </div>
-        )}
 
-        {/* 3. CHART OF ACCOUNTS TAB */}
-        {viewMode === "manage" && manageSubTab === "coa" && (
-          <div className="space-y-6">
-            {/* ADD LEDGER FORM */}
-            <form onSubmit={handleAddLedger} className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm space-y-4">
-              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-                <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
-                  <Plus className="w-4 h-4 text-slate-600" /> Add Single Ledger for {activeClient}
-                </h3>
-                <span className="text-[11px] text-slate-400">Or use "Bulk Upload COA" above for spreadsheet import</span>
-              </div>
-
-              <div className="grid grid-cols-12 gap-3 items-end">
-                <div className={newStatementType === "P&L" ? "col-span-4" : "col-span-5"}>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">Ledger Name <span className="text-rose-500">*</span></label>
-                  <input
-                    type="text"
-                    placeholder="e.g. Swiggy - Commission / Sales Dine In"
-                    value={newLedgerName}
-                    onChange={(e) => setNewLedgerName(e.target.value)}
-                    className="w-full text-xs font-semibold border border-slate-300 rounded-lg p-2 focus:ring-1 focus:ring-slate-900"
-                  />
-                </div>
-
-                <div className={newStatementType === "P&L" ? "col-span-2" : "col-span-3"}>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">Statement Nature <span className="text-rose-500">*</span></label>
-                  <select
-                    value={newStatementType}
-                    onChange={(e) => setNewStatementType(e.target.value)}
-                    className="w-full text-xs border border-slate-300 rounded-lg p-2 bg-white font-medium"
-                  >
-                    <option value="P&L">Profit & Loss (P&L)</option>
-                    <option value="Balance Sheet">Balance Sheet</option>
-                  </select>
-                </div>
-
-                {newStatementType === "P&L" && (
-                  <div className="col-span-3">
-                    <label className="block text-xs font-bold text-slate-700 mb-1">
-                      P&L Item Nature <span className="text-rose-500">*</span>
-                    </label>
-                    <select
-                      value={newCostNature}
-                      onChange={(e) => setNewCostNature(e.target.value)}
-                      className="w-full text-xs font-bold border border-slate-300 rounded-lg p-2 bg-white text-slate-900"
-                    >
-                      <option value="COGS">Direct Cost / Purchase (COGS)</option>
-                      <option value="Indirect">Indirect Operating Expense (Overhead)</option>
-                      <option value="Revenue">Revenue from Operations (Sales)</option>
-                      <option value="Other Income">Other / Non-Operating Income</option>
-                    </select>
-                  </div>
-                )}
-
-                <div className={newStatementType === "P&L" ? "col-span-3" : "col-span-4"}>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">Category Name <span className="text-rose-500">*</span></label>
-                  <input
-                    type="text"
-                    placeholder="e.g. Sales / Purchases / Administrative"
-                    value={newLedgerCategory}
-                    onChange={(e) => setNewLedgerCategory(e.target.value)}
-                    className="w-full text-xs border border-slate-300 rounded-lg p-2 bg-white font-medium"
-                  />
-                </div>
-
-                <div className="col-span-12 flex justify-end pt-2">
-                  <button
-                    type="submit"
-                    className="flex items-center gap-1.5 px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-bold transition shadow-sm"
-                  >
-                    <Plus className="w-3.5 h-3.5" /> + Add Ledger
-                  </button>
-                </div>
-              </div>
-            </form>
-
-            {/* FILTER STRIP */}
-            <div className="flex items-center justify-between bg-white px-5 py-3 rounded-xl border border-slate-200">
-              <div className="flex items-center gap-2">
-                <Filter className="w-4 h-4 text-slate-500" />
-                <span className="text-xs font-bold text-slate-700">Filter By Statement:</span>
-              </div>
-              <div className="flex items-center gap-2">
-                {["ALL", "P&L", "Balance Sheet"].map((f) => (
-                  <button
-                    key={f}
-                    onClick={() => setCoaFilter(f)}
-                    className={`px-3 py-1 rounded-lg text-xs font-bold transition ${
-                      coaFilter === f ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-                    }`}
-                  >
-                    {f} ({f === "ALL" ? clientCoa.length : clientCoa.filter((l) => l.statementType === f).length})
-                  </button>
-                ))}
-              </div>
+          <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm flex flex-col justify-between">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                Accounts Payable
+              </span>
+              <span className="p-2 rounded-lg bg-amber-50 text-amber-600">
+                <CreditCard className="w-4 h-4" />
+              </span>
             </div>
+            <p className="text-2xl font-black font-mono text-slate-900 mt-2">
+              ₹{kpiData.accountsPayable.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+            </p>
+            <div className="flex items-center justify-between text-xs text-slate-400 pt-2 mt-2 border-t border-slate-100">
+              <span>Sundry Creditors</span>
+              <span className="text-slate-500 font-semibold text-[10px]">Unpaid Outstandings</span>
+            </div>
+          </div>
 
-            {/* DYNAMIC LISTING */}
-            <div className="space-y-4">
-              {Object.keys(categoriesGrouped).length === 0 ? (
-                <div className="bg-white rounded-xl border border-slate-200 p-12 text-center text-slate-400 text-xs">
-                  No ledgers uploaded yet for {activeClient}. Click "Bulk Upload COA" or add manually above.
-                </div>
+          <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm flex flex-col justify-between">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                Accounts Receivable
+              </span>
+              <span className="p-2 rounded-lg bg-indigo-50 text-indigo-600">
+                <ArrowDownRight className="w-4 h-4" />
+              </span>
+            </div>
+            <p className="text-2xl font-black font-mono text-slate-900 mt-2">
+              ₹{kpiData.accountsReceivable.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+            </p>
+            <div className="flex items-center justify-between text-xs text-slate-400 pt-2 mt-2 border-t border-slate-100">
+              <span>Debtors & Aggregators</span>
+              <span className="bg-indigo-50 text-indigo-700 font-bold px-2 py-0.5 rounded text-[10px]">
+                Pending Collection
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* 2. MIDDLE: PROFIT AND LOSS STATEMENT */}
+        <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden flex flex-col">
+          <div className="px-6 py-3.5 border-b border-slate-200 bg-slate-50/70 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Scale className="w-4 h-4 text-slate-700" />
+              <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
+                Statement of Profit and Loss (Current Period)
+              </h3>
+            </div>
+            <span className="text-[11px] text-slate-400 font-medium">
+              Schedule III Classified by Client COA
+            </span>
+          </div>
+
+          <table className="w-full text-left text-xs">
+            <thead className="bg-white border-b border-slate-100 text-slate-400 font-semibold uppercase text-[10px]">
+              <tr>
+                <th className="py-2.5 px-6">Schedule / Category Name</th>
+                <th className="py-2.5 px-6">Type</th>
+                <th className="py-2.5 px-6 text-right">Amount (₹)</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 font-medium text-slate-700 text-xs">
+              <tr className="hover:bg-slate-50/50">
+                <td className="py-2.5 px-6 font-bold text-slate-900">I. Revenue from Operations (Net Sales)</td>
+                <td className="py-2.5 px-6 font-mono text-slate-400 text-[11px]">Sales Register</td>
+                <td className="py-2.5 px-6 text-right font-mono font-bold text-slate-900">
+                  ₹{kpiData.totalRevenue.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                </td>
+              </tr>
+
+              <tr className="hover:bg-slate-50/50">
+                <td className="py-2 px-6 pl-9 text-slate-600">Less: Cost of Goods Sold / Purchases (COGS)</td>
+                <td className="py-2 px-6 font-mono text-slate-400 text-[11px]">Direct Inventory Purchases</td>
+                <td className="py-2 px-6 text-right font-mono text-rose-600">
+                  -₹{plBreakdown.directCogs.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                </td>
+              </tr>
+
+              <tr className="bg-slate-50/80 font-bold border-y border-slate-200">
+                <td className="py-2.5 px-6 text-slate-900 font-black">GROSS PROFIT (I – COGS)</td>
+                <td className="py-2.5 px-6 font-mono text-indigo-700 text-[11px]">
+                  {grossMargin.toFixed(1)}% GP
+                </td>
+                <td className="py-2.5 px-6 text-right font-mono font-black text-slate-900">
+                  ₹{grossProfit.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                </td>
+              </tr>
+
+              {/* OTHER INCOME (IF ANY) */}
+              {plBreakdown.otherIncomeTotal > 0 && (
+                <tr className="hover:bg-slate-50/50 bg-emerald-50/30">
+                  <td className="py-2 px-6 font-semibold text-emerald-800">Add: Other / Non-Operating Income</td>
+                  <td className="py-2 px-6 font-mono text-emerald-600 text-[11px]">Non-Operating Income</td>
+                  <td className="py-2 px-6 text-right font-mono font-bold text-emerald-700">
+                    +₹{plBreakdown.otherIncomeTotal.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                  </td>
+                </tr>
+              )}
+
+              <tr className="bg-white">
+                <td colSpan="3" className="py-1.5 px-6 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                  II. Indirect Operating Expenses (Client P&L Heads)
+                </td>
+              </tr>
+
+              {Object.keys(plBreakdown.indirectCategories).length === 0 ? (
+                <tr>
+                  <td className="py-1.5 px-6 pl-9 text-slate-400 italic">No indirect operating expenses recorded</td>
+                  <td className="py-1.5 px-6 font-mono text-slate-400 text-[11px]">Uploaded COA</td>
+                  <td className="py-1.5 px-6 text-right font-mono text-slate-400">₹0.00</td>
+                </tr>
               ) : (
-                Object.entries(categoriesGrouped).map(([categoryName, ledgers]) => {
-                  const statementNature = ledgers[0]?.statementType || "P&L";
-
-                  return (
-                    <div key={categoryName} className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
-                      <div className="bg-slate-50/80 px-5 py-3 border-b border-slate-200 flex items-center justify-between">
-                        <div className="flex items-center gap-2.5">
-                          <Layers className="w-4 h-4 text-slate-600" />
-                          <h4 className="text-xs font-bold text-slate-900">{categoryName}</h4>
-                          <span className={`text-[10px] px-2 py-0.5 rounded font-bold uppercase ${
-                            statementNature === "P&L" ? "bg-emerald-50 text-emerald-800 border border-emerald-200" : "bg-indigo-50 text-indigo-800 border border-indigo-200"
-                          }`}>
-                            {statementNature}
-                          </span>
-                        </div>
-                        <span className="text-[11px] font-mono font-semibold text-slate-500 bg-white border border-slate-200 px-2.5 py-0.5 rounded-full">
-                          {ledgers.length} Ledgers
-                        </span>
-                      </div>
-
-                      <div className="divide-y divide-slate-100">
-                        {ledgers.map((item) => {
-                          const plNature = getPlNature(item);
-
-                          return (
-                            <div key={item.id} className="px-5 py-2.5 flex items-center justify-between hover:bg-slate-50/50 transition">
-                              <div className="flex items-center gap-2.5">
-                                <span className="text-xs font-semibold text-slate-800">{item.name}</span>
-                                
-                                {item.statementType === "P&L" && (
-                                  <>
-                                    {/* 1. REVENUE BADGE */}
-                                    {plNature === "Revenue" && (
-                                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
-                                        Revenue from Operations
-                                      </span>
-                                    )}
-
-                                    {/* 2. OTHER INCOME BADGE */}
-                                    {plNature === "Other Income" && (
-                                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-teal-100 text-teal-800 border border-teal-300">
-                                        Other Non-Operating Income
-                                      </span>
-                                    )}
-
-                                    {/* 3. EXPENSES: INTERACTIVE TOGGLE BADGE (COGS <-> INDIRECT) */}
-                                    {(plNature === "COGS" || plNature === "Indirect") && (
-                                      <button
-                                        onClick={() => handleToggleCogsClassification(item.id)}
-                                        className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold cursor-pointer transition shadow-2xs hover:scale-105 ${
-                                          plNature === "COGS"
-                                            ? "bg-amber-100 hover:bg-amber-200 text-amber-800 border border-amber-300"
-                                            : "bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200"
-                                        }`}
-                                        title="Click to toggle between Direct (COGS) and Indirect Expense"
-                                      >
-                                        {plNature === "COGS" ? "Direct (COGS) ⇄" : "Indirect Expense ⇄"}
-                                      </button>
-                                    )}
-                                  </>
-                                )}
-                              </div>
-
-                              <div className="flex items-center gap-1">
-                                <button
-                                  onClick={() => setEditingLedger(item)}
-                                  className="text-slate-300 hover:text-indigo-600 p-1.5 rounded transition"
-                                  title="Edit Ledger Details"
-                                >
-                                  <Edit2 className="w-3.5 h-3.5" />
-                                </button>
-
-                                <button
-                                  onClick={() => handleDeleteLedger(item.id, item.name)}
-                                  className="text-slate-300 hover:text-rose-600 p-1.5 rounded transition"
-                                  title="Delete Ledger"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  );
-                })
+                Object.entries(plBreakdown.indirectCategories).map(([cat, amt]) => (
+                  <tr key={cat} className="hover:bg-slate-50/50">
+                    <td className="py-1.5 px-6 pl-9 text-slate-700">{cat}</td>
+                    <td className="py-1.5 px-6 font-mono text-slate-400 text-[11px]">P&L Indirect Overhead</td>
+                    <td className="py-1.5 px-6 text-right font-mono text-rose-600">
+                      -₹{amt.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                    </td>
+                  </tr>
+                ))
               )}
-            </div>
+
+              <tr className="border-t border-slate-100 font-semibold text-slate-700">
+                <td className="py-2 px-6 text-slate-800">Total Indirect Expenses</td>
+                <td className="py-2 px-6 text-slate-400">-</td>
+                <td className="py-2 px-6 text-right font-mono text-rose-600 font-bold">
+                  -₹{plBreakdown.totalIndirect.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+
+          <div className="bg-slate-900 text-white font-bold text-xs px-6 py-3.5 flex items-center justify-between border-t-2 border-slate-900 shrink-0">
+            <span className="font-black uppercase tracking-wider text-xs">
+              NET OPERATING PROFIT / (LOSS)
+            </span>
+            <span className="font-mono text-emerald-400 text-xs">
+              {kpiData.netMargin.toFixed(1)}% NP Margin
+            </span>
+            <span className="font-mono font-black text-base text-emerald-400">
+              {kpiData.netProfit < 0 ? "-" : ""}₹{Math.abs(kpiData.netProfit).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+            </span>
           </div>
-        )}
+        </div>
+
+        {/* 3. BOTTOM: 3 EXPANDED LINE GRAPHS (LAST 6 MONTHS) */}
+        <div className="grid grid-cols-3 gap-4 shrink-0 pb-2">
+          {/* GRAPH 1: SALES LINE GRAPH */}
+          <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex flex-col justify-between">
+            <div className="flex items-center justify-between pb-1 border-b border-slate-100">
+              <div>
+                <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
+                  <Activity className="w-4 h-4 text-emerald-600" /> Sales Trend Line
+                </h4>
+                <p className="text-[10px] text-slate-400">Monthly Turnover (Last 6 Months)</p>
+              </div>
+              <span className="text-xs font-mono font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded">
+                ₹{last6MonthsData.reduce((acc, m) => acc + m.sales, 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}
+              </span>
+            </div>
+            {renderLineChart(last6MonthsData, "sales", "#10b981", "#10b981")}
+          </div>
+
+          {/* GRAPH 2: TOTAL COST LINE GRAPH */}
+          <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex flex-col justify-between">
+            <div className="flex items-center justify-between pb-1 border-b border-slate-100">
+              <div>
+                <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
+                  <Activity className="w-4 h-4 text-amber-600" /> Total Cost Trend Line
+                </h4>
+                <p className="text-[10px] text-slate-400">COGS Purchases + Overheads</p>
+              </div>
+              <span className="text-xs font-mono font-bold text-amber-700 bg-amber-50 px-2.5 py-1 rounded">
+                ₹{last6MonthsData.reduce((acc, m) => acc + m.cost, 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}
+              </span>
+            </div>
+            {renderLineChart(last6MonthsData, "cost", "#f59e0b", "#f59e0b")}
+          </div>
+
+          {/* GRAPH 3: NET PROFIT LINE GRAPH */}
+          <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex flex-col justify-between">
+            <div className="flex items-center justify-between pb-1 border-b border-slate-100">
+              <div>
+                <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
+                  <Activity className="w-4 h-4 text-indigo-600" /> Net Profit Trend Line
+                </h4>
+                <p className="text-[10px] text-slate-400">Bottom-Line Margin per Month</p>
+              </div>
+              <span className={`text-xs font-mono font-bold px-2.5 py-1 rounded ${
+                kpiData.netProfit >= 0 ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"
+              }`}>
+                {last6MonthsData.reduce((acc, m) => acc + m.netProfit, 0) >= 0 ? "+" : ""}
+                ₹{last6MonthsData.reduce((acc, m) => acc + m.netProfit, 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}
+              </span>
+            </div>
+            {renderLineChart(last6MonthsData, "netProfit", "#6366f1", "#6366f1")}
+          </div>
+        </div>
+
       </div>
-
-      {/* EDIT LEDGER MODAL */}
-      {editingLedger && (
-        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl border border-slate-200 shadow-xl max-w-md w-full p-6 space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                <Edit2 className="w-4 h-4 text-indigo-600" /> Edit Ledger Account
-              </h3>
-              <button onClick={() => setEditingLedger(null)} className="text-slate-400 hover:text-slate-600">
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <div className="space-y-3">
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">Ledger Name</label>
-                <input
-                  type="text"
-                  value={editingLedger.name}
-                  onChange={(e) => setEditingLedger({ ...editingLedger, name: e.target.value })}
-                  className="w-full text-xs font-bold border border-slate-300 rounded-lg p-2"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">Statement Nature</label>
-                <select
-                  value={editingLedger.statementType}
-                  onChange={(e) => setEditingLedger({ ...editingLedger, statementType: e.target.value })}
-                  className="w-full text-xs border border-slate-300 rounded-lg p-2 bg-white"
-                >
-                  <option value="P&L">Profit & Loss (P&L)</option>
-                  <option value="Balance Sheet">Balance Sheet</option>
-                </select>
-              </div>
-
-              {editingLedger.statementType === "P&L" && (
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">P&L Item Nature</label>
-                  <select
-                    value={editingLedger.cogsClassification || getPlNature(editingLedger)}
-                    onChange={(e) => setEditingLedger({ ...editingLedger, cogsClassification: e.target.value })}
-                    className="w-full text-xs font-bold border border-slate-300 rounded-lg p-2 bg-white"
-                  >
-                    <option value="COGS">Direct Cost / Purchase (COGS)</option>
-                    <option value="Indirect">Indirect Operating Expense (Overhead)</option>
-                    <option value="Revenue">Revenue from Operations (Sales)</option>
-                    <option value="Other Income">Other / Non-Operating Income</option>
-                  </select>
-                </div>
-              )}
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">Category / Group Name</label>
-                <input
-                  type="text"
-                  value={editingLedger.category}
-                  onChange={(e) => setEditingLedger({ ...editingLedger, category: e.target.value })}
-                  className="w-full text-xs border border-slate-300 rounded-lg p-2"
-                />
-              </div>
-            </div>
-
-            <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
-              <button
-                onClick={() => setEditingLedger(null)}
-                className="px-4 py-2 border border-slate-200 text-slate-600 rounded-lg text-xs font-bold hover:bg-slate-50 transition"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleSaveEditLedger}
-                className="px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-bold shadow-sm transition"
-              >
-                Save Changes
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {notification && (
-        <div
-          className={`fixed bottom-6 right-6 px-4 py-2.5 rounded-lg text-white text-xs font-semibold flex items-center gap-2 shadow-lg transition-all z-50 ${
-            notification.type === "error" ? "bg-rose-600" : "bg-slate-900"
-          }`}
-        >
-          {notification.type === "error" ? <AlertCircle className="w-4 h-4" /> : <CheckCircle2 className="w-4 h-4 text-emerald-400" />}
-          {notification.msg}
-        </div>
-      )}
     </div>
   );
 }
