@@ -16,7 +16,8 @@ import {
   ChevronDown,
   ChevronRight,
   Edit2,
-  RotateCcw
+  RotateCcw,
+  Search
 } from "lucide-react";
 
 const DEFAULT_BANK_LEDGERS = [
@@ -48,8 +49,112 @@ const loadSheetJS = () => {
   });
 };
 
-export default function BankModule({ activeClient = "Panasuria Confectionery & Food" }) {
-  const [bankSubTab, setBankSubTab] = useState("needs_review"); // 'needs_review' | 'approved' | 'pushed'
+// ROBUST POP-OUT SEARCHABLE TYPEAHEAD COMBOBOX
+function SearchableLedgerSelect({ value, onChange, coaList = [], fallbackOptions = [], placeholder = "Type to search ledger..." }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [searchTerm, setSearchTerm] = useState("");
+  const dropdownRef = useRef(null);
+
+  const filteredGroups = useMemo(() => {
+    const term = searchTerm.toLowerCase().trim();
+    const groups = {};
+
+    if (coaList && coaList.length > 0) {
+      coaList.forEach((l) => {
+        const name = l.name || "";
+        const cat = l.category || "General Accounts";
+        if (!term || name.toLowerCase().includes(term) || cat.toLowerCase().includes(term)) {
+          if (!groups[cat]) groups[cat] = [];
+          groups[cat].push(l);
+        }
+      });
+    }
+
+    if (Object.keys(groups).length === 0) {
+      const defaultGroup = "Standard Accounts";
+      groups[defaultGroup] = fallbackOptions
+        .filter((name) => !term || name.toLowerCase().includes(term))
+        .map((name) => ({ name, category: defaultGroup }));
+    }
+
+    return groups;
+  }, [coaList, fallbackOptions, searchTerm]);
+
+  useEffect(() => {
+    const handleOutsideClick = (e) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target)) {
+        setIsOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleOutsideClick);
+    return () => document.removeEventListener("mousedown", handleOutsideClick);
+  }, []);
+
+  return (
+    <div className="relative w-full" ref={dropdownRef}>
+      <div className="relative">
+        <input
+          type="text"
+          placeholder={placeholder}
+          value={isOpen ? searchTerm : (value || "")}
+          onFocus={() => {
+            setSearchTerm("");
+            setIsOpen(true);
+          }}
+          onChange={(e) => {
+            setSearchTerm(e.target.value);
+            setIsOpen(true);
+          }}
+          className="w-full text-xs font-semibold border border-slate-300 rounded p-1.5 bg-white text-slate-800 pr-7 focus:outline-none focus:ring-1 focus:ring-slate-900 transition"
+        />
+        <Search className="w-3.5 h-3.5 text-slate-400 absolute right-2 top-2.5 pointer-events-none" />
+      </div>
+
+      {isOpen && (
+        <div 
+          className="absolute left-0 top-full mt-1 w-[320px] max-h-64 bg-white border border-slate-200 rounded-xl shadow-2xl overflow-y-auto z-[999] divide-y divide-slate-100"
+          style={{ minWidth: "100%" }}
+        >
+          {Object.keys(filteredGroups).length === 0 ? (
+            <div className="p-3 text-xs text-slate-400 text-center italic">
+              No matching ledger in Client COA
+            </div>
+          ) : (
+            Object.entries(filteredGroups).map(([groupName, ledgers]) => (
+              <div key={groupName} className="py-1">
+                <div className="px-3 py-1 text-[10px] font-bold text-slate-500 uppercase tracking-wider bg-slate-50 flex items-center justify-between">
+                  <span>📂 {groupName}</span>
+                  <span className="font-mono text-[9px] text-slate-400">{ledgers.length}</span>
+                </div>
+                {ledgers.map((l) => (
+                  <button
+                    key={l.id || l.name}
+                    type="button"
+                    onClick={() => {
+                      onChange(l.name);
+                      setIsOpen(false);
+                    }}
+                    className={`w-full text-left px-3 py-2 text-xs transition flex items-center justify-between hover:bg-slate-100 ${
+                      value === l.name ? "bg-indigo-50 text-indigo-700 font-bold" : "text-slate-800 font-medium"
+                    }`}
+                  >
+                    <span className="truncate pr-2">{l.name}</span>
+                    <span className="shrink-0 text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-100 text-slate-500">
+                      {l.statementType === "Balance Sheet" ? "B/S" : (l.cogsClassification === "COGS" ? "COGS" : "P&L")}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default function BankModule({ activeClient = "Pansuria Confectionery & Food" }) {
+  const [bankSubTab, setBankSubTab] = useState("needs_review");
 
   // Client-scoped persistent state
   const [transactions, setTransactions] = useState(() => {
@@ -107,18 +212,6 @@ export default function BankModule({ activeClient = "Panasuria Confectionery & F
       return [];
     }
   }, [activeClient]);
-
-  // Group ledgers by Category for select dropdown
-  const groupedLedgers = useMemo(() => {
-    if (!clientCoa || clientCoa.length === 0) return null;
-    const groups = {};
-    clientCoa.forEach((l) => {
-      const cat = l.category || "General Accounts";
-      if (!groups[cat]) groups[cat] = [];
-      groups[cat].push(l.name);
-    });
-    return groups;
-  }, [clientCoa]);
 
   useEffect(() => {
     localStorage.setItem(`c4_bank_transactions_${activeClient}`, JSON.stringify(transactions));
@@ -184,7 +277,6 @@ export default function BankModule({ activeClient = "Panasuria Confectionery & F
     notify("Template downloaded successfully!", "success");
   };
 
-  // EXCEL DOWNLOAD FOR ALL APPROVED TRANSACTIONS
   const handleDownloadApprovedExcel = () => {
     if (approvedTransactions.length === 0) {
       notify("No approved transactions available to export.", "error");
@@ -360,7 +452,6 @@ export default function BankModule({ activeClient = "Panasuria Confectionery & F
     notify(`Assigned "${newLedger}" & auto-approved!`, "success");
   };
 
-  // 1. EDIT LEDGER IN APPROVED TRANSACTIONS TAB
   const handleUpdateApprovedLedger = (txId, newLedger) => {
     if (!newLedger) return;
     setApprovedTransactions((prev) =>
@@ -370,7 +461,6 @@ export default function BankModule({ activeClient = "Panasuria Confectionery & F
     notify(`Updated ledger to "${newLedger}"!`, "success");
   };
 
-  // REVERT APPROVED TRANSACTION BACK TO NEEDS REVIEW
   const handleRevertToReview = (tx) => {
     setApprovedTransactions((prev) => prev.filter((t) => t.id !== tx.id));
     setTransactions((prev) => [tx, ...prev]);
@@ -416,7 +506,6 @@ export default function BankModule({ activeClient = "Panasuria Confectionery & F
     notify("Transaction dismissed.", "info");
   };
 
-  // 2. STRICT VERIFICATION FOR TALLY TRANSMISSION (NO BLIND SHIFTING)
   const pushVoucherToTallyXml = async (tx) => {
     const tallyDate = (tx.date || "").replace(/[^0-9]/g, "");
     const isReceipt = tx.type === "Receipt";
@@ -501,7 +590,7 @@ export default function BankModule({ activeClient = "Panasuria Confectionery & F
         successfullyPushed.push({ ...tx, pushedAt: new Date().toLocaleString() });
         pushedCount++;
       } catch (err) {
-        break; // Stop immediately if Tally port is unreachable
+        break;
       }
     }
 
@@ -521,7 +610,6 @@ export default function BankModule({ activeClient = "Panasuria Confectionery & F
     setIsSyncing(false);
   };
 
-  // Group pushed bank transactions month-wise
   const groupedPushedTransactions = useMemo(() => {
     const groups = {};
     pushedTransactions.forEach((tx) => {
@@ -576,7 +664,7 @@ export default function BankModule({ activeClient = "Panasuria Confectionery & F
   return (
     <div className="flex-1 flex flex-col h-full bg-[#F8FAFC] overflow-hidden">
       {/* HEADER BAR */}
-      <header className="bg-white border-b border-slate-200 px-8 py-4 flex items-center justify-between shadow-sm shrink-0">
+      <header className="bg-white border-b border-slate-200 px-8 py-4 flex items-center justify-between shadow-xs shrink-0">
         <div>
           <h2 className="text-xl font-bold text-slate-900 tracking-tight">Banking Center</h2>
           <div className="flex items-center gap-2 mt-0.5">
@@ -622,7 +710,7 @@ export default function BankModule({ activeClient = "Panasuria Confectionery & F
           <button
             onClick={() => fileInputRef.current?.click()}
             disabled={isUploading}
-            className="flex items-center gap-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold px-4 py-2 rounded-lg transition shadow-sm disabled:opacity-50"
+            className="flex items-center gap-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold px-4 py-2 rounded-lg transition shadow-xs disabled:opacity-50"
           >
             <Upload className="w-3.5 h-3.5" />
             {isUploading ? "Processing..." : "Upload Bank Statement (Excel / CSV)"}
@@ -702,7 +790,7 @@ export default function BankModule({ activeClient = "Panasuria Confectionery & F
 
               <button
                 onClick={handleApproveAll}
-                className="flex items-center gap-1.5 px-3.5 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-md text-xs font-semibold shadow-sm transition"
+                className="flex items-center gap-1.5 px-3.5 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-md text-xs font-semibold shadow-xs transition"
               >
                 <Check className="w-3.5 h-3.5" /> Approve All ({transactions.length})
               </button>
@@ -722,7 +810,7 @@ export default function BankModule({ activeClient = "Panasuria Confectionery & F
               <button
                 onClick={handlePushAllApproved}
                 disabled={isSyncing}
-                className="flex items-center gap-1.5 px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-md text-xs font-bold shadow-sm transition disabled:opacity-50"
+                className="flex items-center gap-1.5 px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-md text-xs font-bold shadow-xs transition disabled:opacity-50"
               >
                 <Send className="w-3.5 h-3.5" />
                 {isSyncing ? "Pushing to Tally..." : `Push All to Tally (${approvedTransactions.length})`}
@@ -738,7 +826,7 @@ export default function BankModule({ activeClient = "Panasuria Confectionery & F
         {bankSubTab !== "pushed" && (
           <>
             {displayedList.length === 0 ? (
-              <div className="bg-white rounded-xl border border-slate-200 p-16 flex flex-col items-center justify-center text-center shadow-sm">
+              <div className="bg-white rounded-xl border border-slate-200 p-16 flex flex-col items-center justify-center text-center shadow-xs">
                 <FileSpreadsheet className="w-12 h-12 text-slate-300 mb-3" />
                 <p className="text-sm font-semibold text-slate-700">
                   No transactions in {bankSubTab === "needs_review" ? "Needs Review" : "Approved"}
@@ -748,14 +836,14 @@ export default function BankModule({ activeClient = "Panasuria Confectionery & F
                 </p>
               </div>
             ) : (
-              <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
+              <div className="bg-white border border-slate-200 rounded-xl overflow-visible shadow-xs">
                 <table className="w-full text-left text-xs">
                   <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 font-semibold uppercase text-[10px]">
                     <tr>
                       <th className="py-3 px-4">Date</th>
                       <th className="py-3 px-4">Type</th>
                       <th className="py-3 px-4">Narration / Description</th>
-                      <th className="py-3 px-4">Ledger Allocation</th>
+                      <th className="py-3 px-4 w-72">Ledger Allocation</th>
                       <th className="py-3 px-4 text-right">Amount (₹)</th>
                       <th className="py-3 px-4 text-center">Action</th>
                     </tr>
@@ -784,40 +872,19 @@ export default function BankModule({ activeClient = "Panasuria Confectionery & F
                           <p className="font-mono text-[10px] text-slate-400 mt-0.5">Ref: {tx.refNo}</p>
                         </td>
 
-                        {/* LEDGER ALLOCATION WITH INLINE EDIT FOR APPROVED TRANSACTIONS */}
-                        <td className="py-3 px-4">
+                        {/* SEARCHABLE TYPEAHEAD COMBOBOX IN BANK TABLE */}
+                        <td className="py-3 px-4 relative overflow-visible">
                           {bankSubTab === "needs_review" ? (
                             <div className="flex items-center gap-1.5">
-                              <select
-                                defaultValue=""
-                                onChange={(e) => {
-                                  if (e.target.value) {
-                                    handleLedgerSelectAndAutoApprove(tx, e.target.value);
-                                  }
-                                }}
-                                className="bg-white border border-slate-300 hover:border-slate-400 rounded px-2.5 py-1 text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-slate-900 transition max-w-xs text-slate-800"
-                              >
-                                <option value="" disabled>
-                                  Select Ledger to Approve →
-                                </option>
-                                {groupedLedgers ? (
-                                  Object.entries(groupedLedgers).map(([catName, ledgers]) => (
-                                    <optgroup key={catName} label={`📂 ${catName}`}>
-                                      {ledgers.map((opt) => (
-                                        <option key={opt} value={opt}>
-                                          {opt}
-                                        </option>
-                                      ))}
-                                    </optgroup>
-                                  ))
-                                ) : (
-                                  DEFAULT_BANK_LEDGERS.map((opt) => (
-                                    <option key={opt} value={opt}>
-                                      {opt}
-                                    </option>
-                                  ))
-                                )}
-                              </select>
+                              <div className="flex-1">
+                                <SearchableLedgerSelect
+                                  value={tx.allocatedLedger}
+                                  onChange={(selectedLedger) => handleLedgerSelectAndAutoApprove(tx, selectedLedger)}
+                                  coaList={clientCoa}
+                                  fallbackOptions={DEFAULT_BANK_LEDGERS}
+                                  placeholder="Type to allocate & approve →"
+                                />
+                              </div>
                               {tx.isAutoMatched && (
                                 <span title={`Auto-suggested: ${tx.allocatedLedger}`} className="text-indigo-600 shrink-0">
                                   <Sparkles className="w-3.5 h-3.5" />
@@ -826,32 +893,15 @@ export default function BankModule({ activeClient = "Panasuria Confectionery & F
                             </div>
                           ) : editingApprovedId === tx.id ? (
                             <div className="flex items-center gap-1.5">
-                              <select
-                                defaultValue={tx.allocatedLedger}
-                                onChange={(e) => handleUpdateApprovedLedger(tx.id, e.target.value)}
-                                className="bg-white border border-indigo-400 rounded px-2 py-1 text-xs font-bold text-indigo-900 focus:outline-none focus:ring-1 focus:ring-indigo-600"
-                              >
-                                <option value="" disabled>
-                                  Change Allocated Ledger...
-                                </option>
-                                {groupedLedgers ? (
-                                  Object.entries(groupedLedgers).map(([catName, ledgers]) => (
-                                    <optgroup key={catName} label={`📂 ${catName}`}>
-                                      {ledgers.map((opt) => (
-                                        <option key={opt} value={opt}>
-                                          {opt}
-                                        </option>
-                                      ))}
-                                    </optgroup>
-                                  ))
-                                ) : (
-                                  DEFAULT_BANK_LEDGERS.map((opt) => (
-                                    <option key={opt} value={opt}>
-                                      {opt}
-                                    </option>
-                                  ))
-                                )}
-                              </select>
+                              <div className="flex-1">
+                                <SearchableLedgerSelect
+                                  value={tx.allocatedLedger}
+                                  onChange={(selectedLedger) => handleUpdateApprovedLedger(tx.id, selectedLedger)}
+                                  coaList={clientCoa}
+                                  fallbackOptions={DEFAULT_BANK_LEDGERS}
+                                  placeholder="Type to re-allocate..."
+                                />
+                              </div>
                               <button
                                 onClick={() => setEditingApprovedId(null)}
                                 className="text-slate-400 hover:text-slate-600 text-xs px-1"
@@ -884,7 +934,7 @@ export default function BankModule({ activeClient = "Panasuria Confectionery & F
                             <div className="inline-flex items-center gap-1.5">
                               <button
                                 onClick={() => handleApproveSingle(tx)}
-                                className="px-3 py-1 bg-slate-900 hover:bg-slate-800 text-white rounded font-semibold text-[11px] shadow-sm transition"
+                                className="px-3 py-1 bg-slate-900 hover:bg-slate-800 text-white rounded font-semibold text-[11px] shadow-xs transition"
                               >
                                 Approve
                               </button>
@@ -902,9 +952,9 @@ export default function BankModule({ activeClient = "Panasuria Confectionery & F
                             <div className="inline-flex items-center gap-1.5">
                               <button
                                 onClick={() => handlePushSingle(tx)}
-                                className="inline-flex items-center gap-1 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-[11px] px-3 py-1 rounded shadow-sm transition"
+                                className="inline-flex items-center gap-1 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-[11px] px-3 py-1 rounded shadow-xs transition"
                               >
-                                <Send className="w-3 h-3" /> Push
+                                <Send className="w-3.5 h-3.5" /> Push
                               </button>
                               <button
                                 onClick={() => handleRevertToReview(tx)}
@@ -932,11 +982,11 @@ export default function BankModule({ activeClient = "Panasuria Confectionery & F
           </>
         )}
 
-        {/* TAB 3: PUSHED TO TALLY — ORGANIZED IN MONTH-WISE FOLDERS */}
+        {/* TAB 3: PUSHED TO TALLY */}
         {bankSubTab === "pushed" && (
           <div className="space-y-4">
             {groupedPushedTransactions.length === 0 ? (
-              <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-16 text-center">
+              <div className="bg-white border border-slate-200 rounded-xl shadow-xs p-16 text-center">
                 <FileSpreadsheet className="w-8 h-8 text-blue-300 mx-auto mb-2" />
                 <p className="text-sm font-semibold text-slate-700">No transactions pushed to Tally yet</p>
                 <p className="text-xs text-slate-400 mt-0.5">
@@ -948,8 +998,7 @@ export default function BankModule({ activeClient = "Panasuria Confectionery & F
                 const isExpanded = expandedFolders[group.monthLabel] !== false;
 
                 return (
-                  <div key={group.monthLabel} className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
-                    {/* FOLDER BANNER HEADER */}
+                  <div key={group.monthLabel} className="bg-white border border-slate-200 rounded-xl shadow-xs overflow-hidden">
                     <div
                       onClick={() => toggleFolder(group.monthLabel)}
                       className="px-6 py-4 bg-slate-50/80 hover:bg-slate-100/80 border-b border-slate-200 flex items-center justify-between cursor-pointer transition select-none"
@@ -986,7 +1035,6 @@ export default function BankModule({ activeClient = "Panasuria Confectionery & F
                       </div>
                     </div>
 
-                    {/* FOLDER CONTENTS */}
                     {isExpanded && (
                       <table className="w-full text-left text-xs text-slate-600">
                         <thead className="bg-white border-b border-slate-200 uppercase font-semibold text-slate-400 text-[10px]">
