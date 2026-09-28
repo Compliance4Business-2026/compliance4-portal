@@ -19,12 +19,11 @@ import {
   Edit2, 
   Sparkles, 
   X, 
-  ShieldCheck, 
-  ShieldAlert,
-  Users,
-  Key,
-  Lock,
-  UserCheck
+  Users, 
+  Key, 
+  Lock, 
+  UserCheck, 
+  LayoutDashboard 
 } from "lucide-react";
 
 const loadSheetJS = () => {
@@ -71,55 +70,37 @@ const getFreshProfileState = (clientName, savedProfiles) => {
 
 const getPlNature = (ledger) => {
   if (ledger.statementType !== "P&L") return null;
-
   const cat = (ledger.category || "").toLowerCase();
   const name = (ledger.name || "").toLowerCase();
 
-  if (
-    cat.includes("sales") || 
-    cat.includes("revenue") || 
-    cat.includes("turnover") ||
-    name.startsWith("sales") ||
-    name.includes("dine-in") ||
-    name.includes("delivery sale")
-  ) {
+  if (cat.includes("sales") || cat.includes("revenue") || cat.includes("turnover") || name.startsWith("sales") || name.includes("dine-in") || name.includes("delivery sale")) {
     return "Revenue";
   }
-
-  if (
-    cat.includes("other income") || 
-    cat.includes("interest income") || 
-    cat.includes("indirect income") ||
-    name.includes("interest received") ||
-    name === "other income" ||
-    name === "interest"
-  ) {
+  if (cat.includes("other income") || cat.includes("interest income") || cat.includes("indirect income") || name.includes("interest received") || name === "other income" || name === "interest") {
     return "Other Income";
   }
-
   if (ledger.cogsClassification === "COGS") return "COGS";
   if (ledger.cogsClassification === "Indirect") return "Indirect";
-
-  if (
-    cat.includes("purchase") ||
-    cat.includes("direct cost") ||
-    name.includes("purchase") ||
-    name.includes("raw material") ||
-    name.includes("dairy") ||
-    name.includes("groceries") ||
-    name.includes("sauces") ||
-    name.includes("vegetable") ||
-    name.includes("ingredient")
-  ) {
+  if (cat.includes("purchase") || cat.includes("direct cost") || name.includes("purchase") || name.includes("raw material") || name.includes("dairy") || name.includes("groceries") || name.includes("sauces") || name.includes("vegetable") || name.includes("ingredient")) {
     return "COGS";
   }
-
   return "Indirect";
 };
 
-export default function SettingsModule({ activeClient, setActiveClient, currentUser = null }) {
-  const [viewMode, setViewMode] = useState("directory");
-  const [manageSubTab, setManageSubTab] = useState("profile"); // 'profile' | 'coa' | 'users'
+export default function SettingsModule({ activeClient, setActiveClient, onGoToDashboard }) {
+  const [activeTab, setActiveTab] = useState("directory"); // 'directory' | 'users' | 'security' | 'manage_client'
+  const [manageSubTab, setManageSubTab] = useState("profile"); // 'profile' | 'coa'
+
+  const [adminCreds, setAdminCreds] = useState(() => {
+    try {
+      const saved = localStorage.getItem("c4_admin_credentials");
+      return saved ? JSON.parse(saved) : { username: "admin", password: "admin123", fullName: "Super Administrator" };
+    } catch {
+      return { username: "admin", password: "admin123", fullName: "Super Administrator" };
+    }
+  });
+
+  const [adminForm, setAdminForm] = useState({ ...adminCreds });
 
   const [profiles, setProfiles] = useState(() => {
     try {
@@ -148,7 +129,6 @@ export default function SettingsModule({ activeClient, setActiveClient, currentU
     }
   });
 
-  // Persistent User Directory
   const [users, setUsers] = useState(() => {
     try {
       const saved = localStorage.getItem("c4_user_accounts");
@@ -181,24 +161,27 @@ export default function SettingsModule({ activeClient, setActiveClient, currentU
     }
   }, [activeClient]);
 
-  // Form State for Adding Single Ledger
   const [newLedgerName, setNewLedgerName] = useState("");
   const [newStatementType, setNewStatementType] = useState("P&L");
   const [newLedgerCategory, setNewLedgerCategory] = useState("");
   const [newCostNature, setNewCostNature] = useState("COGS");
 
-  // Form State for Adding New User
   const [newUser, setNewUser] = useState({
     fullName: "",
     username: "",
     password: "",
-    allowedClients: "ALL", // 'ALL' or specific client name
+    allowedClients: "ALL",
     permissions: {
       dashboard: "view",
       sales: "edit",
       purchases: "edit",
       otherExpenses: "edit",
       banking: "edit"
+    },
+    salesSubPerms: {
+      allowNormal: true,
+      allowPos: true,
+      allowedDocTypes: ["Tax Invoice", "Bill of Supply", "Export Invoice"]
     }
   });
 
@@ -244,7 +227,7 @@ export default function SettingsModule({ activeClient, setActiveClient, currentU
     setActiveClient(clientName);
     const savedProfiles = JSON.parse(localStorage.getItem("c4_client_profiles") || "{}");
     setCurrentForm(getFreshProfileState(clientName, savedProfiles));
-    setViewMode("manage");
+    setActiveTab("manage_client");
     setManageSubTab("profile");
   };
 
@@ -301,7 +284,7 @@ export default function SettingsModule({ activeClient, setActiveClient, currentU
     setActiveClient(trimmed);
     setCurrentForm(newProfile);
     setClientCoa(defaultCoa);
-    setViewMode("manage");
+    setActiveTab("manage_client");
     setManageSubTab("profile");
 
     notify(`Client "${trimmed}" created!`, "success");
@@ -346,7 +329,25 @@ export default function SettingsModule({ activeClient, setActiveClient, currentU
     notify(`Profile for "${targetName}" saved!`, "success");
   };
 
-  // ADD NEW USER HANDLER
+  const handleSaveAdminCredentials = (e) => {
+    e.preventDefault();
+    if (!adminForm.username.trim() || !adminForm.password.trim()) {
+      notify("Master Username and Password cannot be blank", "error");
+      return;
+    }
+    setAdminCreds({ ...adminForm });
+    localStorage.setItem("c4_admin_credentials", JSON.stringify(adminForm));
+
+    const currentSession = JSON.parse(localStorage.getItem("c4_auth_session") || "{}");
+    if (currentSession.role === "admin") {
+      currentSession.username = adminForm.username.trim();
+      currentSession.fullName = adminForm.fullName.trim();
+      localStorage.setItem("c4_auth_session", JSON.stringify(currentSession));
+    }
+
+    notify("Super Admin credentials updated successfully!", "success");
+  };
+
   const handleCreateUser = (e) => {
     e.preventDefault();
     if (!newUser.username.trim() || !newUser.password.trim()) {
@@ -355,7 +356,7 @@ export default function SettingsModule({ activeClient, setActiveClient, currentU
     }
 
     const cleanUser = newUser.username.trim().toLowerCase();
-    if (cleanUser === "admin" || users.some((u) => u.username.toLowerCase() === cleanUser)) {
+    if (cleanUser === adminCreds.username.toLowerCase() || users.some((u) => u.username.toLowerCase() === cleanUser)) {
       notify(`Username "${newUser.username}" already taken!`, "error");
       return;
     }
@@ -368,6 +369,7 @@ export default function SettingsModule({ activeClient, setActiveClient, currentU
       role: "staff",
       allowedClients: newUser.allowedClients,
       permissions: { ...newUser.permissions },
+      salesSubPerms: { ...newUser.salesSubPerms },
       isActive: true,
       createdAt: new Date().toLocaleDateString("en-IN")
     };
@@ -384,9 +386,14 @@ export default function SettingsModule({ activeClient, setActiveClient, currentU
         purchases: "edit",
         otherExpenses: "edit",
         banking: "edit"
+      },
+      salesSubPerms: {
+        allowNormal: true,
+        allowPos: true,
+        allowedDocTypes: ["Tax Invoice", "Bill of Supply", "Export Invoice"]
       }
     });
-    notify(`User "${created.fullName}" created with assigned permissions!`, "success");
+    notify(`User "${created.fullName}" created with customized rights!`, "success");
   };
 
   const handleDeleteUser = (id, username) => {
@@ -399,6 +406,23 @@ export default function SettingsModule({ activeClient, setActiveClient, currentU
     setUsers((prev) =>
       prev.map((u) => (u.id === id ? { ...u, isActive: !u.isActive } : u))
     );
+  };
+
+  const handleDocTypeToggle = (type) => {
+    const current = newUser.salesSubPerms.allowedDocTypes || [];
+    const updated = current.includes(type)
+      ? current.filter((t) => t !== type)
+      : [...current, type];
+
+    if (updated.length === 0) {
+      notify("At least one invoice document type must remain enabled", "error");
+      return;
+    }
+
+    setNewUser({
+      ...newUser,
+      salesSubPerms: { ...newUser.salesSubPerms, allowedDocTypes: updated }
+    });
   };
 
   const handleAddLedger = (e) => {
@@ -676,32 +700,40 @@ export default function SettingsModule({ activeClient, setActiveClient, currentU
   const clientListKeys = Object.keys(profiles);
 
   return (
-    <div className="flex-1 flex flex-col h-full bg-[#F8FAFC] overflow-y-auto font-sans">
+    <div className="w-full h-full flex flex-col overflow-y-auto bg-[#F8FAFC] font-sans">
       {/* HEADER BAR */}
       <header className="bg-white border-b border-slate-200 px-8 py-4 flex items-center justify-between shadow-xs shrink-0">
         <div>
           <div className="flex items-center gap-3">
-            {viewMode === "manage" && (
+            {activeTab === "manage_client" && (
               <button
-                onClick={() => setViewMode("directory")}
+                onClick={() => setActiveTab("directory")}
                 className="flex items-center gap-1 text-xs font-bold text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded-lg transition"
               >
-                <ArrowLeft className="w-3.5 h-3.5" /> Back to All Clients
+                <ArrowLeft className="w-3.5 h-3.5" /> Back to All Settings
               </button>
             )}
             <h2 className="text-xl font-bold text-slate-900 tracking-tight">
-              {viewMode === "directory" ? "Client Directory & Masters" : `Managing: ${activeClient}`}
+              {activeTab === "directory" ? "Settings & Master Administration" : activeTab === "users" ? "Portal User Management" : activeTab === "security" ? "Super Admin Security" : `Managing: ${activeClient}`}
             </h2>
           </div>
           <p className="text-xs text-slate-500 font-medium mt-0.5">
-            {viewMode === "directory"
-              ? "All registered entities on this Compliance4 portal"
-              : "Configuring legal profile, branding, bank accounts, and custom Chart of Accounts"}
+            {activeTab === "directory" ? "Client entities, master COA, and organizational controls" : activeTab === "users" ? "Provision staff, client logins, and module privileges" : activeTab === "security" ? "Change master username and secret authentication password" : "Configure legal profile, branding, bank details, and Chart of Accounts"}
           </p>
         </div>
 
+        {/* TOP BUTTON ACTIONS */}
         <div className="flex items-center gap-2">
-          {viewMode === "directory" && (
+          {/* Quick Exit Back to Dashboard */}
+          <button
+            onClick={() => onGoToDashboard && onGoToDashboard()}
+            className="flex items-center gap-1.5 px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-bold transition shadow-xs mr-2"
+            title="Return to Main Dashboard"
+          >
+            <LayoutDashboard className="w-4 h-4 text-slate-600" /> Dashboard
+          </button>
+
+          {activeTab === "directory" && (
             <button
               onClick={handleAddNewClient}
               className="flex items-center gap-1.5 px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-bold transition shadow-xs"
@@ -710,7 +742,7 @@ export default function SettingsModule({ activeClient, setActiveClient, currentU
             </button>
           )}
 
-          {viewMode === "manage" && manageSubTab === "profile" && (
+          {activeTab === "manage_client" && manageSubTab === "profile" && (
             <button
               onClick={handleSaveProfile}
               className="flex items-center gap-1.5 px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-semibold transition shadow-xs"
@@ -719,12 +751,11 @@ export default function SettingsModule({ activeClient, setActiveClient, currentU
             </button>
           )}
 
-          {viewMode === "manage" && manageSubTab === "coa" && (
+          {activeTab === "manage_client" && manageSubTab === "coa" && (
             <div className="flex items-center gap-2">
               <button
                 onClick={handleAutoFixPurchasesToCogs}
                 className="flex items-center gap-1.5 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 text-xs font-bold px-3.5 py-2 rounded-lg transition"
-                title="Automatically sets purchase ledgers to Direct (COGS)"
               >
                 <Sparkles className="w-3.5 h-3.5 text-amber-600" /> Auto-Tag Purchases to COGS
               </button>
@@ -757,8 +788,40 @@ export default function SettingsModule({ activeClient, setActiveClient, currentU
         </div>
       </header>
 
-      {/* MANAGE TABS */}
-      {viewMode === "manage" && (
+      {/* TOP-LEVEL ROOT NAVIGATION TABS */}
+      {activeTab !== "manage_client" && (
+        <div className="px-8 pt-3 pb-0 flex items-center gap-6 border-b border-slate-200 bg-white shrink-0">
+          <button
+            onClick={() => setActiveTab("directory")}
+            className={`pb-3 text-xs font-bold transition flex items-center gap-2 border-b-2 ${
+              activeTab === "directory" ? "border-slate-900 text-slate-900" : "border-transparent text-slate-400 hover:text-slate-600"
+            }`}
+          >
+            <Building2 className="w-4 h-4" /> Client Entities ({clientListKeys.length})
+          </button>
+
+          <button
+            onClick={() => setActiveTab("users")}
+            className={`pb-3 text-xs font-bold transition flex items-center gap-2 border-b-2 ${
+              activeTab === "users" ? "border-slate-900 text-slate-900" : "border-transparent text-slate-400 hover:text-slate-600"
+            }`}
+          >
+            <Users className="w-4 h-4" /> User Access & Permissions ({users.length + 1})
+          </button>
+
+          <button
+            onClick={() => setActiveTab("security")}
+            className={`pb-3 text-xs font-bold transition flex items-center gap-2 border-b-2 ${
+              activeTab === "security" ? "border-slate-900 text-slate-900" : "border-transparent text-slate-400 hover:text-slate-600"
+            }`}
+          >
+            <Key className="w-4 h-4" /> Super Admin Credentials
+          </button>
+        </div>
+      )}
+
+      {/* MANAGE TABS WHEN DRILLING INTO A SPECIFIC CLIENT */}
+      {activeTab === "manage_client" && (
         <div className="px-8 pt-3 pb-0 flex items-center gap-6 border-b border-slate-200 bg-white shrink-0">
           <button
             onClick={() => setManageSubTab("profile")}
@@ -777,30 +840,20 @@ export default function SettingsModule({ activeClient, setActiveClient, currentU
           >
             <BookOpen className="w-4 h-4" /> Chart of Accounts ({clientCoa.length})
           </button>
-
-          {/* NEW: USER ACCESS TAB (VISIBLE FOR ADMIN) */}
-          <button
-            onClick={() => setManageSubTab("users")}
-            className={`pb-3 text-xs font-bold transition flex items-center gap-2 border-b-2 ${
-              manageSubTab === "users" ? "border-slate-900 text-slate-900" : "border-transparent text-slate-400 hover:text-slate-600"
-            }`}
-          >
-            <Users className="w-4 h-4" /> User Access & Permissions ({users.length})
-          </button>
         </div>
       )}
 
       {/* BODY VIEWPORT */}
       <div className="p-8 max-w-5xl mx-auto w-full space-y-6">
 
-        {/* 1. MASTER DIRECTORY */}
-        {viewMode === "directory" && (
+        {/* 1. MASTER DIRECTORY TAB */}
+        {activeTab === "directory" && (
           <div className="space-y-4">
             <div className="flex items-center justify-between">
               <div>
                 <h3 className="text-sm font-bold text-slate-900">Configured Client Entities ({clientListKeys.length})</h3>
                 <p className="text-xs text-slate-500">
-                  Select <strong>"Manage Client & COA"</strong> to edit that specific client.
+                  Select <strong>"Manage Client & COA"</strong> to edit profile, branding, bank accounts, or custom Chart of Accounts.
                 </p>
               </div>
             </div>
@@ -896,8 +949,348 @@ export default function SettingsModule({ activeClient, setActiveClient, currentU
           </div>
         )}
 
-        {/* 2. PROFILE TAB */}
-        {viewMode === "manage" && manageSubTab === "profile" && (
+        {/* 2. TOP-LEVEL USER ACCESS & ROLE-BASED ACCESS CONTROL (RBAC) */}
+        {activeTab === "users" && (
+          <div className="space-y-6">
+            <form onSubmit={handleCreateUser} className="bg-white rounded-xl border border-slate-200 p-6 shadow-xs space-y-5">
+              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-2">
+                  <UserCheck className="w-4 h-4 text-indigo-600" /> Create New Staff / Client User
+                </h3>
+                <span className="text-[11px] text-slate-400">Controls data visibility & edit rights</span>
+              </div>
+
+              <div className="grid grid-cols-4 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Full Name</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. Rahul Sharma"
+                    value={newUser.fullName}
+                    onChange={(e) => setNewUser({ ...newUser, fullName: e.target.value })}
+                    className="w-full text-xs font-medium border border-slate-300 rounded-lg p-2.5"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Username (User ID)</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. rahul_ops"
+                    value={newUser.username}
+                    onChange={(e) => setNewUser({ ...newUser, username: e.target.value })}
+                    className="w-full text-xs font-mono font-bold border border-slate-300 rounded-lg p-2.5"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Password</label>
+                  <input
+                    type="password"
+                    required
+                    placeholder="••••••••"
+                    value={newUser.password}
+                    onChange={(e) => setNewUser({ ...newUser, password: e.target.value })}
+                    className="w-full text-xs font-medium border border-slate-300 rounded-lg p-2.5"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Assigned Client Entity</label>
+                  <select
+                    value={newUser.allowedClients}
+                    onChange={(e) => setNewUser({ ...newUser, allowedClients: e.target.value })}
+                    className="w-full text-xs font-bold border border-slate-300 rounded-lg p-2.5 bg-white text-slate-800"
+                  >
+                    <option value="ALL">All Clients (Full Multi-Tenant Access)</option>
+                    {clientListKeys.map((k) => (
+                      <option key={k} value={k}>{k}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* MODULE PERMISSIONS MATRIX */}
+              <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-4">
+                <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider block">
+                  Module Permissions
+                </span>
+
+                <div className="grid grid-cols-5 gap-3 text-xs">
+                  <div className="bg-white p-2.5 rounded-lg border border-slate-200">
+                    <label className="block font-bold text-slate-800 mb-1">Dashboard</label>
+                    <select
+                      value={newUser.permissions.dashboard}
+                      onChange={(e) => setNewUser({ ...newUser, permissions: { ...newUser.permissions, dashboard: e.target.value } })}
+                      className="w-full text-xs border border-slate-300 rounded p-1 font-medium bg-white"
+                    >
+                      <option value="view">View Only</option>
+                      <option value="none">No Access</option>
+                    </select>
+                  </div>
+
+                  <div className="bg-white p-2.5 rounded-lg border border-slate-200">
+                    <label className="block font-bold text-slate-800 mb-1">Sales Level</label>
+                    <select
+                      value={newUser.permissions.sales}
+                      onChange={(e) => setNewUser({ ...newUser, permissions: { ...newUser.permissions, sales: e.target.value } })}
+                      className="w-full text-xs border border-slate-300 rounded p-1 font-medium bg-white"
+                    >
+                      <option value="edit">Full Access</option>
+                      <option value="view">View Only</option>
+                      <option value="none">No Access</option>
+                    </select>
+                  </div>
+
+                  <div className="bg-white p-2.5 rounded-lg border border-slate-200">
+                    <label className="block font-bold text-slate-800 mb-1">Purchases Level</label>
+                    <select
+                      value={newUser.permissions.purchases}
+                      onChange={(e) => setNewUser({ ...newUser, permissions: { ...newUser.permissions, purchases: e.target.value } })}
+                      className="w-full text-xs border border-slate-300 rounded p-1 font-bold text-slate-800 bg-white"
+                    >
+                      <option value="edit">Full Access (Approve & Push)</option>
+                      <option value="upload_only">Upload Bills Only (No Verify)</option>
+                      <option value="view">View Only</option>
+                      <option value="none">No Access</option>
+                    </select>
+                  </div>
+
+                  <div className="bg-white p-2.5 rounded-lg border border-slate-200">
+                    <label className="block font-bold text-slate-800 mb-1">Other Expenses</label>
+                    <select
+                      value={newUser.permissions.otherExpenses}
+                      onChange={(e) => setNewUser({ ...newUser, permissions: { ...newUser.permissions, otherExpenses: e.target.value } })}
+                      className="w-full text-xs border border-slate-300 rounded p-1 font-medium bg-white"
+                    >
+                      <option value="edit">Full Edit / Book</option>
+                      <option value="view">View Only</option>
+                      <option value="none">No Access</option>
+                    </select>
+                  </div>
+
+                  <div className="bg-white p-2.5 rounded-lg border border-slate-200">
+                    <label className="block font-bold text-slate-800 mb-1">Banking</label>
+                    <select
+                      value={newUser.permissions.banking}
+                      onChange={(e) => setNewUser({ ...newUser, permissions: { ...newUser.permissions, banking: e.target.value } })}
+                      className="w-full text-xs border border-slate-300 rounded p-1 font-medium bg-white"
+                    >
+                      <option value="edit">Full Edit / Allocate</option>
+                      <option value="view">View Only</option>
+                      <option value="none">No Access</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* GRANULAR SALES ACCESS CONTROLS */}
+                {newUser.permissions.sales !== "none" && (
+                  <div className="pt-2 border-t border-slate-200 flex items-center justify-between text-xs">
+                    <div className="flex items-center gap-4">
+                      <span className="font-bold text-slate-700">Sales Boards Allowed:</span>
+                      <label className="flex items-center gap-1.5 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={newUser.salesSubPerms.allowNormal}
+                          onChange={(e) => setNewUser({
+                            ...newUser,
+                            salesSubPerms: { ...newUser.salesSubPerms, allowNormal: e.target.checked }
+                          })}
+                          className="rounded text-slate-900"
+                        />
+                        <span>Normal B2B Invoices</span>
+                      </label>
+                      <label className="flex items-center gap-1.5 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={newUser.salesSubPerms.allowPos}
+                          onChange={(e) => setNewUser({
+                            ...newUser,
+                            salesSubPerms: { ...newUser.salesSubPerms, allowPos: e.target.checked }
+                          })}
+                          className="rounded text-slate-900"
+                        />
+                        <span>POS Consolidated Sales</span>
+                      </label>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <span className="font-bold text-slate-700">Allowed Invoice Types:</span>
+                      {["Tax Invoice", "Bill of Supply", "Export Invoice"].map((doc) => (
+                        <button
+                          type="button"
+                          key={doc}
+                          onClick={() => handleDocTypeToggle(doc)}
+                          className={`px-2 py-0.5 rounded text-[10px] font-bold border transition ${
+                            newUser.salesSubPerms.allowedDocTypes?.includes(doc)
+                              ? "bg-slate-900 text-white border-slate-900"
+                              : "bg-white text-slate-500 border-slate-300"
+                          }`}
+                        >
+                          {doc}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex justify-end pt-2">
+                <button
+                  type="submit"
+                  className="px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-bold transition shadow-xs flex items-center gap-1.5"
+                >
+                  <Plus className="w-3.5 h-3.5" /> Save User Credentials
+                </button>
+              </div>
+            </form>
+
+            <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-xs">
+              <div className="px-6 py-3.5 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+                <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
+                  Configured User Accounts ({users.length + 1})
+                </h4>
+              </div>
+
+              <table className="w-full text-left text-xs">
+                <thead className="bg-white border-b border-slate-100 text-slate-400 font-semibold uppercase text-[10px]">
+                  <tr>
+                    <th className="py-3 px-4">User</th>
+                    <th className="py-3 px-4">Role</th>
+                    <th className="py-3 px-4">Assigned Entity Scope</th>
+                    <th className="py-3 px-4">Module Permissions</th>
+                    <th className="py-3 px-4 text-center">Status</th>
+                    <th className="py-3 px-4 text-center">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
+                  <tr className="bg-slate-50/40">
+                    <td className="py-3 px-4">
+                      <p className="font-bold text-slate-900">{adminCreds.fullName}</p>
+                      <p className="text-[10px] font-mono text-slate-400">{adminCreds.username}</p>
+                    </td>
+                    <td className="py-3 px-4">
+                      <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-900 text-white font-mono">
+                        Super Admin
+                      </span>
+                    </td>
+                    <td className="py-3 px-4 font-bold text-indigo-700">All Registered Entities</td>
+                    <td className="py-3 px-4 font-mono text-[11px] text-slate-500">Full Unrestricted Master Access</td>
+                    <td className="py-3 px-4 text-center">
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                        Active
+                      </span>
+                    </td>
+                    <td className="py-3 px-4 text-center text-slate-300 font-mono text-[10px]">Master</td>
+                  </tr>
+
+                  {users.map((u) => (
+                    <tr key={u.id} className="hover:bg-slate-50/50">
+                      <td className="py-3 px-4">
+                        <p className="font-bold text-slate-900">{u.fullName}</p>
+                        <p className="text-[10px] font-mono text-slate-400">{u.username}</p>
+                      </td>
+                      <td className="py-3 px-4">
+                        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-50 text-indigo-800 border border-indigo-200">
+                          Staff
+                        </span>
+                      </td>
+                      <td className="py-3 px-4 font-medium text-slate-700 truncate max-w-xs">
+                        {u.allowedClients === "ALL" ? "All Entities" : u.allowedClients}
+                      </td>
+                      <td className="py-3 px-4 font-mono text-[10px] text-slate-500">
+                        Sales:{u.permissions?.sales} | Pur:{u.permissions?.purchases} | Exp:{u.permissions?.otherExpenses} | Bnk:{u.permissions?.banking}
+                      </td>
+                      <td className="py-3 px-4 text-center">
+                        <button
+                          onClick={() => handleToggleUserStatus(u.id)}
+                          className={`px-2 py-0.5 rounded-full text-[10px] font-bold border transition ${
+                            u.isActive
+                              ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                              : "bg-rose-50 text-rose-700 border-rose-200"
+                          }`}
+                        >
+                          {u.isActive ? "Active" : "Disabled"}
+                        </button>
+                      </td>
+                      <td className="py-3 px-4 text-center">
+                        <button
+                          onClick={() => handleDeleteUser(u.id, u.username)}
+                          className="p-1 text-slate-300 hover:text-rose-600 transition"
+                          title="Delete User"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* 3. SUPER ADMIN CREDENTIALS TAB */}
+        {activeTab === "security" && (
+          <div className="max-w-xl mx-auto bg-white rounded-xl border border-slate-200 p-6 shadow-xs space-y-4">
+            <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
+              <Key className="w-4 h-4 text-indigo-600" />
+              <h3 className="text-sm font-bold text-slate-900">Change Super Administrator Credentials</h3>
+            </div>
+
+            <form onSubmit={handleSaveAdminCredentials} className="space-y-4 text-xs font-sans">
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">Administrator Display Name</label>
+                <input
+                  type="text"
+                  required
+                  value={adminForm.fullName}
+                  onChange={(e) => setAdminForm({ ...adminForm, fullName: e.target.value })}
+                  className="w-full text-xs font-bold border border-slate-300 rounded-lg p-2.5"
+                />
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">Master User ID / Username</label>
+                <input
+                  type="text"
+                  required
+                  value={adminForm.username}
+                  onChange={(e) => setAdminForm({ ...adminForm, username: e.target.value })}
+                  className="w-full text-xs font-mono font-bold border border-slate-300 rounded-lg p-2.5"
+                />
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">Master Password</label>
+                <input
+                  type="text"
+                  required
+                  value={adminForm.password}
+                  onChange={(e) => setAdminForm({ ...adminForm, password: e.target.value })}
+                  className="w-full text-xs font-mono font-bold border border-slate-300 rounded-lg p-2.5"
+                />
+                <p className="text-[10px] text-slate-400 mt-1">
+                  Keep this credential safe. It grants complete unrestricted master control over the entire platform.
+                </p>
+              </div>
+
+              <div className="flex justify-end pt-2">
+                <button
+                  type="submit"
+                  className="px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-lg shadow-xs transition"
+                >
+                  Save Master Credentials
+                </button>
+              </div>
+            </form>
+          </div>
+        )}
+
+        {/* 4. MANAGING A SPECIFIC CLIENT (PROFILE & COA) */}
+        {activeTab === "manage_client" && manageSubTab === "profile" && (
           <div className="space-y-6">
             <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-xs space-y-4">
               <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
@@ -979,9 +1372,6 @@ export default function SettingsModule({ activeClient, setActiveClient, currentU
                     <option value="YES">YES — Eligible for Full Input Tax Credit (Regular GST Scheme)</option>
                     <option value="NO">NO — Ineligible for ITC (Standalone Restaurant / Cafe 5% Scheme)</option>
                   </select>
-                  <p className="text-[10px] text-slate-400 mt-1">
-                    If set to <strong>NO</strong>, taxes in all purchase bills will automatically route to <strong>GST Expense on Purchase</strong> (under P&L Indirect Expenses).
-                  </p>
                 </div>
 
                 <div className="col-span-3">
@@ -1023,15 +1413,14 @@ export default function SettingsModule({ activeClient, setActiveClient, currentU
           </div>
         )}
 
-        {/* 3. CHART OF ACCOUNTS TAB */}
-        {viewMode === "manage" && manageSubTab === "coa" && (
+        {/* 5. MANAGING CLIENT COA */}
+        {activeTab === "manage_client" && manageSubTab === "coa" && (
           <div className="space-y-6">
             <form onSubmit={handleAddLedger} className="bg-white rounded-xl border border-slate-200 p-6 shadow-xs space-y-4">
               <div className="flex items-center justify-between border-b border-slate-100 pb-3">
                 <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
                   <Plus className="w-4 h-4 text-slate-600" /> Add Single Ledger for {activeClient}
                 </h3>
-                <span className="text-[11px] text-slate-400">Or use "Bulk Upload COA" above for spreadsheet import</span>
               </div>
 
               <div className="grid grid-cols-12 gap-3 items-end">
@@ -1039,7 +1428,7 @@ export default function SettingsModule({ activeClient, setActiveClient, currentU
                   <label className="block text-xs font-bold text-slate-700 mb-1">Ledger Name <span className="text-rose-500">*</span></label>
                   <input
                     type="text"
-                    placeholder="e.g. GST Expense on Purchase / Dairy Products"
+                    placeholder="e.g. Purchases - Dairy Products"
                     value={newLedgerName}
                     onChange={(e) => setNewLedgerName(e.target.value)}
                     className="w-full text-xs font-semibold border border-slate-300 rounded-lg p-2 focus:ring-1 focus:ring-slate-900"
@@ -1080,7 +1469,7 @@ export default function SettingsModule({ activeClient, setActiveClient, currentU
                   <label className="block text-xs font-bold text-slate-700 mb-1">Category Name <span className="text-rose-500">*</span></label>
                   <input
                     type="text"
-                    placeholder="e.g. Administrative & General Expenses"
+                    placeholder="e.g. Purchases / Administrative"
                     value={newLedgerCategory}
                     onChange={(e) => setNewLedgerCategory(e.target.value)}
                     className="w-full text-xs border border-slate-300 rounded-lg p-2 bg-white font-medium"
@@ -1121,7 +1510,7 @@ export default function SettingsModule({ activeClient, setActiveClient, currentU
             <div className="space-y-4">
               {Object.keys(categoriesGrouped).length === 0 ? (
                 <div className="bg-white rounded-xl border border-slate-200 p-12 text-center text-slate-400 text-xs">
-                  No ledgers uploaded yet for {activeClient}. Click "Bulk Upload COA" or add manually above.
+                  No ledgers uploaded yet for {activeClient}.
                 </div>
               ) : (
                 Object.entries(categoriesGrouped).map(([categoryName, ledgers]) => {
@@ -1175,7 +1564,6 @@ export default function SettingsModule({ activeClient, setActiveClient, currentU
                                             ? "bg-amber-100 hover:bg-amber-200 text-amber-800 border border-amber-300"
                                             : "bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200"
                                         }`}
-                                        title="Click to toggle between Direct (COGS) and Indirect Expense"
                                       >
                                         {plNature === "COGS" ? "Direct (COGS) ⇄" : "Indirect Expense ⇄"}
                                       </button>
@@ -1209,251 +1597,6 @@ export default function SettingsModule({ activeClient, setActiveClient, currentU
                   );
                 })
               )}
-            </div>
-          </div>
-        )}
-
-        {/* 4. NEW: USER ACCESS & ROLE-BASED ACCESS CONTROL (RBAC) TAB */}
-        {viewMode === "manage" && manageSubTab === "users" && (
-          <div className="space-y-6">
-            {/* ADD USER FORM */}
-            <form onSubmit={handleCreateUser} className="bg-white rounded-xl border border-slate-200 p-6 shadow-xs space-y-4">
-              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-                <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-2">
-                  <UserCheck className="w-4 h-4 text-indigo-600" /> Create New Staff / Client User
-                </h3>
-                <span className="text-[11px] text-slate-400">Controls data visibility & edit rights</span>
-              </div>
-
-              <div className="grid grid-cols-4 gap-4">
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">Full Name</label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="e.g. Rahul Sharma"
-                    value={newUser.fullName}
-                    onChange={(e) => setNewUser({ ...newUser, fullName: e.target.value })}
-                    className="w-full text-xs font-medium border border-slate-300 rounded-lg p-2.5"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">Username (User ID)</label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="e.g. rahul_ops"
-                    value={newUser.username}
-                    onChange={(e) => setNewUser({ ...newUser, username: e.target.value })}
-                    className="w-full text-xs font-mono font-bold border border-slate-300 rounded-lg p-2.5"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">Password</label>
-                  <input
-                    type="password"
-                    required
-                    placeholder="••••••••"
-                    value={newUser.password}
-                    onChange={(e) => setNewUser({ ...newUser, password: e.target.value })}
-                    className="w-full text-xs font-medium border border-slate-300 rounded-lg p-2.5"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">Assigned Client Entity</label>
-                  <select
-                    value={newUser.allowedClients}
-                    onChange={(e) => setNewUser({ ...newUser, allowedClients: e.target.value })}
-                    className="w-full text-xs font-bold border border-slate-300 rounded-lg p-2.5 bg-white text-slate-800"
-                  >
-                    <option value="ALL">All Clients (Full Multi-Tenant Access)</option>
-                    {clientListKeys.map((k) => (
-                      <option key={k} value={k}>{k}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              {/* MODULE PERMISSION MATRIX */}
-              <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
-                <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider block">
-                  Module Permission Levels
-                </span>
-                <div className="grid grid-cols-5 gap-3 text-xs">
-                  {/* DASHBOARD */}
-                  <div className="bg-white p-2.5 rounded-lg border border-slate-200">
-                    <label className="block font-bold text-slate-800 mb-1">Dashboard</label>
-                    <select
-                      value={newUser.permissions.dashboard}
-                      onChange={(e) => setNewUser({ ...newUser, permissions: { ...newUser.permissions, dashboard: e.target.value } })}
-                      className="w-full text-xs border border-slate-300 rounded p-1 font-medium bg-white"
-                    >
-                      <option value="view">View Only</option>
-                      <option value="none">No Access</option>
-                    </select>
-                  </div>
-
-                  {/* SALES */}
-                  <div className="bg-white p-2.5 rounded-lg border border-slate-200">
-                    <label className="block font-bold text-slate-800 mb-1">Sales</label>
-                    <select
-                      value={newUser.permissions.sales}
-                      onChange={(e) => setNewUser({ ...newUser, permissions: { ...newUser.permissions, sales: e.target.value } })}
-                      className="w-full text-xs border border-slate-300 rounded p-1 font-medium bg-white"
-                    >
-                      <option value="edit">Full Edit / Create</option>
-                      <option value="view">View Only</option>
-                      <option value="none">No Access</option>
-                    </select>
-                  </div>
-
-                  {/* PURCHASES */}
-                  <div className="bg-white p-2.5 rounded-lg border border-slate-200">
-                    <label className="block font-bold text-slate-800 mb-1">Purchases</label>
-                    <select
-                      value={newUser.permissions.purchases}
-                      onChange={(e) => setNewUser({ ...newUser, permissions: { ...newUser.permissions, purchases: e.target.value } })}
-                      className="w-full text-xs border border-slate-300 rounded p-1 font-medium bg-white"
-                    >
-                      <option value="edit">Full Edit / Approve</option>
-                      <option value="view">View Only</option>
-                      <option value="none">No Access</option>
-                    </select>
-                  </div>
-
-                  {/* OTHER EXPENSES */}
-                  <div className="bg-white p-2.5 rounded-lg border border-slate-200">
-                    <label className="block font-bold text-slate-800 mb-1">Other Expenses</label>
-                    <select
-                      value={newUser.permissions.otherExpenses}
-                      onChange={(e) => setNewUser({ ...newUser, permissions: { ...newUser.permissions, otherExpenses: e.target.value } })}
-                      className="w-full text-xs border border-slate-300 rounded p-1 font-medium bg-white"
-                    >
-                      <option value="edit">Full Edit / Book</option>
-                      <option value="view">View Only</option>
-                      <option value="none">No Access</option>
-                    </select>
-                  </div>
-
-                  {/* BANKING */}
-                  <div className="bg-white p-2.5 rounded-lg border border-slate-200">
-                    <label className="block font-bold text-slate-800 mb-1">Banking</label>
-                    <select
-                      value={newUser.permissions.banking}
-                      onChange={(e) => setNewUser({ ...newUser, permissions: { ...newUser.permissions, banking: e.target.value } })}
-                      className="w-full text-xs border border-slate-300 rounded p-1 font-medium bg-white"
-                    >
-                      <option value="edit">Full Edit / Allocate</option>
-                      <option value="view">View Only</option>
-                      <option value="none">No Access</option>
-                    </select>
-                  </div>
-                </div>
-              </div>
-
-              <div className="flex justify-end pt-2">
-                <button
-                  type="submit"
-                  className="px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-bold transition shadow-xs flex items-center gap-1.5"
-                >
-                  <Plus className="w-3.5 h-3.5" /> Save User Credentials
-                </button>
-              </div>
-            </form>
-
-            {/* USERS LIST TABLE */}
-            <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-xs">
-              <div className="px-6 py-3.5 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
-                <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
-                  Configured User Accounts ({users.length + 1})
-                </h4>
-              </div>
-
-              <table className="w-full text-left text-xs">
-                <thead className="bg-white border-b border-slate-100 text-slate-400 font-semibold uppercase text-[10px]">
-                  <tr>
-                    <th className="py-3 px-4">User</th>
-                    <th className="py-3 px-4">Role</th>
-                    <th className="py-3 px-4">Assigned Entity Scope</th>
-                    <th className="py-3 px-4">Permissions (S/P/E/B)</th>
-                    <th className="py-3 px-4 text-center">Status</th>
-                    <th className="py-3 px-4 text-center">Action</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
-                  {/* DEFAULT SUPER ADMIN ROW */}
-                  <tr className="bg-slate-50/40">
-                    <td className="py-3 px-4">
-                      <p className="font-bold text-slate-900">Super Administrator</p>
-                      <p className="text-[10px] font-mono text-slate-400">admin</p>
-                    </td>
-                    <td className="py-3 px-4">
-                      <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-900 text-white font-mono">
-                        Super Admin
-                      </span>
-                    </td>
-                    <td className="py-3 px-4 font-bold text-indigo-700">
-                      All Registered Entities
-                    </td>
-                    <td className="py-3 px-4 font-mono text-[11px] text-slate-500">
-                      Full Unrestricted Control
-                    </td>
-                    <td className="py-3 px-4 text-center">
-                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                        Active
-                      </span>
-                    </td>
-                    <td className="py-3 px-4 text-center text-slate-300 font-mono text-[10px]">
-                      Master
-                    </td>
-                  </tr>
-
-                  {/* CUSTOM USERS */}
-                  {users.map((u) => (
-                    <tr key={u.id} className="hover:bg-slate-50/50">
-                      <td className="py-3 px-4">
-                        <p className="font-bold text-slate-900">{u.fullName}</p>
-                        <p className="text-[10px] font-mono text-slate-400">{u.username}</p>
-                      </td>
-                      <td className="py-3 px-4">
-                        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-50 text-indigo-800 border border-indigo-200">
-                          Staff
-                        </span>
-                      </td>
-                      <td className="py-3 px-4 font-medium text-slate-700 truncate max-w-xs">
-                        {u.allowedClients === "ALL" ? "All Entities" : u.allowedClients}
-                      </td>
-                      <td className="py-3 px-4 font-mono text-[10px] text-slate-500">
-                        Sales:{u.permissions?.sales} | Pur:{u.permissions?.purchases} | Exp:{u.permissions?.otherExpenses} | Bnk:{u.permissions?.banking}
-                      </td>
-                      <td className="py-3 px-4 text-center">
-                        <button
-                          onClick={() => handleToggleUserStatus(u.id)}
-                          className={`px-2 py-0.5 rounded-full text-[10px] font-bold border transition ${
-                            u.isActive
-                              ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-                              : "bg-rose-50 text-rose-700 border-rose-200"
-                          }`}
-                        >
-                          {u.isActive ? "Active" : "Disabled"}
-                        </button>
-                      </td>
-                      <td className="py-3 px-4 text-center">
-                        <button
-                          onClick={() => handleDeleteUser(u.id, u.username)}
-                          className="p-1 text-slate-300 hover:text-rose-600 transition"
-                          title="Delete User"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
             </div>
           </div>
         )}
