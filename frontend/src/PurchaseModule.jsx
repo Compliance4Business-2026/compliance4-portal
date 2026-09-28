@@ -7,6 +7,10 @@ import {
   FileSpreadsheet, 
   Check, 
   ChevronLeft, 
+  ChevronDown,
+  ChevronRight,
+  Folder,
+  FolderOpen,
   ZoomIn, 
   ZoomOut, 
   RotateCcw, 
@@ -209,6 +213,16 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
   const [zoomLevel, setZoomLevel] = useState(1);
   const [showAllocationModal, setShowAllocationModal] = useState(false);
   const [voucherData, setVoucherData] = useState(null);
+
+  // Expanded Month Folders State in "Pushed to Tally"
+  const [expandedFolders, setExpandedFolders] = useState({});
+
+  const toggleFolder = (folderKey) => {
+    setExpandedFolders(prev => ({
+      ...prev,
+      [folderKey]: !prev[folderKey]
+    }));
+  };
 
   const invoiceInputRef = useRef(null);
 
@@ -592,6 +606,53 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
     document.body.removeChild(link);
     notify("Downloaded Tally-compliant XML import file!", "success");
   };
+
+  // Group pushed bills month-wise based on invoice/voucher date
+  const groupedPushedBills = useMemo(() => {
+    const groups = {};
+    pushedBills.forEach(b => {
+      const rawDate = b.invoice_date || b.bill_date || b.voucher_date;
+      let monthYear = "Other / Undated";
+
+      if (rawDate) {
+        try {
+          const parts = rawDate.split(/[\/\-]/);
+          let dateObj = null;
+          if (parts.length === 3) {
+            if (parts[0].length === 4) {
+              // YYYY-MM-DD
+              dateObj = new Date(parts[0], parseInt(parts[1]) - 1, parts[2]);
+            } else {
+              // DD-MM-YYYY or DD/MM/YYYY
+              const yr = parts[2].length === 2 ? `20${parts[2]}` : parts[2];
+              dateObj = new Date(yr, parseInt(parts[1]) - 1, parts[0]);
+            }
+          } else {
+            dateObj = new Date(rawDate);
+          }
+
+          if (dateObj && !isNaN(dateObj.getTime())) {
+            monthYear = dateObj.toLocaleString("en-US", { month: "long", year: "numeric" });
+          }
+        } catch {
+          monthYear = "Other / Undated";
+        }
+      }
+
+      if (!groups[monthYear]) {
+        groups[monthYear] = {
+          monthLabel: monthYear,
+          bills: [],
+          totalAmount: 0
+        };
+      }
+
+      groups[monthYear].bills.push(b);
+      groups[monthYear].totalAmount += parseFloat(b.grand_total || b.taxable_amount || 0);
+    });
+
+    return Object.values(groups);
+  }, [pushedBills]);
 
   // FULL SCREEN SIDE-BY-SIDE REVIEW WORKSPACE
   if (activeReviewBill && voucherData) {
@@ -1435,7 +1496,7 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
                       </td>
                       <td className="px-6 py-4 text-slate-600">
                         <span className="bg-slate-100 px-2 py-1 rounded text-[11px] font-medium">
-                          {b.accounting_ledgers?.[0]?.ledger_name || dynamicExpenseLedgers[0] || "Purchases"}
+                          {b.accounting_ledgers?.[0]?.ledger_name || dynamicExpenseLedgers[0] || "Purchase: General Goods"}
                         </span>
                       </td>
                       <td className="px-6 py-4 font-mono font-bold text-emerald-700">
@@ -1476,51 +1537,103 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
           </div>
         )}
 
-        {/* TAB 3: PUSHED TO TALLY */}
+        {/* TAB 3: PUSHED TO TALLY (NOW GROUPED INTO EXPANDABLE MONTH-WISE FOLDERS) */}
         {purchaseSubTab === "pushed" && (
-          <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
-            {pushedBills.length === 0 ? (
-              <div className="p-16 text-center">
+          <div className="space-y-4">
+            {groupedPushedBills.length === 0 ? (
+              <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-16 text-center">
                 <FileSpreadsheet className="w-8 h-8 text-blue-300 mx-auto mb-2" />
                 <p className="text-sm font-semibold text-slate-700">No invoices pushed yet</p>
-                <p className="text-xs text-slate-400 mt-0.5">Invoices successfully sent to Tally Prime will appear here</p>
+                <p className="text-xs text-slate-400 mt-0.5">Invoices successfully sent to Tally Prime will be organized into monthly folders here</p>
               </div>
             ) : (
-              <table className="w-full text-left text-xs text-slate-600">
-                <thead className="bg-slate-50 border-b border-slate-200 uppercase font-semibold text-slate-500">
-                  <tr>
-                    <th className="px-6 py-3.5">Vendor</th>
-                    <th className="px-6 py-3.5">Invoice No.</th>
-                    <th className="px-6 py-3.5">Pushed Date & Time</th>
-                    <th className="px-6 py-3.5">Amount (₹)</th>
-                    <th className="px-6 py-3.5 text-right">Status</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {pushedBills.map((b, idx) => (
-                    <tr key={b.id || idx} className="hover:bg-slate-50 transition">
-                      <td className="px-6 py-4">
-                        <p className="font-bold text-slate-900">{b.vendor_name}</p>
-                        <p className="text-[11px] text-slate-400 font-mono">{b.vendor_gstin}</p>
-                      </td>
-                      <td className="px-6 py-4 font-mono font-medium text-slate-800">
-                        #{b.supplier_invoice_no || b.invoice_number}
-                      </td>
-                      <td className="px-6 py-4 text-slate-500">
-                        {b.pushed_at || "Recent"}
-                      </td>
-                      <td className="px-6 py-4 font-mono font-bold text-slate-800">
-                        ₹{(parseFloat(b.grand_total) || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                      </td>
-                      <td className="px-6 py-4 text-right">
-                        <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded">
-                          <Check className="w-3.5 h-3.5" /> In Tally
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              groupedPushedBills.map((group) => {
+                const isExpanded = expandedFolders[group.monthLabel] !== false; // Default expanded
+
+                return (
+                  <div key={group.monthLabel} className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+                    {/* FOLDER BANNER HEADER */}
+                    <div
+                      onClick={() => toggleFolder(group.monthLabel)}
+                      className="px-6 py-4 bg-slate-50/80 hover:bg-slate-100/80 border-b border-slate-200 flex items-center justify-between cursor-pointer transition select-none"
+                    >
+                      <div className="flex items-center gap-3">
+                        {isExpanded ? (
+                          <FolderOpen className="w-5 h-5 text-indigo-600" />
+                        ) : (
+                          <Folder className="w-5 h-5 text-slate-400" />
+                        )}
+                        <div>
+                          <h4 className="text-xs font-bold text-slate-900 tracking-wide uppercase flex items-center gap-2">
+                            {group.monthLabel}
+                            <span className="text-[10px] bg-indigo-50 text-indigo-700 border border-indigo-200 px-2 py-0.5 rounded-full font-mono font-bold lowercase">
+                              {group.bills.length} invoices
+                            </span>
+                          </h4>
+                          <p className="text-[11px] text-slate-500 mt-0.5">
+                            Purchases for {group.monthLabel}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-4">
+                        <div className="text-right">
+                          <span className="text-[10px] uppercase font-bold text-slate-400">Total Purchase</span>
+                          <p className="text-sm font-black font-mono text-slate-900">
+                            ₹{group.totalAmount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                          </p>
+                        </div>
+                        <div className="p-1 rounded bg-white border border-slate-200 text-slate-500">
+                          {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* FOLDER CONTENTS */}
+                    {isExpanded && (
+                      <table className="w-full text-left text-xs text-slate-600">
+                        <thead className="bg-white border-b border-slate-200 uppercase font-semibold text-slate-400 text-[10px]">
+                          <tr>
+                            <th className="px-6 py-3">Vendor</th>
+                            <th className="px-6 py-3">Invoice No.</th>
+                            <th className="px-6 py-3">Invoice Date</th>
+                            <th className="px-6 py-3">Pushed At</th>
+                            <th className="px-6 py-3 font-mono text-right">Amount (₹)</th>
+                            <th className="px-6 py-3 text-right">Status</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {group.bills.map((b, idx) => (
+                            <tr key={b.id || idx} className="hover:bg-slate-50/60 transition">
+                              <td className="px-6 py-3.5">
+                                <p className="font-bold text-slate-900">{b.vendor_name}</p>
+                                <p className="text-[11px] text-slate-400 font-mono">{b.vendor_gstin || "No GSTIN"}</p>
+                              </td>
+                              <td className="px-6 py-3.5 font-mono font-medium text-slate-800">
+                                #{b.supplier_invoice_no || b.invoice_number}
+                              </td>
+                              <td className="px-6 py-3.5 font-mono text-slate-500">
+                                {b.invoice_date || b.bill_date || "-"}
+                              </td>
+                              <td className="px-6 py-3.5 text-slate-400 text-[11px]">
+                                {b.pushed_at || "Recent"}
+                              </td>
+                              <td className="px-6 py-3.5 font-mono font-bold text-slate-800 text-right">
+                                ₹{(parseFloat(b.grand_total || b.taxable_amount) || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                              </td>
+                              <td className="px-6 py-3.5 text-right">
+                                <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded">
+                                  <Check className="w-3 h-3" /> In Tally
+                                </span>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                  </div>
+                );
+              })
             )}
           </div>
         )}
