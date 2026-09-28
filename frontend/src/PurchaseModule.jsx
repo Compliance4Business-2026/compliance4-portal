@@ -117,6 +117,109 @@ function validateGSTIN(gstin) {
   };
 }
 
+// SEARCHABLE TYPEAHEAD COMBOBOX COMPONENT
+function SearchableLedgerSelect({ value, onChange, options, coaList = [], placeholder = "Type to search ledger..." }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [searchTerm, setSearchTerm] = useState("");
+  const dropdownRef = useRef(null);
+
+  // Group and filter ledgers based on typed query
+  const filteredGroups = useMemo(() => {
+    const term = searchTerm.toLowerCase().trim();
+    const groups = {};
+
+    if (coaList && coaList.length > 0) {
+      coaList
+        .filter((l) => l.statementType === "P&L")
+        .forEach((l) => {
+          const name = l.name || "";
+          const cat = l.category || "Purchases & Direct Costs";
+          if (!term || name.toLowerCase().includes(term) || cat.toLowerCase().includes(term)) {
+            if (!groups[cat]) groups[cat] = [];
+            groups[cat].push(l);
+          }
+        });
+    }
+
+    // Fallback if client has no P&L ledgers in COA yet
+    if (Object.keys(groups).length === 0) {
+      const defaultGroup = "General Expenses";
+      groups[defaultGroup] = options
+        .filter((name) => !term || name.toLowerCase().includes(term))
+        .map((name) => ({ name, category: defaultGroup }));
+    }
+
+    return groups;
+  }, [coaList, options, searchTerm]);
+
+  useEffect(() => {
+    const handleOutsideClick = (e) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target)) {
+        setIsOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleOutsideClick);
+    return () => document.removeEventListener("mousedown", handleOutsideClick);
+  }, []);
+
+  return (
+    <div className="relative w-full" ref={dropdownRef}>
+      <input
+        type="text"
+        placeholder={placeholder}
+        value={isOpen ? searchTerm : (value || "")}
+        onFocus={() => {
+          setSearchTerm("");
+          setIsOpen(true);
+        }}
+        onChange={(e) => {
+          setSearchTerm(e.target.value);
+          setIsOpen(true);
+        }}
+        className="w-full text-xs p-1 rounded font-medium border border-slate-300 bg-white text-slate-800 focus:outline-none focus:ring-1 focus:ring-slate-900"
+      />
+
+      {isOpen && (
+        <div className="absolute left-0 top-full mt-1 w-full max-h-56 bg-white border border-slate-200 rounded-lg shadow-xl overflow-y-auto z-50 divide-y divide-slate-100">
+          {Object.keys(filteredGroups).length === 0 ? (
+            <div className="p-3 text-xs text-slate-400 text-center italic">
+              No matching ledger found
+            </div>
+          ) : (
+            Object.entries(filteredGroups).map(([groupName, ledgers]) => (
+              <div key={groupName} className="py-1">
+                <div className="px-3 py-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider bg-slate-50">
+                  {groupName}
+                </div>
+                {ledgers.map((l) => (
+                  <button
+                    key={l.id || l.name}
+                    type="button"
+                    onClick={() => {
+                      onChange(l.name);
+                      setIsOpen(false);
+                    }}
+                    className={`w-full text-left px-3 py-1.5 text-xs font-medium transition flex items-center justify-between hover:bg-slate-100 ${
+                      value === l.name ? "bg-indigo-50 text-indigo-700 font-bold" : "text-slate-800"
+                    }`}
+                  >
+                    <span>{l.name}</span>
+                    {l.cogsClassification && (
+                      <span className="text-[10px] text-slate-400 font-mono">
+                        {l.cogsClassification === "COGS" ? "COGS" : "Overhead"}
+                      </span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function PurchaseModule({ activeClient = "Panasuria Confectionery" }) {
   const [purchaseSubTab, setPurchaseSubTab] = useState("needs_review");
 
@@ -620,10 +723,8 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
           let dateObj = null;
           if (parts.length === 3) {
             if (parts[0].length === 4) {
-              // YYYY-MM-DD
               dateObj = new Date(parts[0], parseInt(parts[1]) - 1, parts[2]);
             } else {
-              // DD-MM-YYYY or DD/MM/YYYY
               const yr = parts[2].length === 2 ? `20${parts[2]}` : parts[2];
               dateObj = new Date(yr, parseInt(parts[1]) - 1, parts[0]);
             }
@@ -1025,7 +1126,7 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
                 </div>
               )}
 
-              {/* ACCOUNTING MODE — DYNAMIC P&L LEDGERS LOADED DIRECTLY FROM COA */}
+              {/* ACCOUNTING MODE — DYNAMIC P&L LEDGERS WITH SEARCHABLE AUTOCOMPLETE */}
               {voucherMode === "accounting" && (
                 <div className="border-t border-slate-100 pt-4 space-y-3">
                   <div className="flex items-center justify-between">
@@ -1081,20 +1182,14 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
                               </div>
                             </td>
                             <td className="p-2">
-                              {/* DYNAMIC P&L LEDGERS DROPDOWN */}
-                              <select
+                              {/* REPLACED WITH SEARCHABLE TYPEAHEAD COMBOBOX */}
+                              <SearchableLedgerSelect
                                 value={it.ledger_name}
-                                onChange={(e) => handleLedgerSelection(idx, e.target.value, it.description)}
-                                className={`w-full text-xs p-1 rounded font-medium border transition ${
-                                  it.isAutoMatched
-                                    ? "bg-indigo-50 border-indigo-200 text-indigo-900 font-semibold"
-                                    : "bg-white border-slate-200 text-slate-700"
-                                }`}
-                              >
-                                {dynamicExpenseLedgers.map((led) => (
-                                  <option key={led} value={led}>{led}</option>
-                                ))}
-                              </select>
+                                onChange={(selected) => handleLedgerSelection(idx, selected, it.description)}
+                                options={dynamicExpenseLedgers}
+                                coaList={clientCoa}
+                                placeholder="Type to search ledger..."
+                              />
                             </td>
                             <td className="p-2">
                               <input
@@ -1537,7 +1632,7 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
           </div>
         )}
 
-        {/* TAB 3: PUSHED TO TALLY (NOW GROUPED INTO EXPANDABLE MONTH-WISE FOLDERS) */}
+        {/* TAB 3: PUSHED TO TALLY */}
         {purchaseSubTab === "pushed" && (
           <div className="space-y-4">
             {groupedPushedBills.length === 0 ? (
@@ -1548,7 +1643,7 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
               </div>
             ) : (
               groupedPushedBills.map((group) => {
-                const isExpanded = expandedFolders[group.monthLabel] !== false; // Default expanded
+                const isExpanded = expandedFolders[group.monthLabel] !== false;
 
                 return (
                   <div key={group.monthLabel} className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
