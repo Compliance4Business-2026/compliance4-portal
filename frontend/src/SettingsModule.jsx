@@ -15,7 +15,11 @@ import {
   PenTool,
   ChevronRight,
   ArrowLeft,
-  Filter
+  Filter,
+  Edit2,
+  Sparkles,
+  Check,
+  X
 } from "lucide-react";
 
 const loadSheetJS = () => {
@@ -110,6 +114,9 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
   const [newStatementType, setNewStatementType] = useState("P&L");
   const [newLedgerCategory, setNewLedgerCategory] = useState("");
   const [newCogsClassification, setNewCogsClassification] = useState("COGS"); // 'COGS' | 'Indirect'
+
+  // Inline Editing State
+  const [editingLedger, setEditingLedger] = useState(null);
 
   const [isUploading, setIsUploading] = useState(false);
   const [notification, setNotification] = useState(null);
@@ -238,7 +245,7 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
     notify(`Complete profile for "${targetName}" saved successfully!`, "success");
   };
 
-  // Add Single Ledger with COGS vs Indirect Classification
+  // Add Single Ledger
   const handleAddLedger = (e) => {
     e.preventDefault();
     if (!newLedgerName.trim()) {
@@ -270,29 +277,106 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
     notify(`Ledger "${created.name}" saved under ${created.category}!`, "success");
   };
 
+  // 1-CLICK TOGGLE: COGS <--> INDIRECT
+  const handleToggleCogsClassification = (id) => {
+    setClientCoa((prev) =>
+      prev.map((l) => {
+        if (l.id === id) {
+          const next = l.cogsClassification === "COGS" ? "Indirect" : "COGS";
+          notify(`Changed "${l.name}" to ${next === "COGS" ? "Direct (COGS)" : "Indirect Expense"}!`, "info");
+          return { ...l, cogsClassification: next };
+        }
+        return l;
+      })
+    );
+  };
+
+  // AUTO-FIX: CONVERT ALL INVENTORY/PURCHASE LEDGERS TO COGS
+  const handleAutoFixPurchasesToCogs = () => {
+    let updatedCount = 0;
+    setClientCoa((prev) =>
+      prev.map((l) => {
+        if (l.statementType === "P&L") {
+          const lowerName = l.name.toLowerCase();
+          const lowerCat = (l.category || "").toLowerCase();
+
+          const isDirectPurchase =
+            lowerCat.includes("purchase") ||
+            lowerName.includes("purchase") ||
+            lowerName.includes("dairy") ||
+            lowerName.includes("groceries") ||
+            lowerName.includes("beverage") ||
+            lowerName.includes("dessert") ||
+            lowerName.includes("frozen") ||
+            lowerName.includes("sauces") ||
+            lowerName.includes("vegetable") ||
+            lowerName.includes("packing") ||
+            lowerName.includes("ingredient") ||
+            lowerName.includes("gas");
+
+          if (isDirectPurchase && l.cogsClassification !== "COGS") {
+            updatedCount++;
+            return { ...l, cogsClassification: "COGS" };
+          }
+        }
+        return l;
+      })
+    );
+
+    if (updatedCount > 0) {
+      notify(`Auto-tagged ${updatedCount} purchase ledgers to Direct (COGS)!`, "success");
+    } else {
+      notify("All purchase ledgers are already classified as COGS.", "info");
+    }
+  };
+
+  // SAVE INLINE EDIT
+  const handleSaveEditLedger = () => {
+    if (!editingLedger || !editingLedger.name.trim()) return;
+
+    setClientCoa((prev) =>
+      prev.map((l) =>
+        l.id === editingLedger.id
+          ? {
+              ...l,
+              name: editingLedger.name.trim(),
+              category: editingLedger.category.trim(),
+              statementType: editingLedger.statementType,
+              cogsClassification:
+                editingLedger.statementType === "P&L"
+                  ? editingLedger.cogsClassification
+                  : null
+            }
+          : l
+      )
+    );
+
+    notify(`Updated ledger "${editingLedger.name}"!`, "success");
+    setEditingLedger(null);
+  };
+
   const handleDeleteLedger = (id, name) => {
     if (!window.confirm(`Delete ledger "${name}"?`)) return;
     setClientCoa((prev) => prev.filter((l) => l.id !== id));
     notify(`Ledger "${name}" deleted.`, "info");
   };
 
-  // 4-COLUMN TEMPLATE (LEDGER NAME, STATEMENT TYPE, CATEGORY, COGS OR INDIRECT)
+  // 4-COLUMN TEMPLATE
   const handleDownloadTemplate = async () => {
     try {
       const XLSX = await loadSheetJS();
       const templateData = [
         ["Ledger Name", "Statement Type", "Category", "COGS or Indirect (Only for P&L)"],
-        ["Purchases - Dairy Products", "P&L", "Cost of Goods Sold (COGS)", "COGS"],
-        ["Purchases - Food Ingredients", "P&L", "Cost of Goods Sold (COGS)", "COGS"],
-        ["Packaging Material & Cartons", "P&L", "Cost of Goods Sold (COGS)", "COGS"],
-        ["Printing & Stationery Expenses", "P&L", "Administrative & General Expenses", "Indirect"],
-        ["Digital Marketing & Promotion", "P&L", "Selling & Distribution Expenses", "Indirect"],
-        ["Office Electricity & Power", "P&L", "Rent & Occupancy Costs", "Indirect"],
+        ["Purchases - Dairy Products", "P&L", "Purchases", "COGS"],
+        ["Purchases - Groceries", "P&L", "Purchases", "COGS"],
+        ["Purchase - Vegetables", "P&L", "Purchases", "COGS"],
+        ["Purchase - Packing Materials", "P&L", "Purchases", "COGS"],
+        ["Supplies - Stationery / Promotions", "P&L", "Administrative & General Expenses", "Indirect"],
+        ["Office Rent & Taxes", "P&L", "Rent & Occupancy Costs", "Indirect"],
         ["Staff Salary & Wages", "P&L", "Employee Benefit Expenses", "Indirect"],
         ["Sales - In-Store Dine-in", "P&L", "Revenue from Operations", "COGS"],
         ["HDFC Bank Current A/c", "Balance Sheet", "Cash & Bank Balances", ""],
-        ["Sundry Creditors Control", "Balance Sheet", "Current Liabilities & Provisions", ""],
-        ["Input CGST (Input Tax Credit)", "Balance Sheet", "Duties & Taxes", ""]
+        ["Sundry Creditors Control", "Balance Sheet", "Current Liabilities & Provisions", ""]
       ];
 
       const ws = XLSX.utils.aoa_to_sheet(templateData);
@@ -303,17 +387,14 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
     } catch {
       const csvContent =
         "Ledger Name,Statement Type,Category,COGS or Indirect (Only for P&L)\n" +
-        "Purchases - Dairy Products,P&L,Cost of Goods Sold (COGS),COGS\n" +
-        "Purchases - Food Ingredients,P&L,Cost of Goods Sold (COGS),COGS\n" +
-        "Packaging Material & Cartons,P&L,Cost of Goods Sold (COGS),COGS\n" +
-        "Printing & Stationery Expenses,P&L,Administrative & General Expenses,Indirect\n" +
-        "Digital Marketing & Promotion,P&L,Selling & Distribution Expenses,Indirect\n" +
-        "Office Electricity & Power,P&L,Rent & Occupancy Costs,Indirect\n" +
+        "Purchases - Dairy Products,P&L,Purchases,COGS\n" +
+        "Purchases - Groceries,P&L,Purchases,COGS\n" +
+        "Purchase - Vegetables,P&L,Purchases,COGS\n" +
+        "Purchase - Packing Materials,P&L,Purchases,COGS\n" +
+        "Supplies - Stationery / Promotions,P&L,Administrative & General Expenses,Indirect\n" +
         "Staff Salary & Wages,P&L,Employee Benefit Expenses,Indirect\n" +
         "Sales - In-Store Dine-in,P&L,Revenue from Operations,COGS\n" +
-        "HDFC Bank Current A/c,Balance Sheet,Cash & Bank Balances,\n" +
-        "Sundry Creditors Control,Balance Sheet,Current Liabilities & Provisions,\n" +
-        "Input CGST (Input Tax Credit),Balance Sheet,Duties & Taxes,\n";
+        "HDFC Bank Current A/c,Balance Sheet,Cash & Bank Balances,\n";
       const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
@@ -325,7 +406,7 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
     }
   };
 
-  // FULLY DYNAMIC IMPORT (PRESERVES EXACT CATEGORIES & COGS CLASSIFICATION)
+  // FULLY DYNAMIC IMPORT
   const handleFileUpload = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -382,21 +463,6 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
               if (rawType.includes("balance") || rawType.includes("bs") || rawType.includes("asset") || rawType.includes("liab")) {
                 statementType = "Balance Sheet";
               }
-            } else {
-              const lower = name.toLowerCase();
-              if (
-                lower.includes("payable") ||
-                lower.includes("bank") ||
-                lower.includes("cash") ||
-                lower.includes("deposit") ||
-                lower.includes("tds") ||
-                lower.includes("gst payable") ||
-                lower.includes("advance") ||
-                lower.includes("machine") ||
-                lower.includes("equipment")
-              ) {
-                statementType = "Balance Sheet";
-              }
             }
 
             let category = "General Overheads";
@@ -406,7 +472,6 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
               category = statementType === "Balance Sheet" ? "Balance Sheet Items" : "Operational Expenses";
             }
 
-            // Determine COGS vs Indirect
             let cogsClassification = null;
             if (statementType === "P&L") {
               if (cogsIdx !== -1 && row[cogsIdx]) {
@@ -416,12 +481,13 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
                 const lowerCat = category.toLowerCase();
                 const lowerName = name.toLowerCase();
                 if (
-                  lowerCat.includes("cogs") ||
-                  lowerCat.includes("direct") ||
                   lowerCat.includes("purchase") ||
-                  lowerCat.includes("raw material") ||
                   lowerName.includes("purchase") ||
-                  lowerName.includes("ingredient")
+                  lowerName.includes("dairy") ||
+                  lowerName.includes("groceries") ||
+                  lowerName.includes("sauces") ||
+                  lowerName.includes("vegetable") ||
+                  lowerName.includes("beverage")
                 ) {
                   cogsClassification = "COGS";
                 } else {
@@ -475,7 +541,6 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
     }
   };
 
-  // Group client COA dynamically by Category
   const filteredCoa = clientCoa.filter((l) => {
     if (coaFilter === "ALL") return true;
     return l.statementType === coaFilter;
@@ -537,9 +602,17 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
           {viewMode === "manage" && manageSubTab === "coa" && (
             <div className="flex items-center gap-2">
               <button
+                onClick={handleAutoFixPurchasesToCogs}
+                className="flex items-center gap-1.5 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 text-xs font-bold px-3.5 py-2 rounded-lg transition"
+                title="Automatically sets all purchase / raw material ledgers to Direct (COGS)"
+              >
+                <Sparkles className="w-3.5 h-3.5 text-amber-600" /> Auto-Tag Purchases to COGS
+              </button>
+
+              <button
                 onClick={handleDownloadTemplate}
                 className="flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold px-3.5 py-2 rounded-lg transition"
-                title="Download 4-column Template (Ledger Name, Statement Type, Category, COGS or Indirect)"
+                title="Download 4-column Template"
               >
                 <Download className="w-3.5 h-3.5" /> Download Template
               </button>
@@ -805,7 +878,7 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
         {/* 3. DYNAMIC CHART OF ACCOUNTS TAB */}
         {viewMode === "manage" && manageSubTab === "coa" && (
           <div className="space-y-6">
-            {/* ADD LEDGER FORM WITH COGS / INDIRECT CLASSIFIER */}
+            {/* ADD LEDGER FORM */}
             <form onSubmit={handleAddLedger} className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm space-y-4">
               <div className="flex items-center justify-between border-b border-slate-100 pb-3">
                 <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
@@ -838,7 +911,6 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
                   </select>
                 </div>
 
-                {/* NEW: DIRECT COGS VS INDIRECT SELECTION (ONLY FOR P&L) */}
                 {newStatementType === "P&L" && (
                   <div className="col-span-3">
                     <label className="block text-xs font-bold text-slate-700 mb-1">
@@ -877,7 +949,7 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
               </div>
             </form>
 
-            {/* FILTER STRIP (ALL / P&L / BALANCE SHEET) */}
+            {/* FILTER STRIP */}
             <div className="flex items-center justify-between bg-white px-5 py-3 rounded-xl border border-slate-200">
               <div className="flex items-center gap-2">
                 <Filter className="w-4 h-4 text-slate-500" />
@@ -898,7 +970,7 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
               </div>
             </div>
 
-            {/* DYNAMIC LISTING RENDERED ACCORDING TO USER'S UPLOADED CATEGORIES */}
+            {/* DYNAMIC LISTING */}
             <div className="space-y-4">
               {Object.keys(categoriesGrouped).length === 0 ? (
                 <div className="bg-white rounded-xl border border-slate-200 p-12 text-center text-slate-400 text-xs">
@@ -930,25 +1002,42 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
                           <div key={item.id} className="px-5 py-2.5 flex items-center justify-between hover:bg-slate-50/50 transition">
                             <div className="flex items-center gap-2.5">
                               <span className="text-xs font-semibold text-slate-800">{item.name}</span>
+                              
+                              {/* INTERACTIVE TOGGLE BADGE (CLICK TO SWITCH COGS <-> INDIRECT) */}
                               {item.statementType === "P&L" && (
-                                <span
-                                  className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                <button
+                                  onClick={() => handleToggleCogsClassification(item.id)}
+                                  className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold cursor-pointer transition shadow-2xs hover:scale-105 ${
                                     item.cogsClassification === "COGS"
-                                      ? "bg-amber-50 text-amber-800 border border-amber-200"
-                                      : "bg-indigo-50 text-indigo-700 border border-indigo-200"
+                                      ? "bg-amber-100 hover:bg-amber-200 text-amber-800 border border-amber-300"
+                                      : "bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200"
                                   }`}
+                                  title="Click to toggle between Direct (COGS) and Indirect Expense"
                                 >
-                                  {item.cogsClassification === "COGS" ? "Direct (COGS)" : "Indirect Expense"}
-                                </span>
+                                  {item.cogsClassification === "COGS" ? "Direct (COGS) ⇄" : "Indirect Expense ⇄"}
+                                </button>
                               )}
                             </div>
-                            <button
-                              onClick={() => handleDeleteLedger(item.id, item.name)}
-                              className="text-slate-300 hover:text-rose-600 p-1.5 rounded transition"
-                              title="Delete Ledger"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
+
+                            <div className="flex items-center gap-1">
+                              {/* EDIT LEDGER BUTTON */}
+                              <button
+                                onClick={() => setEditingLedger(item)}
+                                className="text-slate-300 hover:text-indigo-600 p-1.5 rounded transition"
+                                title="Edit Ledger Details"
+                              >
+                                <Edit2 className="w-3.5 h-3.5" />
+                              </button>
+
+                              {/* DELETE LEDGER BUTTON */}
+                              <button
+                                onClick={() => handleDeleteLedger(item.id, item.name)}
+                                className="text-slate-300 hover:text-rose-600 p-1.5 rounded transition"
+                                title="Delete Ledger"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
                           </div>
                         ))}
                       </div>
@@ -960,6 +1049,85 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
           </div>
         )}
       </div>
+
+      {/* INLINE EDIT LEDGER MODAL */}
+      {editingLedger && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl border border-slate-200 shadow-xl max-w-md w-full p-6 space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                <Edit2 className="w-4 h-4 text-indigo-600" /> Edit Ledger Account
+              </h3>
+              <button onClick={() => setEditingLedger(null)} className="text-slate-400 hover:text-slate-600">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Ledger Name</label>
+                <input
+                  type="text"
+                  value={editingLedger.name}
+                  onChange={(e) => setEditingLedger({ ...editingLedger, name: e.target.value })}
+                  className="w-full text-xs font-bold border border-slate-300 rounded-lg p-2"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Statement Nature</label>
+                <select
+                  value={editingLedger.statementType}
+                  onChange={(e) => setEditingLedger({ ...editingLedger, statementType: e.target.value })}
+                  className="w-full text-xs border border-slate-300 rounded-lg p-2 bg-white"
+                >
+                  <option value="P&L">Profit & Loss (P&L)</option>
+                  <option value="Balance Sheet">Balance Sheet</option>
+                </select>
+              </div>
+
+              {editingLedger.statementType === "P&L" && (
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">P&L Cost Nature</label>
+                  <select
+                    value={editingLedger.cogsClassification || "Indirect"}
+                    onChange={(e) => setEditingLedger({ ...editingLedger, cogsClassification: e.target.value })}
+                    className="w-full text-xs font-bold border border-slate-300 rounded-lg p-2 bg-white"
+                  >
+                    <option value="COGS">Part of COGS (Direct Trading / Raw Material)</option>
+                    <option value="Indirect">Part of Indirect Expenses (Overheads / Admin)</option>
+                  </select>
+                </div>
+              )}
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Category / Group Name</label>
+                <input
+                  type="text"
+                  value={editingLedger.category}
+                  onChange={(e) => setEditingLedger({ ...editingLedger, category: e.target.value })}
+                  className="w-full text-xs border border-slate-300 rounded-lg p-2"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
+              <button
+                onClick={() => setEditingLedger(null)}
+                className="px-4 py-2 border border-slate-200 text-slate-600 rounded-lg text-xs font-bold hover:bg-slate-50 transition"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveEditLedger}
+                className="px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-bold shadow-sm transition"
+              >
+                Save Changes
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {notification && (
         <div
