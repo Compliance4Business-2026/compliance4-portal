@@ -18,7 +18,9 @@ import {
   Filter,
   Edit2,
   Sparkles,
-  X
+  X,
+  ShieldCheck,
+  ShieldAlert
 } from "lucide-react";
 
 const loadSheetJS = () => {
@@ -37,12 +39,17 @@ const loadSheetJS = () => {
 
 const getFreshProfileState = (clientName, savedProfiles) => {
   if (savedProfiles[clientName]) {
-    return { ...savedProfiles[clientName], companyName: clientName };
+    return { 
+      ...savedProfiles[clientName], 
+      companyName: clientName,
+      isItcEligible: savedProfiles[clientName].isItcEligible !== undefined ? savedProfiles[clientName].isItcEligible : true
+    };
   }
   return {
     companyName: clientName,
     gstin: "",
     pan: "",
+    isItcEligible: true, // Default to Yes (Eligible)
     contactPerson: "",
     phone: "",
     email: "",
@@ -58,14 +65,12 @@ const getFreshProfileState = (clientName, savedProfiles) => {
   };
 };
 
-// Precise accounting classification helper
 const getPlNature = (ledger) => {
   if (ledger.statementType !== "P&L") return null;
 
   const cat = (ledger.category || "").toLowerCase();
   const name = (ledger.name || "").toLowerCase();
 
-  // 1. REVENUE FROM OPERATIONS (SALES)
   if (
     cat.includes("sales") || 
     cat.includes("revenue") || 
@@ -77,7 +82,6 @@ const getPlNature = (ledger) => {
     return "Revenue";
   }
 
-  // 2. OTHER NON-OPERATING INCOMES
   if (
     cat.includes("other income") || 
     cat.includes("interest income") || 
@@ -89,11 +93,9 @@ const getPlNature = (ledger) => {
     return "Other Income";
   }
 
-  // 3. EXPENSES: COGS OR INDIRECT
   if (ledger.cogsClassification === "COGS") return "COGS";
   if (ledger.cogsClassification === "Indirect") return "Indirect";
 
-  // Heuristic fallbacks for expenses
   if (
     cat.includes("purchase") ||
     cat.includes("direct cost") ||
@@ -112,8 +114,8 @@ const getPlNature = (ledger) => {
 };
 
 export default function SettingsModule({ activeClient, setActiveClient }) {
-  const [viewMode, setViewMode] = useState("directory"); // 'directory' | 'manage'
-  const [manageSubTab, setManageSubTab] = useState("profile"); // 'profile' | 'coa'
+  const [viewMode, setViewMode] = useState("directory");
+  const [manageSubTab, setManageSubTab] = useState("profile");
 
   const [profiles, setProfiles] = useState(() => {
     try {
@@ -124,6 +126,7 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
           companyName: activeClient,
           gstin: "",
           pan: "",
+          isItcEligible: true,
           address: ""
         }
       };
@@ -164,7 +167,7 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
   const [newLedgerName, setNewLedgerName] = useState("");
   const [newStatementType, setNewStatementType] = useState("P&L");
   const [newLedgerCategory, setNewLedgerCategory] = useState("");
-  const [newCostNature, setNewCostNature] = useState("COGS"); // 'COGS' | 'Indirect' | 'Revenue' | 'Other Income'
+  const [newCostNature, setNewCostNature] = useState("COGS");
 
   const [editingLedger, setEditingLedger] = useState(null);
   const [isUploading, setIsUploading] = useState(false);
@@ -212,6 +215,7 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
     setManageSubTab("profile");
   };
 
+  // ADD NEW CLIENT WITH ITC SELECTION
   const handleAddNewClient = () => {
     const newClientName = window.prompt("Enter Legal or Trade Name for the New Client:");
     if (!newClientName || !newClientName.trim()) return;
@@ -223,10 +227,15 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
       return;
     }
 
+    const itcPrompt = window.confirm(
+      `Is "${trimmed}" eligible for GST Input Tax Credit (ITC)?\n\nClick OK for YES (Regular Business - Full ITC).\nClick CANCEL for NO (Restaurant / Cafe 5% Scheme - Taxes route to GST Expense).`
+    );
+
     const newProfile = {
       companyName: trimmed,
       gstin: "",
       pan: "",
+      isItcEligible: itcPrompt,
       contactPerson: "",
       phone: "",
       email: "",
@@ -241,18 +250,30 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
       signatureUrl: ""
     };
 
+    // Auto-seed "GST Expense on Purchase" in COA if client is not ITC eligible
+    const defaultCoa = [];
+    if (!itcPrompt) {
+      defaultCoa.push({
+        id: `coa_gst_exp_${Date.now()}`,
+        name: "GST Expense on Purchase",
+        statementType: "P&L",
+        category: "Administrative & General Expenses",
+        cogsClassification: "Indirect"
+      });
+    }
+
     const updated = { ...profiles, [trimmed]: newProfile };
     setProfiles(updated);
     localStorage.setItem("c4_client_profiles", JSON.stringify(updated));
-    localStorage.setItem(`c4_coa_${trimmed}`, JSON.stringify([]));
+    localStorage.setItem(`c4_coa_${trimmed}`, JSON.stringify(defaultCoa));
 
     setActiveClient(trimmed);
     setCurrentForm(newProfile);
-    setClientCoa([]);
+    setClientCoa(defaultCoa);
     setViewMode("manage");
     setManageSubTab("profile");
 
-    notify(`Client "${trimmed}" created!`, "success");
+    notify(`Client "${trimmed}" created (${itcPrompt ? "ITC Eligible" : "Non-ITC Cafe Scheme"})!`, "success");
   };
 
   const handleDeleteClient = (clientNameToDelete, e) => {
@@ -291,7 +312,7 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
     setProfiles(updatedProfiles);
     localStorage.setItem("c4_client_profiles", JSON.stringify(updatedProfiles));
     setActiveClient(targetName);
-    notify(`Complete profile for "${targetName}" saved successfully!`, "success");
+    notify(`Profile for "${targetName}" saved (ITC: ${currentForm.isItcEligible ? "Eligible" : "Non-ITC Scheme"})!`, "success");
   };
 
   const handleAddLedger = (e) => {
@@ -325,7 +346,6 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
     notify(`Ledger "${created.name}" saved under ${created.category}!`, "success");
   };
 
-  // Toggle for Expenses (COGS <-> Indirect)
   const handleToggleCogsClassification = (id) => {
     setClientCoa((prev) =>
       prev.map((l) => {
@@ -343,16 +363,13 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
     );
   };
 
-  // Batch auto-tag purchases to COGS (ignores Sales & Incomes)
   const handleAutoFixPurchasesToCogs = () => {
     let updatedCount = 0;
     setClientCoa((prev) =>
       prev.map((l) => {
         if (l.statementType === "P&L") {
           const nature = getPlNature(l);
-          if (nature === "Revenue" || nature === "Other Income") {
-            return l; // Do not touch sales or incomes
-          }
+          if (nature === "Revenue" || nature === "Other Income") return l;
 
           const lowerName = l.name.toLowerCase();
           const lowerCat = (l.category || "").toLowerCase();
@@ -426,10 +443,10 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
         ["Sales: Delivery", "P&L", "Sales", "Revenue"],
         ["Interest Received", "P&L", "Other Income", "Other Income"],
         ["Purchases - Dairy Products", "P&L", "Purchases", "COGS"],
-        ["Purchases - Groceries", "P&L", "Purchases", "COGS"],
+        ["GST Expense on Purchase", "P&L", "Administrative & General Expenses", "Indirect"],
         ["Supplies - Stationery", "P&L", "Administrative Expenses", "Indirect"],
-        ["Office Rent", "P&L", "Rent & Occupancy Costs", "Indirect"],
-        ["HDFC Bank A/c", "Balance Sheet", "Cash & Bank Balances", ""]
+        ["HDFC Bank A/c", "Balance Sheet", "Cash & Bank Balances", ""],
+        ["Input CGST", "Balance Sheet", "Duties & Taxes", ""]
       ];
 
       const ws = XLSX.utils.aoa_to_sheet(templateData);
@@ -438,24 +455,7 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
       XLSX.writeFile(wb, `COA_Template_${activeClient.replace(/\s+/g, "_")}.xlsx`);
       notify("COA Template downloaded!", "success");
     } catch {
-      const csvContent =
-        "Ledger Name,Statement Type,Category,P&L Nature\n" +
-        "Sales: Dine In,P&L,Sales,Revenue\n" +
-        "Sales: Delivery,P&L,Sales,Revenue\n" +
-        "Interest Received,P&L,Other Income,Other Income\n" +
-        "Purchases - Dairy Products,P&L,Purchases,COGS\n" +
-        "Purchases - Groceries,P&L,Purchases,COGS\n" +
-        "Supplies - Stationery,P&L,Administrative Expenses,Indirect\n" +
-        "Office Rent,P&L,Rent & Occupancy Costs,Indirect\n" +
-        "HDFC Bank A/c,Balance Sheet,Cash & Bank Balances,\n";
-      const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.setAttribute("download", `COA_Template_${activeClient.replace(/\s+/g, "_")}.csv`);
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
+      notify("Failed to create template", "error");
     }
   };
 
@@ -597,7 +597,7 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
   return (
     <div className="flex-1 flex flex-col h-full bg-[#F8FAFC] overflow-y-auto font-sans">
       {/* HEADER BAR */}
-      <header className="bg-white border-b border-slate-200 px-8 py-4 flex items-center justify-between shadow-sm shrink-0">
+      <header className="bg-white border-b border-slate-200 px-8 py-4 flex items-center justify-between shadow-xs shrink-0">
         <div>
           <div className="flex items-center gap-3">
             {viewMode === "manage" && (
@@ -623,7 +623,7 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
           {viewMode === "directory" && (
             <button
               onClick={handleAddNewClient}
-              className="flex items-center gap-1.5 px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-bold transition shadow-sm"
+              className="flex items-center gap-1.5 px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-bold transition shadow-xs"
             >
               <Plus className="w-4 h-4" /> + Add New Client
             </button>
@@ -632,7 +632,7 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
           {viewMode === "manage" && manageSubTab === "profile" && (
             <button
               onClick={handleSaveProfile}
-              className="flex items-center gap-1.5 px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-semibold transition shadow-sm"
+              className="flex items-center gap-1.5 px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-semibold transition shadow-xs"
             >
               <Save className="w-3.5 h-3.5" /> Save Profile
             </button>
@@ -643,7 +643,7 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
               <button
                 onClick={handleAutoFixPurchasesToCogs}
                 className="flex items-center gap-1.5 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 text-xs font-bold px-3.5 py-2 rounded-lg transition"
-                title="Automatically sets purchase ledgers to Direct (COGS) without affecting Sales or Incomes"
+                title="Automatically sets purchase ledgers to Direct (COGS)"
               >
                 <Sparkles className="w-3.5 h-3.5 text-amber-600" /> Auto-Tag Purchases to COGS
               </button>
@@ -666,7 +666,7 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
               <button
                 onClick={() => fileInputRef.current?.click()}
                 disabled={isUploading}
-                className="flex items-center gap-1.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold px-4 py-2 rounded-lg transition shadow-sm disabled:opacity-50"
+                className="flex items-center gap-1.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold px-4 py-2 rounded-lg transition shadow-xs disabled:opacity-50"
               >
                 <Upload className="w-3.5 h-3.5" />
                 {isUploading ? "Uploading..." : "Bulk Upload COA"}
@@ -730,7 +730,7 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
                 return (
                   <div
                     key={clientName}
-                    className={`bg-white rounded-xl border p-5 transition shadow-sm hover:shadow-md flex flex-col justify-between ${
+                    className={`bg-white rounded-xl border p-5 transition shadow-xs hover:shadow-md flex flex-col justify-between ${
                       isActive ? "border-slate-900 ring-2 ring-slate-900/10" : "border-slate-200"
                     }`}
                   >
@@ -777,8 +777,11 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
                         <p className="truncate">
                           <strong>Address:</strong> {profile.address ? profile.address : "Pending setup"}
                         </p>
-                        <p>
-                          <strong>Bank:</strong> {profile.bankName ? `${profile.bankName} (${profile.accountNo || "-"})` : "Not linked"}
+                        <p className="flex items-center gap-1.5">
+                          <strong>GST Scheme:</strong> 
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${profile.isItcEligible !== false ? "bg-emerald-50 text-emerald-700 border border-emerald-200" : "bg-amber-50 text-amber-800 border border-amber-300"}`}>
+                            {profile.isItcEligible !== false ? "ITC Eligible (Regular)" : "Non-ITC (Cafe Scheme)"}
+                          </span>
                         </p>
                       </div>
                     </div>
@@ -790,7 +793,7 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
 
                       <button
                         onClick={() => handleOpenClient(clientName)}
-                        className="text-xs font-bold text-white bg-slate-900 hover:bg-slate-800 px-3.5 py-1.5 rounded-lg flex items-center gap-1 transition shadow-sm"
+                        className="text-xs font-bold text-white bg-slate-900 hover:bg-slate-800 px-3.5 py-1.5 rounded-lg flex items-center gap-1 transition shadow-xs"
                       >
                         Manage Client & COA <ChevronRight className="w-3.5 h-3.5" />
                       </button>
@@ -805,7 +808,8 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
         {/* 2. PROFILE TAB */}
         {viewMode === "manage" && manageSubTab === "profile" && (
           <div className="space-y-6">
-            <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm space-y-4">
+            {/* BRANDING */}
+            <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-xs space-y-4">
               <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
                 <ImageIcon className="w-4 h-4 text-slate-600" /> Entity Branding & Signatures (For Invoices)
               </h3>
@@ -815,7 +819,7 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
                   {currentForm.logoUrl ? (
                     <div className="relative group mb-3">
                       <img src={currentForm.logoUrl} alt="Logo" className="max-h-24 max-w-full object-contain rounded border border-slate-200 bg-white p-1" />
-                      <button onClick={() => setCurrentForm((p) => ({ ...p, logoUrl: "" }))} className="absolute -top-2 -right-2 bg-rose-600 text-white rounded-full p-1 shadow hover:bg-rose-700">
+                      <button onClick={() => setCurrentForm((p) => ({ ...p, logoUrl: "" }))} className="absolute -top-2 -right-2 bg-rose-600 text-white rounded-full p-1 shadow-sm hover:bg-rose-700">
                         <Trash2 className="w-3 h-3" />
                       </button>
                     </div>
@@ -835,7 +839,7 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
                   {currentForm.signatureUrl ? (
                     <div className="relative group mb-3">
                       <img src={currentForm.signatureUrl} alt="Signature" className="max-h-24 max-w-full object-contain rounded border border-slate-200 bg-white p-1" />
-                      <button onClick={() => setCurrentForm((p) => ({ ...p, signatureUrl: "" }))} className="absolute -top-2 -right-2 bg-rose-600 text-white rounded-full p-1 shadow hover:bg-rose-700">
+                      <button onClick={() => setCurrentForm((p) => ({ ...p, signatureUrl: "" }))} className="absolute -top-2 -right-2 bg-rose-600 text-white rounded-full p-1 shadow-sm hover:bg-rose-700">
                         <Trash2 className="w-3 h-3" />
                       </button>
                     </div>
@@ -853,9 +857,10 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
               </div>
             </div>
 
-            <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm space-y-4">
+            {/* LEGAL & STATUTORY DATA + ITC CONFIGURATION */}
+            <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-xs space-y-4">
               <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-                <Building2 className="w-4 h-4 text-slate-600" /> Legal Entity & Statutory Data
+                <Building2 className="w-4 h-4 text-slate-600" /> Legal Entity & GST Configuration
               </h3>
 
               <div className="grid grid-cols-3 gap-4">
@@ -867,18 +872,39 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
                   <label className="block text-xs font-bold text-slate-700 mb-1">GSTIN</label>
                   <input type="text" placeholder="24ABCDE1234F1Z5" value={currentForm.gstin} onChange={(e) => setCurrentForm({ ...currentForm, gstin: e.target.value.toUpperCase() })} className="w-full text-xs font-mono font-bold border border-slate-300 rounded-lg p-2" />
                 </div>
+
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1">PAN Number</label>
                   <input type="text" placeholder="ABCDE1234F" value={currentForm.pan} onChange={(e) => setCurrentForm({ ...currentForm, pan: e.target.value.toUpperCase() })} className="w-full text-xs font-mono font-bold border border-slate-300 rounded-lg p-2" />
                 </div>
+
+                {/* ITC ELIGIBILITY DROPDOWN */}
                 <div className="col-span-2">
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    GST Scheme & ITC Eligibility <span className="text-rose-500">*</span>
+                  </label>
+                  <select
+                    value={currentForm.isItcEligible ? "YES" : "NO"}
+                    onChange={(e) => setCurrentForm({ ...currentForm, isItcEligible: e.target.value === "YES" })}
+                    className="w-full text-xs font-bold border border-slate-300 rounded-lg p-2 bg-white text-slate-800"
+                  >
+                    <option value="YES">YES — Eligible for Full Input Tax Credit (Regular GST Scheme)</option>
+                    <option value="NO">NO — Ineligible for ITC (Standalone Restaurant / Cafe 5% Scheme)</option>
+                  </select>
+                  <p className="text-[10px] text-slate-400 mt-1">
+                    If set to <strong>NO</strong>, taxes in all purchase bills will automatically route to <strong>GST Expense on Purchase</strong> (under P&L Indirect Expenses).
+                  </p>
+                </div>
+
+                <div className="col-span-3">
                   <label className="block text-xs font-bold text-slate-700 mb-1">Registered Business Address</label>
                   <input type="text" placeholder="Complete Office Address" value={currentForm.address} onChange={(e) => setCurrentForm({ ...currentForm, address: e.target.value })} className="w-full text-xs border border-slate-300 rounded-lg p-2" />
                 </div>
               </div>
             </div>
 
-            <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm space-y-4">
+            {/* PRIMARY SETTLEMENT BANK */}
+            <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-xs space-y-4">
               <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
                 <CreditCard className="w-4 h-4 text-slate-600" /> Primary Settlement Bank
               </h3>
@@ -914,7 +940,7 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
         {viewMode === "manage" && manageSubTab === "coa" && (
           <div className="space-y-6">
             {/* ADD LEDGER FORM */}
-            <form onSubmit={handleAddLedger} className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm space-y-4">
+            <form onSubmit={handleAddLedger} className="bg-white rounded-xl border border-slate-200 p-6 shadow-xs space-y-4">
               <div className="flex items-center justify-between border-b border-slate-100 pb-3">
                 <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
                   <Plus className="w-4 h-4 text-slate-600" /> Add Single Ledger for {activeClient}
@@ -927,7 +953,7 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
                   <label className="block text-xs font-bold text-slate-700 mb-1">Ledger Name <span className="text-rose-500">*</span></label>
                   <input
                     type="text"
-                    placeholder="e.g. Swiggy - Commission / Sales Dine In"
+                    placeholder="e.g. GST Expense on Purchase / Dairy Products"
                     value={newLedgerName}
                     onChange={(e) => setNewLedgerName(e.target.value)}
                     className="w-full text-xs font-semibold border border-slate-300 rounded-lg p-2 focus:ring-1 focus:ring-slate-900"
@@ -968,7 +994,7 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
                   <label className="block text-xs font-bold text-slate-700 mb-1">Category Name <span className="text-rose-500">*</span></label>
                   <input
                     type="text"
-                    placeholder="e.g. Sales / Purchases / Administrative"
+                    placeholder="e.g. Administrative & General Expenses"
                     value={newLedgerCategory}
                     onChange={(e) => setNewLedgerCategory(e.target.value)}
                     className="w-full text-xs border border-slate-300 rounded-lg p-2 bg-white font-medium"
@@ -978,7 +1004,7 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
                 <div className="col-span-12 flex justify-end pt-2">
                   <button
                     type="submit"
-                    className="flex items-center gap-1.5 px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-bold transition shadow-sm"
+                    className="flex items-center gap-1.5 px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-bold transition shadow-xs"
                   >
                     <Plus className="w-3.5 h-3.5" /> + Add Ledger
                   </button>
@@ -1018,7 +1044,7 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
                   const statementNature = ledgers[0]?.statementType || "P&L";
 
                   return (
-                    <div key={categoryName} className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
+                    <div key={categoryName} className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-xs">
                       <div className="bg-slate-50/80 px-5 py-3 border-b border-slate-200 flex items-center justify-between">
                         <div className="flex items-center gap-2.5">
                           <Layers className="w-4 h-4 text-slate-600" />
@@ -1045,21 +1071,18 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
                                 
                                 {item.statementType === "P&L" && (
                                   <>
-                                    {/* 1. REVENUE BADGE */}
                                     {plNature === "Revenue" && (
                                       <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
                                         Revenue from Operations
                                       </span>
                                     )}
 
-                                    {/* 2. OTHER INCOME BADGE */}
                                     {plNature === "Other Income" && (
                                       <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-teal-100 text-teal-800 border border-teal-300">
                                         Other Non-Operating Income
                                       </span>
                                     )}
 
-                                    {/* 3. EXPENSES: INTERACTIVE TOGGLE BADGE (COGS <-> INDIRECT) */}
                                     {(plNature === "COGS" || plNature === "Indirect") && (
                                       <button
                                         onClick={() => handleToggleCogsClassification(item.id)}
@@ -1179,7 +1202,7 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
               </button>
               <button
                 onClick={handleSaveEditLedger}
-                className="px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-bold shadow-sm transition"
+                className="px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-bold shadow-xs transition"
               >
                 Save Changes
               </button>
