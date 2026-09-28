@@ -1,193 +1,260 @@
 import React, { useState, useEffect } from "react";
-import { 
-  Building2, 
-  FileText, 
-  CreditCard, 
-  TrendingUp, 
-  Settings, 
-  FileSpreadsheet,
-  Layers
-} from "lucide-react";
-import BankModule from "./BankModule";
-import PurchaseModule from "./PurchaseModule";
-import SalesModule from "./SalesModule";
-import ExpenseModule from "./ExpenseModule";
 import DashboardModule from "./DashboardModule";
+import SalesModule from "./SalesModule";
+import PurchaseModule from "./PurchaseModule";
+import OtherExpensesModule from "./OtherExpensesModule";
+import BankModule from "./BankModule";
 import SettingsModule from "./SettingsModule";
+import LoginModal from "./LoginModal";
+
+import {
+  LayoutDashboard,
+  Receipt,
+  FileSpreadsheet,
+  Layers,
+  Landmark,
+  Settings,
+  LogOut,
+  User,
+  ShieldCheck,
+  CheckCircle2,
+  Building2
+} from "lucide-react";
 
 export default function App() {
+  // Session State
+  const [currentUser, setCurrentUser] = useState(() => {
+    try {
+      const saved = localStorage.getItem("c4_auth_session");
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
+  });
+
   const [activeTab, setActiveTab] = useState("dashboard");
 
-  // Read available client profiles
-  const [clientList, setClientList] = useState(() => {
+  // Persistent Client Entities
+  const [profiles, setProfiles] = useState(() => {
     try {
       const saved = localStorage.getItem("c4_client_profiles");
-      const parsed = saved ? Object.keys(JSON.parse(saved)) : [];
-      return parsed.length > 0 ? parsed : ["Panasuria Confectionery"];
+      if (saved) return JSON.parse(saved);
+      return {
+        "Pansuria Confectionery & Food": {
+          companyName: "Pansuria Confectionery & Food",
+          isItcEligible: false
+        }
+      };
     } catch {
-      return ["Panasuria Confectionery"];
+      return {};
     }
   });
 
   const [activeClient, setActiveClient] = useState(() => {
-    return clientList[0] || "Panasuria Confectionery";
+    try {
+      const saved = localStorage.getItem("c4_active_client");
+      if (saved) return saved;
+      return "Pansuria Confectionery & Food";
+    } catch {
+      return "Pansuria Confectionery & Food";
+    }
   });
 
   useEffect(() => {
-    const handleStorageChange = () => {
-      try {
-        const saved = localStorage.getItem("c4_client_profiles");
-        const parsed = saved ? Object.keys(JSON.parse(saved)) : [];
-        if (parsed.length > 0) {
-          setClientList(parsed);
-          if (!parsed.includes(activeClient)) {
-            setActiveClient(parsed[0]);
-          }
-        }
-      } catch {}
-    };
-    window.addEventListener("storage", handleStorageChange);
-    return () => window.removeEventListener("storage", handleStorageChange);
+    localStorage.setItem("c4_active_client", activeClient);
   }, [activeClient]);
 
-  const handleClientSwitch = (newClientName) => {
-    setActiveClient(newClientName);
+  // Restrict client choices if user is bound to a single client
+  const availableClients = Object.keys(profiles).filter((clientName) => {
+    if (!currentUser || currentUser.role === "admin" || currentUser.allowedClients === "ALL") {
+      return true;
+    }
+    return currentUser.allowedClients === clientName;
+  });
+
+  // Ensure active client falls within user's permitted entities
+  useEffect(() => {
+    if (currentUser && currentUser.allowedClients !== "ALL" && currentUser.allowedClients) {
+      setActiveClient(currentUser.allowedClients);
+    }
+  }, [currentUser]);
+
+  const handleLogout = () => {
+    localStorage.removeItem("c4_auth_session");
+    setCurrentUser(null);
   };
 
+  // If not authenticated, render Login Gate
+  if (!currentUser) {
+    return <LoginModal onLoginSuccess={(user) => setCurrentUser(user)} />;
+  }
+
+  const perms = currentUser.permissions || {};
+
   return (
-    <div className="flex h-screen bg-[#F8FAFC] text-slate-800 font-sans">
+    <div className="flex h-screen w-screen bg-[#F8FAFC] overflow-hidden font-sans">
       {/* SIDEBAR NAVIGATION */}
-      <aside className="w-64 bg-white border-r border-slate-200 flex flex-col p-4 shadow-sm shrink-0">
-        <div className="flex items-center gap-3 px-2 py-3 border-b border-slate-100">
-          <div className="h-10 w-10 bg-[#0F172A] text-white rounded-lg flex items-center justify-center font-bold text-lg tracking-wider">
-            C4
+      <aside className="w-64 bg-white border-r border-slate-200 flex flex-col justify-between shrink-0 shadow-xs">
+        <div>
+          {/* LOGO */}
+          <div className="p-6 border-b border-slate-100 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 bg-slate-900 text-white rounded-xl flex items-center justify-center font-black text-sm shadow-sm">
+                C4
+              </div>
+              <div>
+                <h1 className="text-sm font-bold text-slate-900 leading-tight">Compliance4</h1>
+                <p className="text-[10px] text-slate-400 font-medium">OPERATIONS HUB</p>
+              </div>
+            </div>
           </div>
-          <div>
-            <h1 className="font-semibold text-slate-900 leading-tight">Compliance4</h1>
-            <p className="text-xs text-slate-500 uppercase tracking-wider font-medium">Operations Hub</p>
+
+          {/* ACTIVE CLIENT ENTITY SWITCHER */}
+          <div className="p-4 border-b border-slate-100 bg-slate-50/50">
+            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
+              Active Client Entity
+            </span>
+            <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-lg p-2 shadow-2xs">
+              <Building2 className="w-4 h-4 text-slate-500 shrink-0" />
+              <select
+                value={activeClient}
+                onChange={(e) => setActiveClient(e.target.value)}
+                disabled={currentUser.allowedClients !== "ALL"}
+                className="w-full text-xs font-bold text-slate-800 bg-transparent focus:outline-none truncate cursor-pointer disabled:opacity-75 disabled:cursor-not-allowed"
+              >
+                {availableClients.map((name) => (
+                  <option key={name} value={name}>{name}</option>
+                ))}
+              </select>
+            </div>
           </div>
+
+          {/* NAV LINKS (RESPECTS USER ACCESS PERMISSIONS) */}
+          <nav className="p-4 space-y-1">
+            {perms.dashboard !== "none" && (
+              <button
+                onClick={() => setActiveTab("dashboard")}
+                className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition ${
+                  activeTab === "dashboard"
+                    ? "bg-slate-900 text-white shadow-sm"
+                    : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+                }`}
+              >
+                <LayoutDashboard className="w-4 h-4" /> Dashboard
+              </button>
+            )}
+
+            {perms.sales !== "none" && (
+              <button
+                onClick={() => setActiveTab("sales")}
+                className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition ${
+                  activeTab === "sales"
+                    ? "bg-slate-900 text-white shadow-sm"
+                    : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+                }`}
+              >
+                <Receipt className="w-4 h-4" /> Sales
+              </button>
+            )}
+
+            {perms.purchases !== "none" && (
+              <button
+                onClick={() => setActiveTab("purchases")}
+                className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition ${
+                  activeTab === "purchases"
+                    ? "bg-slate-900 text-white shadow-sm"
+                    : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+                }`}
+              >
+                <FileSpreadsheet className="w-4 h-4" /> Purchases
+              </button>
+            )}
+
+            {perms.otherExpenses !== "none" && (
+              <button
+                onClick={() => setActiveTab("otherExpenses")}
+                className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition ${
+                  activeTab === "otherExpenses"
+                    ? "bg-slate-900 text-white shadow-sm"
+                    : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+                }`}
+              >
+                <Layers className="w-4 h-4" /> Other Expenses
+              </button>
+            )}
+
+            {perms.banking !== "none" && (
+              <button
+                onClick={() => setActiveTab("banking")}
+                className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition ${
+                  activeTab === "banking"
+                    ? "bg-slate-900 text-white shadow-sm"
+                    : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+                }`}
+              >
+                <Landmark className="w-4 h-4" /> Banking
+              </button>
+            )}
+
+            {/* SETTINGS IS RESERVED FOR SUPER ADMIN */}
+            {currentUser.role === "admin" && (
+              <button
+                onClick={() => setActiveTab("settings")}
+                className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition ${
+                  activeTab === "settings"
+                    ? "bg-slate-900 text-white shadow-sm"
+                    : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+                }`}
+              >
+                <Settings className="w-4 h-4" /> Settings & Masters
+              </button>
+            )}
+          </nav>
         </div>
 
-        {/* ACTIVE CLIENT SCROLL / SELECT DROPDOWN */}
-        <div className="my-5 px-1">
-          <label className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 block mb-1.5">
-            Active Client Entity
-          </label>
-          <div className="relative">
-            <select
-              value={activeClient}
-              onChange={(e) => handleClientSwitch(e.target.value)}
-              className="w-full appearance-none bg-slate-50 border border-slate-300 hover:border-slate-400 p-2.5 pr-8 rounded-lg text-xs font-bold text-slate-800 focus:outline-none focus:ring-1 focus:ring-slate-900 cursor-pointer transition truncate"
+        {/* FOOTER: SESSION DETAILS & LOGOUT */}
+        <div className="p-4 border-t border-slate-100 space-y-3 bg-slate-50/50">
+          <div className="flex items-center gap-2 text-xs">
+            <div className="w-7 h-7 rounded-full bg-slate-200 text-slate-700 font-bold flex items-center justify-center text-[11px]">
+              {currentUser.username.substring(0, 2).toUpperCase()}
+            </div>
+            <div className="truncate flex-1">
+              <p className="font-bold text-slate-800 text-[11px] leading-tight truncate">
+                {currentUser.fullName}
+              </p>
+              <p className="text-[10px] text-slate-400 capitalize">{currentUser.role}</p>
+            </div>
+            <button
+              onClick={handleLogout}
+              className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition"
+              title="Sign Out"
             >
-              {clientList.map((clientName) => (
-                <option key={clientName} value={clientName}>
-                  {clientName}
-                </option>
-              ))}
-            </select>
-            <Building2 className="w-4 h-4 text-slate-400 absolute right-2.5 top-2.5 pointer-events-none" />
+              <LogOut className="w-4 h-4" />
+            </button>
           </div>
-        </div>
 
-        <nav className="space-y-1 flex-1">
-          <button
-            onClick={() => setActiveTab("dashboard")}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition ${
-              activeTab === "dashboard" ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100"
-            }`}
-          >
-            <TrendingUp className="w-4 h-4" />
-            Dashboard
-          </button>
-
-          <button
-            onClick={() => setActiveTab("sales")}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition ${
-              activeTab === "sales" ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100"
-            }`}
-          >
-            <FileSpreadsheet className="w-4 h-4" />
-            Sales
-          </button>
-
-          <button
-            onClick={() => setActiveTab("purchase")}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition ${
-              activeTab === "purchase" ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100"
-            }`}
-          >
-            <FileText className="w-4 h-4" />
-            Purchases
-          </button>
-
-          <button
-            onClick={() => setActiveTab("expenses")}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition ${
-              activeTab === "expenses" ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100"
-            }`}
-          >
-            <Layers className="w-4 h-4" />
-            Other Expenses
-          </button>
-
-          <button
-            onClick={() => setActiveTab("bank")}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition ${
-              activeTab === "bank" ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100"
-            }`}
-          >
-            <CreditCard className="w-4 h-4" />
-            Banking
-          </button>
-
-          <button
-            onClick={() => setActiveTab("settings")}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition ${
-              activeTab === "settings" ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100"
-            }`}
-          >
-            <Settings className="w-4 h-4" />
-            Settings
-          </button>
-        </nav>
-
-        <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse"></span>
-            <span className="text-xs font-semibold text-emerald-800">Tally Port 9000</span>
+          <div className="flex items-center justify-between px-2 py-1.5 rounded-lg bg-emerald-50 text-emerald-800 text-[10px] font-bold">
+            <span className="flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+              Tally Port 9000
+            </span>
+            <span className="font-mono text-emerald-600 uppercase">Online</span>
           </div>
-          <span className="text-[10px] bg-emerald-200 text-emerald-900 font-bold px-1.5 py-0.5 rounded uppercase tracking-wider">
-            Online
-          </span>
         </div>
       </aside>
 
-      {/* DYNAMIC MODULE VIEW (ISOLATED PER CLIENT) */}
-      <main className="flex-1 flex flex-col overflow-hidden">
-        {activeTab === "dashboard" && (
-          <DashboardModule key={`dash_${activeClient}`} activeClient={activeClient} />
-        )}
-        {activeTab === "sales" && (
-          <SalesModule key={`sales_${activeClient}`} activeClient={activeClient} />
-        )}
-        {activeTab === "purchase" && (
-          <PurchaseModule key={`purch_${activeClient}`} activeClient={activeClient} />
-        )}
-        {activeTab === "expenses" && (
-          <ExpenseModule key={`exp_${activeClient}`} activeClient={activeClient} />
-        )}
-        {activeTab === "bank" && (
-          <BankModule key={`bank_${activeClient}`} activeClient={activeClient} />
-        )}
+      {/* MAIN VIEWPORT */}
+      <main className="flex-1 flex flex-col h-full overflow-hidden">
+        {activeTab === "dashboard" && <DashboardModule activeClient={activeClient} />}
+        {activeTab === "sales" && <SalesModule activeClient={activeClient} />}
+        {activeTab === "purchases" && <PurchaseModule activeClient={activeClient} />}
+        {activeTab === "otherExpenses" && <OtherExpensesModule activeClient={activeClient} />}
+        {activeTab === "banking" && <BankModule activeClient={activeClient} />}
         {activeTab === "settings" && (
           <SettingsModule
             activeClient={activeClient}
-            setActiveClient={(newClient) => {
-              setActiveClient(newClient);
-              const saved = localStorage.getItem("c4_client_profiles");
-              const parsed = saved ? Object.keys(JSON.parse(saved)) : [];
-              setClientList(parsed);
-            }}
+            setActiveClient={setActiveClient}
+            currentUser={currentUser}
           />
         )}
       </main>
