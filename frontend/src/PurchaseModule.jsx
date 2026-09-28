@@ -47,19 +47,6 @@ const FALLBACK_EXPENSE_LEDGERS = [
   "Repair & Maintenance"
 ];
 
-const SUGGESTED_GST_LEDGERS = [
-  "Input CGST",
-  "Input SGST",
-  "Input IGST",
-  "CGST Input Tax",
-  "SGST Input Tax",
-  "IGST Input Tax",
-  "GST Input 2.5%",
-  "GST Input 6%",
-  "GST Input 9%",
-  "GST Input 14%"
-];
-
 const SUGGESTED_ITEMS = [
   "Vanilla Flavoring Extract",
   "Chocolate Compound 35.4%",
@@ -124,28 +111,23 @@ function SearchableLedgerSelect({ value, onChange, coaList = [], fallbackOptions
   const [searchTerm, setSearchTerm] = useState("");
   const dropdownRef = useRef(null);
 
-  // Group all available P&L ledgers
   const filteredGroups = useMemo(() => {
     const term = searchTerm.toLowerCase().trim();
     const groups = {};
 
-    // 1. Prioritize client's actual uploaded Chart of Accounts
     if (coaList && coaList.length > 0) {
-      coaList
-        .filter((l) => l.statementType === "P&L")
-        .forEach((l) => {
-          const name = l.name || "";
-          const cat = l.category || "General Expenses";
-          if (!term || name.toLowerCase().includes(term) || cat.toLowerCase().includes(term)) {
-            if (!groups[cat]) groups[cat] = [];
-            groups[cat].push(l);
-          }
-        });
+      coaList.forEach((l) => {
+        const name = l.name || "";
+        const cat = l.category || "General Accounts";
+        if (!term || name.toLowerCase().includes(term) || cat.toLowerCase().includes(term)) {
+          if (!groups[cat]) groups[cat] = [];
+          groups[cat].push(l);
+        }
+      });
     }
 
-    // 2. If client has no P&L ledgers yet, use standard fallback list
     if (Object.keys(groups).length === 0) {
-      const defaultGroup = "Standard Purchase Accounts";
+      const defaultGroup = "Standard Accounts";
       groups[defaultGroup] = fallbackOptions
         .filter((name) => !term || name.toLowerCase().includes(term))
         .map((name) => ({ name, category: defaultGroup }));
@@ -214,7 +196,7 @@ function SearchableLedgerSelect({ value, onChange, coaList = [], fallbackOptions
                   >
                     <span className="truncate pr-2">{l.name}</span>
                     <span className="shrink-0 text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-100 text-slate-500">
-                      {l.cogsClassification === "COGS" ? "COGS" : "Overhead"}
+                      {l.statementType === "Balance Sheet" ? "B/S" : (l.cogsClassification === "COGS" ? "COGS" : "P&L")}
                     </span>
                   </button>
                 ))}
@@ -230,7 +212,6 @@ function SearchableLedgerSelect({ value, onChange, coaList = [], fallbackOptions
 export default function PurchaseModule({ activeClient = "Pansuria Confectionery & Food" }) {
   const [purchaseSubTab, setPurchaseSubTab] = useState("needs_review");
 
-  // Persistent Stores scoped strictly to activeClient
   const [pendingBills, setPendingBills] = useState(() => {
     try {
       const saved = localStorage.getItem(`c4_pending_bills_${activeClient}`);
@@ -267,7 +248,6 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
     }
   });
 
-  // Dynamic Chart of Accounts scoped to activeClient
   const clientCoa = useMemo(() => {
     try {
       const saved = localStorage.getItem(`c4_coa_${activeClient}`);
@@ -277,14 +257,34 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
     }
   }, [activeClient]);
 
-  // Dynamic P&L Ledgers for Purchases
   const dynamicExpenseLedgers = useMemo(() => {
     const plLedgers = clientCoa.filter((l) => l.statementType === "P&L").map((l) => l.name);
     if (plLedgers.length > 0) return plLedgers;
     return FALLBACK_EXPENSE_LEDGERS;
   }, [clientCoa]);
 
-  // Dynamic Sundry Creditors (Vendors) from COA for autocomplete
+  // DYNAMIC GST LEDGERS FROM CLIENT COA (BOTH DUTIES & TAXES AND GST EXPENSES)
+  const dynamicGstLedgers = useMemo(() => {
+    const coaMatches = clientCoa
+      .filter((l) => {
+        const cat = (l.category || "").toLowerCase();
+        const name = (l.name || "").toLowerCase();
+        return (
+          cat.includes("duties") ||
+          cat.includes("tax") ||
+          name.includes("cgst") ||
+          name.includes("sgst") ||
+          name.includes("igst") ||
+          name.includes("gst expense") ||
+          name.includes("input tax")
+        );
+      })
+      .map((l) => l.name);
+
+    if (coaMatches.length > 0) return coaMatches;
+    return ["Input CGST", "Input SGST", "Input IGST", "GST Expense", "CGST Input Tax", "SGST Input Tax"];
+  }, [clientCoa]);
+
   const sundryCreditors = useMemo(() => {
     return clientCoa.filter(
       (l) =>
@@ -372,6 +372,7 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
     setZoomLevel(1);
 
     const defaultLedger = dynamicExpenseLedgers[0] || "Purchase: General Goods";
+    const isCafeNonItc = bill.treatTaxAsExpense || false;
 
     const items = bill.items && bill.items.length > 0 ? bill.items : [
       {
@@ -402,9 +403,10 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
       bill_date: bill.bill_date || bill.invoice_date || new Date().toISOString().split("T")[0],
       source_of_supply: bill.source_of_supply || bill.place_of_supply || "Gujarat",
       destination_of_supply: bill.destination_of_supply || "Gujarat",
-      cgst_ledger: bill.cgst_ledger || "Input CGST",
-      sgst_ledger: bill.sgst_ledger || "Input SGST",
-      igst_ledger: bill.igst_ledger || "Input IGST",
+      treatTaxAsExpense: isCafeNonItc,
+      cgst_ledger: bill.cgst_ledger || (isCafeNonItc ? "GST Expense" : "Input CGST"),
+      sgst_ledger: bill.sgst_ledger || (isCafeNonItc ? "GST Expense" : "Input SGST"),
+      igst_ledger: bill.igst_ledger || (isCafeNonItc ? "GST Expense" : "Input IGST"),
       round_off: bill.round_off || 0.00,
       items: items.map(it => {
         const cleanKey = (it.item_name || it.description || "").trim().toLowerCase();
@@ -522,6 +524,27 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
       taxable_amount: subtotal,
       grand_total: parseFloat(grandTotal.toFixed(2))
     });
+  };
+
+  const handleToggleTaxAsExpense = (checked) => {
+    const taxLedger = checked ? "GST Expense" : "Input CGST";
+    const sgstTaxLedger = checked ? "GST Expense" : "Input SGST";
+    const igstTaxLedger = checked ? "GST Expense" : "Input IGST";
+
+    setVoucherData((prev) => ({
+      ...prev,
+      treatTaxAsExpense: checked,
+      cgst_ledger: taxLedger,
+      sgst_ledger: sgstTaxLedger,
+      igst_ledger: igstTaxLedger
+    }));
+
+    notify(
+      checked 
+        ? "Tax routed to GST Expense (Non-ITC Cafe Scheme)" 
+        : "Tax routed to Balance Sheet Input Tax Credit (Duties & Taxes)",
+      "info"
+    );
   };
 
   const handleLedgerSelection = (idx, newLedger, descriptionOrItemName) => {
@@ -1128,7 +1151,7 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
                 </div>
               )}
 
-              {/* ACCOUNTING MODE — OVERFLOW VISIBLE FOR CLEAN FLOATING SEARCH PALETTE */}
+              {/* ACCOUNTING MODE — OVERFLOW VISIBLE FOR FLOATING DROPDOWN */}
               {voucherMode === "accounting" && (
                 <div className="border-t border-slate-100 pt-4 space-y-3">
                   <div className="flex items-center justify-between">
@@ -1151,13 +1174,12 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
                     </button>
                   </div>
 
-                  {/* SET TO overflow-visible SO SEARCH RESULTS FLOAT OVER THE REST OF THE PAGE */}
                   <div className="border border-slate-200 rounded-lg overflow-visible">
                     <table className="w-full text-left text-xs">
                       <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-semibold">
                         <tr>
                           <th className="p-2.5">Item Description</th>
-                          <th className="p-2.5 w-60">Ledger Name</th>
+                          <th className="p-2.5 w-64">Ledger Name</th>
                           <th className="p-2.5 w-28">Amount (₹)</th>
                           <th className="p-2.5 w-8"></th>
                         </tr>
@@ -1185,7 +1207,6 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
                               </div>
                             </td>
                             <td className="p-2 relative overflow-visible">
-                              {/* FLOATING AUTOCOMPLETE TYPEAHEAD */}
                               <SearchableLedgerSelect
                                 value={it.ledger_name}
                                 onChange={(selected) => handleLedgerSelection(idx, selected, it.description)}
@@ -1226,23 +1247,47 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
                 </div>
               )}
 
-              {/* GST ROW & TOTALS */}
+              {/* GST ROW & TOTALS (NOW WITH CAFE / NON-ITC SCHEME SUPPORT) */}
               <div className="border-t border-slate-100 pt-4 space-y-3">
-                <div className="flex justify-between text-xs text-slate-600 font-medium">
-                  <span>Sub Total (Taxable Value):</span>
-                  <span className="font-mono">₹{(voucherData.taxable_amount || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span>
+                <div className="flex items-center justify-between pb-1">
+                  <span className="text-xs text-slate-600 font-medium">Sub Total (Taxable Value):</span>
+                  <span className="font-mono text-xs font-bold text-slate-900">
+                    ₹{(voucherData.taxable_amount || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                  </span>
                 </div>
 
-                <div className="grid grid-cols-3 gap-3 items-center">
+                {/* CAFE / RESTAURANT NON-ITC TOGGLE */}
+                <div className="p-2.5 bg-amber-50/70 border border-amber-200 rounded-lg flex items-center justify-between">
                   <div>
+                    <label className="flex items-center gap-2 text-xs font-bold text-amber-900 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={voucherData.treatTaxAsExpense || false}
+                        onChange={(e) => handleToggleTaxAsExpense(e.target.checked)}
+                        className="rounded text-amber-800 focus:ring-amber-800"
+                      />
+                      <span>Ineligible ITC / Book Tax as Expense (Restaurant 5% Scheme)</span>
+                    </label>
+                    <p className="text-[10px] text-amber-700 pl-5 mt-0.5">
+                      Routes GST directly into <strong>GST Expense (P&L Overhead)</strong> instead of Balance Sheet asset accounts.
+                    </p>
+                  </div>
+                  <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded ${voucherData.treatTaxAsExpense ? "bg-amber-200 text-amber-900" : "bg-white text-slate-600 border border-slate-200"}`}>
+                    {voucherData.treatTaxAsExpense ? "P&L Expense" : "Balance Sheet ITC"}
+                  </span>
+                </div>
+
+                {/* CGST */}
+                <div className="grid grid-cols-3 gap-3 items-center overflow-visible">
+                  <div className="relative overflow-visible">
                     <label className="block text-[11px] font-semibold text-slate-500 mb-1">CGST Ledger</label>
-                    <select
+                    <SearchableLedgerSelect
                       value={voucherData.cgst_ledger}
-                      onChange={(e) => setVoucherData({ ...voucherData, cgst_ledger: e.target.value })}
-                      className="w-full text-xs p-1.5 border border-slate-300 rounded font-medium"
-                    >
-                      {SUGGESTED_GST_LEDGERS.map(g => <option key={g} value={g}>{g}</option>)}
-                    </select>
+                      onChange={(selected) => setVoucherData({ ...voucherData, cgst_ledger: selected })}
+                      coaList={clientCoa}
+                      fallbackOptions={dynamicGstLedgers}
+                      placeholder="Select CGST or GST Expense..."
+                    />
                   </div>
                   <div className="col-span-2">
                     <label className="block text-[11px] font-semibold text-slate-500 mb-1">CGST Amount (₹)</label>
@@ -1256,16 +1301,17 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
                   </div>
                 </div>
 
-                <div className="grid grid-cols-3 gap-3 items-center">
-                  <div>
+                {/* SGST */}
+                <div className="grid grid-cols-3 gap-3 items-center overflow-visible">
+                  <div className="relative overflow-visible">
                     <label className="block text-[11px] font-semibold text-slate-500 mb-1">SGST Ledger</label>
-                    <select
+                    <SearchableLedgerSelect
                       value={voucherData.sgst_ledger}
-                      onChange={(e) => setVoucherData({ ...voucherData, sgst_ledger: e.target.value })}
-                      className="w-full text-xs p-1.5 border border-slate-300 rounded font-medium"
-                    >
-                      {SUGGESTED_GST_LEDGERS.map(g => <option key={g} value={g}>{g}</option>)}
-                    </select>
+                      onChange={(selected) => setVoucherData({ ...voucherData, sgst_ledger: selected })}
+                      coaList={clientCoa}
+                      fallbackOptions={dynamicGstLedgers}
+                      placeholder="Select SGST or GST Expense..."
+                    />
                   </div>
                   <div className="col-span-2">
                     <label className="block text-[11px] font-semibold text-slate-500 mb-1">SGST Amount (₹)</label>
@@ -1279,16 +1325,17 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
                   </div>
                 </div>
 
-                <div className="grid grid-cols-3 gap-3 items-center">
-                  <div>
+                {/* IGST */}
+                <div className="grid grid-cols-3 gap-3 items-center overflow-visible">
+                  <div className="relative overflow-visible">
                     <label className="block text-[11px] font-semibold text-slate-500 mb-1">IGST Ledger</label>
-                    <select
+                    <SearchableLedgerSelect
                       value={voucherData.igst_ledger}
-                      onChange={(e) => setVoucherData({ ...voucherData, igst_ledger: e.target.value })}
-                      className="w-full text-xs p-1.5 border border-slate-300 rounded font-medium"
-                    >
-                      {SUGGESTED_GST_LEDGERS.map(g => <option key={g} value={g}>{g}</option>)}
-                    </select>
+                      onChange={(selected) => setVoucherData({ ...voucherData, igst_ledger: selected })}
+                      coaList={clientCoa}
+                      fallbackOptions={dynamicGstLedgers}
+                      placeholder="Select IGST or GST Expense..."
+                    />
                   </div>
                   <div className="col-span-2">
                     <label className="block text-[11px] font-semibold text-slate-500 mb-1">IGST Amount (₹)</label>
