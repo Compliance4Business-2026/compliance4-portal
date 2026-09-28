@@ -85,7 +85,7 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
   const allPurchases = useMemo(() => [...approvedBills, ...pushedBills], [approvedBills, pushedBills]);
   const allOverheads = useMemo(() => [...unpushedExpenses, ...pushedExpenses], [unpushedExpenses, pushedExpenses]);
 
-  // Robust date parser
+  // Date parser
   const parseToDate = (raw) => {
     if (!raw) return null;
     const s = String(raw).trim();
@@ -102,7 +102,7 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
     return isNaN(d.getTime()) ? null : d;
   };
 
-  // 1. TOP 4 KPI CALCULATIONS (ZERO PHANTOM FIGURES)
+  // 1. TOP 4 KPI CALCULATIONS
   const kpiData = useMemo(() => {
     const normalRev = normalSales.reduce((acc, inv) => acc + (parseFloat(inv.taxableAmount) || 0), 0);
     const posRev = posJournals.reduce((acc, jv) => acc + (parseFloat(jv.totalTaxable) || 0), 0);
@@ -217,11 +217,11 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
     return months;
   }, [normalSales, posJournals, allPurchases, allOverheads]);
 
-  // Reusable SVG Smooth Line Generator
+  // Enhanced SVG Line Chart with larger viewBox
   const renderLineChart = (data, dataKey, strokeColor, fillColor) => {
-    const width = 280;
-    const height = 75;
-    const padding = 12;
+    const width = 360;
+    const height = 110;
+    const padding = 16;
 
     const values = data.map((d) => d[dataKey]);
     let min = Math.min(...values);
@@ -242,21 +242,21 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
     const areaD = `${pathD} L ${points[points.length - 1].x.toFixed(1)} ${height - padding} L ${points[0].x.toFixed(1)} ${height - padding} Z`;
 
     return (
-      <div className="w-full flex flex-col justify-end">
-        <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-20 overflow-visible">
+      <div className="w-full flex flex-col justify-end mt-2">
+        <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-24 overflow-visible">
           <defs>
             <linearGradient id={`grad-${dataKey}`} x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor={fillColor} stopOpacity="0.35" />
+              <stop offset="0%" stopColor={fillColor} stopOpacity="0.30" />
               <stop offset="100%" stopColor={fillColor} stopOpacity="0.0" />
             </linearGradient>
           </defs>
           <path d={areaD} fill={`url(#grad-${dataKey})`} />
-          <path d={pathD} fill="none" stroke={strokeColor} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+          <path d={pathD} fill="none" stroke={strokeColor} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
           {points.map((p, i) => (
-            <circle key={i} cx={p.x} cy={p.y} r="3" fill="#fff" stroke={strokeColor} strokeWidth="2" />
+            <circle key={i} cx={p.x} cy={p.y} r="3.5" fill="#fff" stroke={strokeColor} strokeWidth="2" />
           ))}
         </svg>
-        <div className="flex justify-between px-2 pt-1 text-[9px] font-bold text-slate-400 uppercase">
+        <div className="flex justify-between px-2 pt-2 text-[10px] font-bold text-slate-400 uppercase">
           {data.map((d) => (
             <span key={d.key}>{d.label}</span>
           ))}
@@ -267,89 +267,89 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
 
   return (
     <div className="flex-1 flex flex-col h-full bg-[#F8FAFC] overflow-hidden p-6 font-sans">
-      <div className="max-w-7xl mx-auto w-full h-full flex flex-col justify-between gap-3">
+      <div className="max-w-7xl mx-auto w-full h-full flex flex-col justify-between gap-4">
         
         {/* ========================================================= */}
-        {/* 1. TOP: 4 KPI CARDS                                      */}
+        {/* 1. TOP: 4 EXPANDED KPI CARDS                              */}
         {/* ========================================================= */}
-        <div className="grid grid-cols-4 gap-3 shrink-0">
+        <div className="grid grid-cols-4 gap-4 shrink-0">
           {/* CARD 1: REVENUE FROM OPERATIONS */}
-          <div className="bg-white border border-slate-200 rounded-xl p-3.5 shadow-2xs flex flex-col justify-between">
+          <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm flex flex-col justify-between">
             <div className="flex items-center justify-between">
-              <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
                 Revenue From Operations
               </span>
-              <span className="p-1 rounded-md bg-emerald-50 text-emerald-600">
-                <TrendingUp className="w-3.5 h-3.5" />
+              <span className="p-2 rounded-lg bg-emerald-50 text-emerald-600">
+                <TrendingUp className="w-4 h-4" />
               </span>
             </div>
-            <p className="text-xl font-black font-mono text-slate-900 mt-1">
+            <p className="text-2xl font-black font-mono text-slate-900 mt-2">
               ₹{kpiData.totalRevenue.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
             </p>
-            <div className="flex items-center justify-between text-[11px] text-slate-400 pt-1.5 border-t border-slate-100">
+            <div className="flex items-center justify-between text-xs text-slate-400 pt-2 border-t border-slate-100">
               <span>Gross: ₹{kpiData.totalGross.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</span>
-              <span className="bg-emerald-50 text-emerald-700 font-bold px-1.5 py-0.5 rounded text-[9px]">
+              <span className="bg-emerald-50 text-emerald-700 font-bold px-2 py-0.5 rounded text-[10px]">
                 {kpiData.salesCount} Bills / JVs
               </span>
             </div>
           </div>
 
           {/* CARD 2: NET OPERATING PROFIT */}
-          <div className="bg-white border border-slate-200 rounded-xl p-3.5 shadow-2xs flex flex-col justify-between">
+          <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm flex flex-col justify-between">
             <div className="flex items-center justify-between">
-              <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
                 Net Operating Profit
               </span>
-              <span className={`p-1 rounded-md ${kpiData.netProfit >= 0 ? "bg-emerald-50 text-emerald-600" : "bg-rose-50 text-rose-600"}`}>
-                {kpiData.netProfit >= 0 ? <TrendingUp className="w-3.5 h-3.5" /> : <TrendingDown className="w-3.5 h-3.5" />}
+              <span className={`p-2 rounded-lg ${kpiData.netProfit >= 0 ? "bg-emerald-50 text-emerald-600" : "bg-rose-50 text-rose-600"}`}>
+                {kpiData.netProfit >= 0 ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
               </span>
             </div>
-            <p className={`text-xl font-black font-mono mt-1 ${kpiData.netProfit >= 0 ? "text-emerald-700" : "text-rose-600"}`}>
+            <p className={`text-2xl font-black font-mono mt-2 ${kpiData.netProfit >= 0 ? "text-emerald-700" : "text-rose-600"}`}>
               {kpiData.netProfit < 0 ? "-" : ""}₹{Math.abs(kpiData.netProfit).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
             </p>
-            <div className="flex items-center justify-between text-[11px] text-slate-400 pt-1.5 border-t border-slate-100">
+            <div className="flex items-center justify-between text-xs text-slate-400 pt-2 border-t border-slate-100">
               <span>Margin:</span>
-              <span className={`font-bold text-[9px] px-1.5 py-0.5 rounded ${kpiData.netProfit >= 0 ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"}`}>
+              <span className={`font-bold text-[10px] px-2 py-0.5 rounded ${kpiData.netProfit >= 0 ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"}`}>
                 {kpiData.netMargin.toFixed(1)}% NP
               </span>
             </div>
           </div>
 
           {/* CARD 3: ACCOUNTS PAYABLE */}
-          <div className="bg-white border border-slate-200 rounded-xl p-3.5 shadow-2xs flex flex-col justify-between">
+          <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm flex flex-col justify-between">
             <div className="flex items-center justify-between">
-              <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
                 Accounts Payable
               </span>
-              <span className="p-1 rounded-md bg-amber-50 text-amber-600">
-                <CreditCard className="w-3.5 h-3.5" />
+              <span className="p-2 rounded-lg bg-amber-50 text-amber-600">
+                <CreditCard className="w-4 h-4" />
               </span>
             </div>
-            <p className="text-xl font-black font-mono text-slate-900 mt-1">
+            <p className="text-2xl font-black font-mono text-slate-900 mt-2">
               ₹{kpiData.accountsPayable.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
             </p>
-            <div className="flex items-center justify-between text-[11px] text-slate-400 pt-1.5 border-t border-slate-100">
+            <div className="flex items-center justify-between text-xs text-slate-400 pt-2 border-t border-slate-100">
               <span>Sundry Creditors</span>
               <span className="text-slate-500 font-semibold text-[10px]">Unpaid Outstandings</span>
             </div>
           </div>
 
           {/* CARD 4: ACCOUNTS RECEIVABLE */}
-          <div className="bg-white border border-slate-200 rounded-xl p-3.5 shadow-2xs flex flex-col justify-between">
+          <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm flex flex-col justify-between">
             <div className="flex items-center justify-between">
-              <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
                 Accounts Receivable
               </span>
-              <span className="p-1 rounded-md bg-indigo-50 text-indigo-600">
-                <ArrowDownRight className="w-3.5 h-3.5" />
+              <span className="p-2 rounded-lg bg-indigo-50 text-indigo-600">
+                <ArrowDownRight className="w-4 h-4" />
               </span>
             </div>
-            <p className="text-xl font-black font-mono text-slate-900 mt-1">
+            <p className="text-2xl font-black font-mono text-slate-900 mt-2">
               ₹{kpiData.accountsReceivable.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
             </p>
-            <div className="flex items-center justify-between text-[11px] text-slate-400 pt-1.5 border-t border-slate-100">
+            <div className="flex items-center justify-between text-xs text-slate-400 pt-2 border-t border-slate-100">
               <span>Debtors & Aggregators</span>
-              <span className="bg-indigo-50 text-indigo-700 font-bold px-1.5 py-0.5 rounded text-[9px]">
+              <span className="bg-indigo-50 text-indigo-700 font-bold px-2 py-0.5 rounded text-[10px]">
                 Pending Collection
               </span>
             </div>
@@ -357,75 +357,75 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
         </div>
 
         {/* ========================================================= */}
-        {/* 2. MIDDLE: COMPACT PROFIT AND LOSS STATEMENT              */}
+        {/* 2. MIDDLE: PROFIT AND LOSS STATEMENT                      */}
         {/* ========================================================= */}
-        <div className="bg-white border border-slate-200 rounded-xl shadow-2xs overflow-hidden flex flex-col shrink">
-          <div className="px-5 py-2.5 border-b border-slate-200 bg-slate-50/70 flex items-center justify-between">
+        <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden flex flex-col shrink">
+          <div className="px-6 py-3 border-b border-slate-200 bg-slate-50/70 flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <Scale className="w-3.5 h-3.5 text-slate-700" />
+              <Scale className="w-4 h-4 text-slate-700" />
               <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
                 Statement of Profit and Loss (Current Period)
               </h3>
             </div>
-            <span className="text-[10px] text-slate-400 font-medium">
+            <span className="text-[11px] text-slate-400 font-medium">
               Grouped strictly by Client's Uploaded COA
             </span>
           </div>
 
-          <div className="overflow-y-auto max-h-[220px]">
+          <div className="overflow-y-auto max-h-[190px]">
             <table className="w-full text-left text-xs">
-              <thead className="bg-white border-b border-slate-100 text-slate-400 font-semibold uppercase text-[9px] sticky top-0">
+              <thead className="bg-white border-b border-slate-100 text-slate-400 font-semibold uppercase text-[10px] sticky top-0">
                 <tr>
-                  <th className="py-2 px-5">Schedule / Category Name</th>
-                  <th className="py-2 px-5">Type</th>
-                  <th className="py-2 px-5 text-right">Amount (₹)</th>
+                  <th className="py-2.5 px-6">Schedule / Category Name</th>
+                  <th className="py-2.5 px-6">Type</th>
+                  <th className="py-2.5 px-6 text-right">Amount (₹)</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100 font-medium text-slate-700 text-[11px]">
+              <tbody className="divide-y divide-slate-100 font-medium text-slate-700 text-xs">
                 <tr className="hover:bg-slate-50/50">
-                  <td className="py-2 px-5 font-bold text-slate-900">I. Revenue from Operations (Net Sales)</td>
-                  <td className="py-2 px-5 font-mono text-slate-400 text-[10px]">Sales Register</td>
-                  <td className="py-2 px-5 text-right font-mono font-bold text-slate-900">
+                  <td className="py-2 px-6 font-bold text-slate-900">I. Revenue from Operations (Net Sales)</td>
+                  <td className="py-2 px-6 font-mono text-slate-400 text-[11px]">Sales Register</td>
+                  <td className="py-2 px-6 text-right font-mono font-bold text-slate-900">
                     ₹{kpiData.totalRevenue.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                   </td>
                 </tr>
 
                 <tr className="hover:bg-slate-50/50">
-                  <td className="py-1.5 px-5 pl-8 text-slate-600">Less: Cost of Goods Sold / Purchases (COGS)</td>
-                  <td className="py-1.5 px-5 font-mono text-slate-400 text-[10px]">Purchase Register</td>
-                  <td className="py-1.5 px-5 text-right font-mono text-rose-600">
+                  <td className="py-1.5 px-6 pl-9 text-slate-600">Less: Cost of Goods Sold / Purchases (COGS)</td>
+                  <td className="py-1.5 px-6 font-mono text-slate-400 text-[11px]">Purchase Register</td>
+                  <td className="py-1.5 px-6 text-right font-mono text-rose-600">
                     -₹{kpiData.cogsPurchases.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                   </td>
                 </tr>
 
                 <tr className="bg-slate-50/80 font-bold border-y border-slate-200">
-                  <td className="py-2 px-5 text-slate-900 font-black">GROSS PROFIT (I – COGS)</td>
-                  <td className="py-2 px-5 font-mono text-indigo-700 text-[10px]">
+                  <td className="py-2 px-6 text-slate-900 font-black">GROSS PROFIT (I – COGS)</td>
+                  <td className="py-2 px-6 font-mono text-indigo-700 text-[11px]">
                     {kpiData.totalRevenue > 0 ? (((kpiData.totalRevenue - kpiData.cogsPurchases) / kpiData.totalRevenue) * 100).toFixed(1) : 0}% GP
                   </td>
-                  <td className="py-2 px-5 text-right font-mono font-black text-slate-900">
+                  <td className="py-2 px-6 text-right font-mono font-black text-slate-900">
                     ₹{(kpiData.totalRevenue - kpiData.cogsPurchases).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                   </td>
                 </tr>
 
                 <tr className="bg-white">
-                  <td colSpan="3" className="py-1.5 px-5 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                  <td colSpan="3" className="py-1.5 px-6 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
                     II. Indirect Operating Expenses (Client P&L Heads)
                   </td>
                 </tr>
 
                 {Object.keys(overheadsByCategory).length === 0 ? (
                   <tr>
-                    <td className="py-1.5 px-5 pl-8 text-slate-400 italic">No indirect overheads recorded</td>
-                    <td className="py-1.5 px-5 font-mono text-slate-400 text-[10px]">Uploaded COA</td>
-                    <td className="py-1.5 px-5 text-right font-mono text-slate-400">₹0.00</td>
+                    <td className="py-1.5 px-6 pl-9 text-slate-400 italic">No indirect overheads recorded</td>
+                    <td className="py-1.5 px-6 font-mono text-slate-400 text-[11px]">Uploaded COA</td>
+                    <td className="py-1.5 px-6 text-right font-mono text-slate-400">₹0.00</td>
                   </tr>
                 ) : (
                   Object.entries(overheadsByCategory).map(([cat, amt]) => (
                     <tr key={cat} className="hover:bg-slate-50/50">
-                      <td className="py-1.5 px-5 pl-8 text-slate-700">{cat}</td>
-                      <td className="py-1.5 px-5 font-mono text-slate-400 text-[10px]">Uploaded COA</td>
-                      <td className="py-1.5 px-5 text-right font-mono text-rose-600">
+                      <td className="py-1.5 px-6 pl-9 text-slate-700">{cat}</td>
+                      <td className="py-1.5 px-6 font-mono text-slate-400 text-[11px]">Uploaded COA</td>
+                      <td className="py-1.5 px-6 text-right font-mono text-rose-600">
                         -₹{amt.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                       </td>
                     </tr>
@@ -433,9 +433,9 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
                 )}
 
                 <tr className="border-t border-slate-100 font-semibold text-slate-700">
-                  <td className="py-2 px-5 text-slate-800">Total Indirect Expenses</td>
-                  <td className="py-2 px-5 text-slate-400">-</td>
-                  <td className="py-2 px-5 text-right font-mono text-rose-600 font-bold">
+                  <td className="py-2 px-6 text-slate-800">Total Indirect Expenses</td>
+                  <td className="py-2 px-6 text-slate-400">-</td>
+                  <td className="py-2 px-6 text-right font-mono text-rose-600 font-bold">
                     -₹{kpiData.indirectOverheads.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                   </td>
                 </tr>
@@ -443,34 +443,34 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
             </table>
           </div>
 
-          <div className="bg-slate-900 text-white font-bold text-xs px-5 py-2.5 flex items-center justify-between border-t-2 border-slate-900 shrink-0">
-            <span className="font-black uppercase tracking-wider text-[11px]">
+          <div className="bg-slate-900 text-white font-bold text-xs px-6 py-3 flex items-center justify-between border-t-2 border-slate-900 shrink-0">
+            <span className="font-black uppercase tracking-wider text-xs">
               NET OPERATING PROFIT / (LOSS)
             </span>
-            <span className="font-mono text-emerald-400 text-[11px]">
+            <span className="font-mono text-emerald-400 text-xs">
               {kpiData.netMargin.toFixed(1)}% NP Margin
             </span>
-            <span className="font-mono font-black text-sm text-emerald-400">
+            <span className="font-mono font-black text-base text-emerald-400">
               {kpiData.netProfit < 0 ? "-" : ""}₹{Math.abs(kpiData.netProfit).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
             </span>
           </div>
         </div>
 
         {/* ========================================================= */}
-        {/* 3. BOTTOM: 3 LINE GRAPHS (LAST 6 MONTHS)                  */}
+        {/* 3. BOTTOM: 3 EXPANDED LINE GRAPHS (LAST 6 MONTHS)         */}
         {/* ========================================================= */}
-        <div className="grid grid-cols-3 gap-3 shrink-0">
+        <div className="grid grid-cols-3 gap-4 shrink-0 pb-1">
           
           {/* GRAPH 1: SALES LINE GRAPH */}
-          <div className="bg-white border border-slate-200 rounded-xl p-3.5 shadow-2xs flex flex-col justify-between">
-            <div className="flex items-center justify-between pb-1">
+          <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex flex-col justify-between">
+            <div className="flex items-center justify-between pb-1 border-b border-slate-100">
               <div>
                 <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
-                  <Activity className="w-3.5 h-3.5 text-emerald-600" /> Sales Trend Line
+                  <Activity className="w-4 h-4 text-emerald-600" /> Sales Trend Line
                 </h4>
                 <p className="text-[10px] text-slate-400">Monthly Turnover (Last 6 Months)</p>
               </div>
-              <span className="text-xs font-mono font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded">
+              <span className="text-xs font-mono font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded">
                 ₹{last6MonthsData.reduce((acc, m) => acc + m.sales, 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}
               </span>
             </div>
@@ -478,15 +478,15 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
           </div>
 
           {/* GRAPH 2: TOTAL COST LINE GRAPH */}
-          <div className="bg-white border border-slate-200 rounded-xl p-3.5 shadow-2xs flex flex-col justify-between">
-            <div className="flex items-center justify-between pb-1">
+          <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex flex-col justify-between">
+            <div className="flex items-center justify-between pb-1 border-b border-slate-100">
               <div>
                 <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
-                  <Activity className="w-3.5 h-3.5 text-amber-600" /> Total Cost Trend Line
+                  <Activity className="w-4 h-4 text-amber-600" /> Total Cost Trend Line
                 </h4>
                 <p className="text-[10px] text-slate-400">COGS Purchases + Overheads</p>
               </div>
-              <span className="text-xs font-mono font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded">
+              <span className="text-xs font-mono font-bold text-amber-700 bg-amber-50 px-2.5 py-1 rounded">
                 ₹{last6MonthsData.reduce((acc, m) => acc + m.cost, 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}
               </span>
             </div>
@@ -494,15 +494,15 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
           </div>
 
           {/* GRAPH 3: NET PROFIT LINE GRAPH */}
-          <div className="bg-white border border-slate-200 rounded-xl p-3.5 shadow-2xs flex flex-col justify-between">
-            <div className="flex items-center justify-between pb-1">
+          <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex flex-col justify-between">
+            <div className="flex items-center justify-between pb-1 border-b border-slate-100">
               <div>
                 <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
-                  <Activity className="w-3.5 h-3.5 text-indigo-600" /> Net Profit Trend Line
+                  <Activity className="w-4 h-4 text-indigo-600" /> Net Profit Trend Line
                 </h4>
                 <p className="text-[10px] text-slate-400">Bottom-Line Margin per Month</p>
               </div>
-              <span className={`text-xs font-mono font-bold px-2 py-0.5 rounded ${
+              <span className={`text-xs font-mono font-bold px-2.5 py-1 rounded ${
                 kpiData.netProfit >= 0 ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"
               }`}>
                 {last6MonthsData.reduce((acc, m) => acc + m.netProfit, 0) >= 0 ? "+" : ""}
