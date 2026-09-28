@@ -1,33 +1,33 @@
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useMemo } from "react";
 import { 
   Upload, 
   RefreshCw, 
   CheckCircle2, 
-  AlertCircle,
-  FileSpreadsheet,
-  Check,
-  ChevronLeft,
-  ZoomIn,
-  ZoomOut,
-  RotateCcw,
-  Plus,
-  Trash2,
-  X,
-  Send,
-  Edit2,
-  Download,
-  FileCode,
-  ShieldCheck,
-  ShieldAlert,
-  AlertTriangle,
-  Sparkles
+  AlertCircle, 
+  FileSpreadsheet, 
+  Check, 
+  ChevronLeft, 
+  ZoomIn, 
+  ZoomOut, 
+  RotateCcw, 
+  Plus, 
+  Trash2, 
+  X, 
+  Send, 
+  Edit2, 
+  Download, 
+  FileCode, 
+  ShieldCheck, 
+  ShieldAlert, 
+  AlertTriangle, 
+  Sparkles 
 } from "lucide-react";
 
 const API_BASE_URL = 
   import.meta.env.VITE_BACKEND_URL || 
   "https://compliance4-backend-1021821620394.asia-south1.run.app";
 
-const SUGGESTED_EXPENSE_LEDGERS = [
+const FALLBACK_EXPENSE_LEDGERS = [
   "Purchase: Beverages",
   "Purchase: Dairy Products",
   "Purchase: Dessert / Bakery",
@@ -154,6 +154,35 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
     }
   });
 
+  // Dynamic Chart of Accounts scoped to activeClient
+  const clientCoa = useMemo(() => {
+    try {
+      const saved = localStorage.getItem(`c4_coa_${activeClient}`);
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  }, [activeClient]);
+
+  // Dynamic P&L Ledgers for Purchases (falling back to default if COA not yet imported)
+  const dynamicExpenseLedgers = useMemo(() => {
+    const plLedgers = clientCoa.filter((l) => l.statementType === "P&L").map((l) => l.name);
+    if (plLedgers.length > 0) return plLedgers;
+    return FALLBACK_EXPENSE_LEDGERS;
+  }, [clientCoa]);
+
+  // Dynamic Sundry Creditors (Vendors) from COA for autocomplete
+  const sundryCreditors = useMemo(() => {
+    return clientCoa.filter(
+      (l) =>
+        l.statementType === "Balance Sheet" &&
+        (l.category.toLowerCase().includes("creditor") ||
+          l.category.toLowerCase().includes("payable") ||
+          l.category.toLowerCase().includes("vendor") ||
+          l.category.toLowerCase().includes("supplier"))
+    );
+  }, [clientCoa]);
+
   useEffect(() => {
     localStorage.setItem(`c4_pending_bills_${activeClient}`, JSON.stringify(pendingBills));
   }, [pendingBills, activeClient]);
@@ -169,6 +198,7 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
   useEffect(() => {
     localStorage.setItem(`c4_purchase_item_rules_${activeClient}`, JSON.stringify(itemRules));
   }, [itemRules, activeClient]);
+
   const [isUploadingBill, setIsUploadingBill] = useState(false);
   const [uploadProgress, setUploadProgress] = useState("");
   const [notification, setNotification] = useState(null);
@@ -220,6 +250,8 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
     setActiveReviewBill(bill);
     setZoomLevel(1);
 
+    const defaultLedger = dynamicExpenseLedgers[0] || "Purchase: General Goods";
+
     const items = bill.items && bill.items.length > 0 ? bill.items : [
       {
         item_name: bill.vendor_name ? "General Purchase" : "Bakery Raw Material",
@@ -235,7 +267,7 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
       const memorized = itemRules[cleanKey];
       return {
         description: it.description || "Raw Material",
-        ledger_name: memorized || it.ledger_name || "Purchase: Beverages",
+        ledger_name: memorized || it.ledger_name || defaultLedger,
         amount: it.amount || 0,
         isAutoMatched: Boolean(memorized)
       };
@@ -277,6 +309,7 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
     let successCount = 0;
     let newExtractedBills = [];
     let duplicateWarningsCount = 0;
+    const defaultLedger = dynamicExpenseLedgers[0] || "Purchase: General Goods";
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
@@ -310,7 +343,7 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
               const memorized = itemRules[cleanKey];
               return {
                 description: it.description || it.item_name || "Supplies",
-                ledger_name: memorized || "Purchase: General Goods",
+                ledger_name: memorized || defaultLedger,
                 amount: it.amount || 0,
                 isAutoMatched: Boolean(memorized)
               };
@@ -386,7 +419,6 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
     }
   };
 
-  // AUTOMATIC TRANSITION TO NEXT BILL ON APPROVE
   const handleApproveInvoice = () => {
     setShowAllocationModal(false);
     const approvedVoucher = { ...voucherData, isApproved: true };
@@ -397,7 +429,6 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
 
     notify(`Invoice #${approvedVoucher.supplier_invoice_no} approved!`, "success");
 
-    // Automatically shift to the next bill in the queue
     if (remainingPending.length > 0) {
       openReviewWorkspace(remainingPending[0]);
     } else {
@@ -406,7 +437,6 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
     }
   };
 
-  // AUTOMATIC TRANSITION TO NEXT BILL ON DELETE
   const handleDeleteCurrentReviewBill = () => {
     const remainingPending = pendingBills.filter(b => b.id !== activeReviewBill.id);
     setPendingBills(remainingPending);
@@ -414,7 +444,6 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
 
     notify("Invoice deleted.", "info");
 
-    // Automatically shift to the next bill in the queue
     if (remainingPending.length > 0) {
       openReviewWorkspace(remainingPending[0]);
     } else {
@@ -450,22 +479,9 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
     }
 
     const headers = [
-      "Voucher Date",
-      "Supplier Invoice No",
-      "Bill Date",
-      "Vendor Name",
-      "GSTIN",
-      "Place of Supply",
-      "Expense Ledger",
-      "Taxable Value",
-      "CGST Ledger",
-      "CGST Amount",
-      "SGST Ledger",
-      "SGST Amount",
-      "IGST Ledger",
-      "IGST Amount",
-      "Round Off",
-      "Grand Total"
+      "Voucher Date", "Supplier Invoice No", "Bill Date", "Vendor Name", "GSTIN",
+      "Place of Supply", "Expense Ledger", "Taxable Value", "CGST Ledger", "CGST Amount",
+      "SGST Ledger", "SGST Amount", "IGST Ledger", "IGST Amount", "Round Off", "Grand Total"
     ];
 
     const rows = approvedBills.map(b => [
@@ -475,7 +491,7 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
       `"${(b.vendor_name || "").replace(/"/g, '""')}"`,
       `"${b.vendor_gstin || ""}"`,
       `"${b.source_of_supply || "Gujarat"}"`,
-      `"${b.accounting_ledgers?.[0]?.ledger_name || "Purchase: General Goods"}"`,
+      `"${b.accounting_ledgers?.[0]?.ledger_name || dynamicExpenseLedgers[0] || "Purchases"}"`,
       b.taxable_amount || 0,
       `"${b.cgst_ledger || "Input CGST"}"`,
       b.cgst || 0,
@@ -512,7 +528,7 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
       const cgst = parseFloat(b.cgst) || 0;
       const sgst = parseFloat(b.sgst) || 0;
       const igst = parseFloat(b.igst) || 0;
-      const expenseLedger = b.accounting_ledgers?.[0]?.ledger_name || "Purchase: General Goods";
+      const expenseLedger = b.accounting_ledgers?.[0]?.ledger_name || dynamicExpenseLedgers[0] || "Purchases";
 
       return `
     <VOUCHER VCHTYPE="Purchase" ACTION="Create">
@@ -586,7 +602,6 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
     );
     const gstCheck = validateGSTIN(voucherData.vendor_gstin);
 
-    // Current invoice position in the queue
     const currentQueueIndex = pendingBills.findIndex(b => b.id === activeReviewBill.id);
     const hasNextBill = currentQueueIndex !== -1 && currentQueueIndex < pendingBills.length - 1;
 
@@ -774,18 +789,27 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
                 </div>
               </div>
 
-              {/* VENDOR DETAILS */}
+              {/* VENDOR DETAILS WITH SUNDRY CREDITORS AUTOCOMPLETE */}
               <div className="border-t border-slate-100 pt-4 space-y-3">
                 <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400">Vendor Details</h4>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="col-span-2">
                     <label className="block text-xs font-bold text-slate-600 mb-1">Vendor Name (Sundry Creditor)</label>
                     <input
+                      list="vendor-creditors-datalist"
                       type="text"
+                      placeholder="Type or pick Sundry Creditor from COA..."
                       value={voucherData.vendor_name || ""}
                       onChange={(e) => setVoucherData({ ...voucherData, vendor_name: e.target.value })}
-                      className="w-full text-xs border border-slate-300 rounded-lg p-2 font-semibold"
+                      className="w-full text-xs border border-slate-300 rounded-lg p-2 font-semibold bg-white"
                     />
+                    <datalist id="vendor-creditors-datalist">
+                      {sundryCreditors.map((cred) => (
+                        <option key={cred.id} value={cred.name}>
+                          {cred.name} ({cred.category})
+                        </option>
+                      ))}
+                    </datalist>
                   </div>
                   <div>
                     <div className="flex items-center justify-between mb-1">
@@ -940,16 +964,19 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
                 </div>
               )}
 
-              {/* ACCOUNTING MODE */}
+              {/* ACCOUNTING MODE — DYNAMIC P&L LEDGERS LOADED DIRECTLY FROM COA */}
               {voucherMode === "accounting" && (
                 <div className="border-t border-slate-100 pt-4 space-y-3">
                   <div className="flex items-center justify-between">
-                    <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400">Expense Ledgers</h4>
+                    <div>
+                      <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400">Expense Ledgers (P&L Classified)</h4>
+                      <span className="text-[10px] text-slate-400">Reading from Client Chart of Accounts</span>
+                    </div>
                     <button
                       onClick={() => {
                         const newLedgers = [...(voucherData.accounting_ledgers || []), {
                           description: "Additional Charge",
-                          ledger_name: "Purchase: General Goods",
+                          ledger_name: dynamicExpenseLedgers[0] || "Purchases",
                           amount: 0
                         }];
                         updateTotals({ ...voucherData, accounting_ledgers: newLedgers });
@@ -993,6 +1020,7 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
                               </div>
                             </td>
                             <td className="p-2">
+                              {/* DYNAMIC P&L LEDGERS DROPDOWN */}
                               <select
                                 value={it.ledger_name}
                                 onChange={(e) => handleLedgerSelection(idx, e.target.value, it.description)}
@@ -1002,7 +1030,7 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
                                     : "bg-white border-slate-200 text-slate-700"
                                 }`}
                               >
-                                {SUGGESTED_EXPENSE_LEDGERS.map((led) => (
+                                {dynamicExpenseLedgers.map((led) => (
                                   <option key={led} value={led}>{led}</option>
                                 ))}
                               </select>
@@ -1407,7 +1435,7 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
                       </td>
                       <td className="px-6 py-4 text-slate-600">
                         <span className="bg-slate-100 px-2 py-1 rounded text-[11px] font-medium">
-                          {b.accounting_ledgers?.[0]?.ledger_name || "Purchase: General Goods"}
+                          {b.accounting_ledgers?.[0]?.ledger_name || dynamicExpenseLedgers[0] || "Purchases"}
                         </span>
                       </td>
                       <td className="px-6 py-4 font-mono font-bold text-emerald-700">
@@ -1486,7 +1514,7 @@ export default function PurchaseModule({ activeClient = "Panasuria Confectionery
                       </td>
                       <td className="px-6 py-4 text-right">
                         <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded">
-                          <Check className="w-3 h-3" /> In Tally
+                          <Check className="w-3.5 h-3.5" /> In Tally
                         </span>
                       </td>
                     </tr>
