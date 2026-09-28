@@ -16,10 +16,18 @@ import {
   ChevronDown,
   ChevronRight,
   Check,
-  FileSpreadsheet
+  FileSpreadsheet,
+  Percent
 } from "lucide-react";
 
-export default function OtherExpensesModule({ activeClient = "The Marx Ventures" }) {
+const GST_RATES = [
+  { label: "18% (9% CGST + 9% SGST)", value: 18 },
+  { label: "12% (6% CGST + 6% SGST)", value: 12 },
+  { label: "5% (2.5% CGST + 2.5% SGST)", value: 5 },
+  { label: "28% (14% CGST + 14% SGST)", value: 28 }
+];
+
+export default function OtherExpensesModule({ activeClient = "Pansuria Confectionery & Food" }) {
   const [activeTab, setActiveTab] = useState("register"); // 'register' | 'pushed'
 
   // Persistent Stores scoped to activeClient
@@ -44,14 +52,38 @@ export default function OtherExpensesModule({ activeClient = "The Marx Ventures"
   // Client-Scoped Dynamic Chart of Accounts
   const clientCoa = useMemo(() => {
     try {
+      // 1. Check exact active client COA
       const saved = localStorage.getItem(`c4_coa_${activeClient}`);
-      return saved ? JSON.parse(saved) : [];
+      if (saved && JSON.parse(saved).length > 0) {
+        return JSON.parse(saved);
+      }
+
+      // 2. Fallback to any client entity COA available in portal if activeClient is newly named
+      const profiles = JSON.parse(localStorage.getItem("c4_client_profiles") || "{}");
+      for (const clientName of Object.keys(profiles)) {
+        const altCoa = localStorage.getItem(`c4_coa_${clientName}`);
+        if (altCoa && JSON.parse(altCoa).length > 0) {
+          return JSON.parse(altCoa);
+        }
+      }
+      return [];
     } catch {
       return [];
     }
   }, [activeClient]);
 
   const allLedgers = Array.isArray(clientCoa) ? clientCoa : [];
+
+  // Group ledgers by Category for structured select dropdown
+  const groupedLedgers = useMemo(() => {
+    const groups = {};
+    allLedgers.forEach((l) => {
+      const cat = l.category || "General Accounts";
+      if (!groups[cat]) groups[cat] = [];
+      groups[cat].push(l);
+    });
+    return groups;
+  }, [allLedgers]);
 
   useEffect(() => {
     try {
@@ -94,8 +126,30 @@ export default function OtherExpensesModule({ activeClient = "The Marx Ventures"
     amount: "",
     includesGst: false,
     gstRate: 18,
+    isInterstate: false,
+    cgstLedger: "Input CGST",
+    sgstLedger: "Input SGST",
+    igstLedger: "Input IGST",
     narration: ""
   });
+
+  // Derived real-time tax calculation
+  const taxCalculation = useMemo(() => {
+    const gross = parseFloat(formData.amount) || 0;
+    if (!formData.includesGst || gross <= 0) {
+      return { taxable: gross, cgst: 0, sgst: 0, igst: 0, gross };
+    }
+    const rate = parseFloat(formData.gstRate) || 18;
+    const taxable = gross / (1 + rate / 100);
+    const taxTotal = gross - taxable;
+
+    if (formData.isInterstate) {
+      return { taxable, cgst: 0, sgst: 0, igst: taxTotal, gross };
+    } else {
+      const half = taxTotal / 2;
+      return { taxable, cgst: half, sgst: half, igst: 0, gross };
+    }
+  }, [formData.amount, formData.includesGst, formData.gstRate, formData.isInterstate]);
 
   const handleSaveExpense = (e) => {
     e.preventDefault();
@@ -113,15 +167,6 @@ export default function OtherExpensesModule({ activeClient = "The Marx Ventures"
       return;
     }
 
-    let taxable = gross;
-    let cgst = 0, sgst = 0;
-    if (formData.includesGst) {
-      const rate = parseFloat(formData.gstRate) || 18;
-      taxable = gross / (1 + rate / 100);
-      cgst = (taxable * (rate / 2)) / 100;
-      sgst = (taxable * (rate / 2)) / 100;
-    }
-
     const matchedLedger = allLedgers.find((l) => l.name === formData.expenseLedger);
     const categoryGroup = matchedLedger?.category || "Operational Expenses";
 
@@ -133,11 +178,13 @@ export default function OtherExpensesModule({ activeClient = "The Marx Ventures"
       creditLedger: formData.creditLedger,
       group: categoryGroup,
       payeeName: formData.payeeName || "Direct Party",
-      taxableAmount: taxable,
-      cgst,
-      sgst,
-      igst: 0,
+      taxableAmount: taxCalculation.taxable,
+      cgst: taxCalculation.cgst,
+      sgst: taxCalculation.sgst,
+      igst: taxCalculation.igst,
       grandTotal: gross,
+      includesGst: formData.includesGst,
+      gstRate: formData.gstRate,
       narration: formData.narration || "",
       pushedToTally: false
     };
@@ -166,6 +213,7 @@ export default function OtherExpensesModule({ activeClient = "The Marx Ventures"
     const grandVal = (parseFloat(exp.grandTotal || exp.amount || 0)).toFixed(2);
     const cgstVal = (parseFloat(exp.cgst || 0)).toFixed(2);
     const sgstVal = (parseFloat(exp.sgst || 0)).toFixed(2);
+    const igstVal = (parseFloat(exp.igst || 0)).toFixed(2);
 
     return `
     <VOUCHER VCHTYPE="Journal" ACTION="Create">
@@ -189,6 +237,12 @@ export default function OtherExpensesModule({ activeClient = "The Marx Ventures"
         <LEDGERNAME>Input SGST</LEDGERNAME>
         <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
         <AMOUNT>-${sgstVal}</AMOUNT>
+      </ALLLEDGERENTRIES.LIST>` : ""}
+      ${parseFloat(igstVal) > 0 ? `
+      <ALLLEDGERENTRIES.LIST>
+        <LEDGERNAME>Input IGST</LEDGERNAME>
+        <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
+        <AMOUNT>-${igstVal}</AMOUNT>
       </ALLLEDGERENTRIES.LIST>` : ""}
       <ALLLEDGERENTRIES.LIST>
         <LEDGERNAME>${exp.creditLedger || "Cash"}</LEDGERNAME>
@@ -288,7 +342,7 @@ export default function OtherExpensesModule({ activeClient = "The Marx Ventures"
 
     const headers = [
       "Voucher Date", "Expense (Debit) Ledger", "Credit Ledger", "Payee / Vendor",
-      "Category", "Taxable Amount (₹)", "CGST (₹)", "SGST (₹)", "Grand Total (₹)", "Narration", "Pushed to Tally"
+      "Category", "Taxable Amount (₹)", "CGST (₹)", "SGST (₹)", "IGST (₹)", "Grand Total (₹)", "Narration", "Pushed to Tally"
     ];
 
     const rows = list.map(e => [
@@ -300,6 +354,7 @@ export default function OtherExpensesModule({ activeClient = "The Marx Ventures"
       Number(e.taxableAmount || e.amount || 0).toFixed(2),
       Number(e.cgst || 0).toFixed(2),
       Number(e.sgst || 0).toFixed(2),
+      Number(e.igst || 0).toFixed(2),
       Number(e.grandTotal || e.amount || 0).toFixed(2),
       `"${(e.narration || "").replace(/"/g, '""')}"`,
       e.pushedToTally ? "Yes" : "No"
@@ -348,7 +403,6 @@ export default function OtherExpensesModule({ activeClient = "The Marx Ventures"
     notify("Downloaded Tally-compliant XML import file!", "success");
   };
 
-  // Group pushed expenses month-wise based on voucher date
   const groupedPushedExpenses = useMemo(() => {
     const groups = {};
     pushedExpenses.forEach(exp => {
@@ -394,7 +448,6 @@ export default function OtherExpensesModule({ activeClient = "The Marx Ventures"
     return Object.values(groups);
   }, [pushedExpenses]);
 
-  // Safe Total Turnover computation
   const totalOverheads = useMemo(() => {
     const all = [...expenses, ...pushedExpenses];
     return all.reduce((acc, e) => {
@@ -492,7 +545,7 @@ export default function OtherExpensesModule({ activeClient = "The Marx Ventures"
                 <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-2">
                   <Plus className="w-4 h-4 text-indigo-600" /> Book Direct Expense / Accrual Voucher
                 </h3>
-                <span className="text-[11px] text-slate-400 font-medium">Dropdowns populated from Client's Chart of Accounts</span>
+                <span className="text-[11px] text-slate-400 font-medium">Direct live sync with Client Chart of Accounts</span>
               </div>
 
               <div className="grid grid-cols-3 gap-4">
@@ -507,7 +560,7 @@ export default function OtherExpensesModule({ activeClient = "The Marx Ventures"
                   />
                 </div>
 
-                {/* DYNAMIC DEBIT LEDGER (ALL COA LEDGERS) */}
+                {/* DYNAMIC DEBIT LEDGER (FROM ACTIVE CLIENT COA) */}
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1">
                     Debit / Expense Ledger <span className="text-rose-500">*</span>
@@ -519,15 +572,19 @@ export default function OtherExpensesModule({ activeClient = "The Marx Ventures"
                     required
                   >
                     <option value="">-- Choose Account from COA --</option>
-                    {allLedgers.map((l) => (
-                      <option key={l.id || l.name} value={l.name}>
-                        {l.name} [{l.category || "General"}]
-                      </option>
+                    {Object.entries(groupedLedgers).map(([catName, ledgers]) => (
+                      <optgroup key={catName} label={`📂 ${catName}`}>
+                        {ledgers.map((l) => (
+                          <option key={l.id || l.name} value={l.name}>
+                            {l.name}
+                          </option>
+                        ))}
+                      </optgroup>
                     ))}
                   </select>
                 </div>
 
-                {/* DYNAMIC CREDIT LEDGER (ALL COA LEDGERS) */}
+                {/* DYNAMIC CREDIT LEDGER (FROM ACTIVE CLIENT COA) */}
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1">
                     Credit Ledger (Bank / Cash / Payable) <span className="text-rose-500">*</span>
@@ -539,10 +596,14 @@ export default function OtherExpensesModule({ activeClient = "The Marx Ventures"
                     required
                   >
                     <option value="">-- Choose Account from COA --</option>
-                    {allLedgers.map((l) => (
-                      <option key={l.id || l.name} value={l.name}>
-                        {l.name} [{l.category || "General"}]
-                      </option>
+                    {Object.entries(groupedLedgers).map(([catName, ledgers]) => (
+                      <optgroup key={catName} label={`📂 ${catName}`}>
+                        {ledgers.map((l) => (
+                          <option key={l.id || l.name} value={l.name}>
+                            {l.name}
+                          </option>
+                        ))}
+                      </optgroup>
                     ))}
                   </select>
                 </div>
@@ -561,7 +622,9 @@ export default function OtherExpensesModule({ activeClient = "The Marx Ventures"
                 </div>
 
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">Amount (₹) <span className="text-rose-500">*</span></label>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Total Gross Amount (₹) <span className="text-rose-500">*</span>
+                  </label>
                   <input
                     type="number"
                     step="0.01"
@@ -577,7 +640,7 @@ export default function OtherExpensesModule({ activeClient = "The Marx Ventures"
                   <label className="block text-xs font-bold text-slate-700 mb-1">Narration / Memo</label>
                   <input
                     type="text"
-                    placeholder="e.g. Electricity bill for September 2026"
+                    placeholder="e.g. Office electricity bill for September 2026"
                     value={formData.narration}
                     onChange={(e) => setFormData({ ...formData, narration: e.target.value })}
                     className="w-full text-xs border border-slate-300 rounded-lg p-2.5"
@@ -585,17 +648,86 @@ export default function OtherExpensesModule({ activeClient = "The Marx Ventures"
                 </div>
               </div>
 
-              <div className="flex items-center justify-between pt-2">
-                <label className="flex items-center gap-2 text-xs font-semibold text-slate-700 cursor-pointer">
+              {/* INCLUDES GST CHECKBOX */}
+              <div className="pt-2">
+                <label className="flex items-center gap-2 text-xs font-bold text-slate-800 cursor-pointer">
                   <input
                     type="checkbox"
                     checked={formData.includesGst}
                     onChange={(e) => setFormData({ ...formData, includesGst: e.target.checked })}
-                    className="rounded text-slate-900"
+                    className="rounded text-slate-900 focus:ring-slate-900"
                   />
-                  <span>Includes GST (Eligible for Input Tax Credit)?</span>
+                  <span>Includes GST (Eligible for Input Tax Credit - ITC)?</span>
                 </label>
 
+                {/* EXPANDED INTERACTIVE GST CONFIGURATION STRIP */}
+                {formData.includesGst && (
+                  <div className="mt-3 p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-4">
+                    <div className="grid grid-cols-3 gap-4">
+                      <div>
+                        <label className="block text-xs font-bold text-slate-700 mb-1">GST Tax Rate</label>
+                        <select
+                          value={formData.gstRate}
+                          onChange={(e) => setFormData({ ...formData, gstRate: parseFloat(e.target.value) || 18 })}
+                          className="w-full text-xs font-bold border border-slate-300 rounded-lg p-2 bg-white"
+                        >
+                          {GST_RATES.map((r) => (
+                            <option key={r.value} value={r.value}>{r.label}</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div className="flex items-center pt-5">
+                        <label className="flex items-center gap-2 text-xs font-semibold text-slate-700 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={formData.isInterstate}
+                            onChange={(e) => setFormData({ ...formData, isInterstate: e.target.checked })}
+                            className="rounded text-slate-900"
+                          />
+                          <span>Interstate Purchase (IGST)?</span>
+                        </label>
+                      </div>
+
+                      <div className="text-right">
+                        <span className="text-[10px] uppercase font-bold text-slate-400">Net Taxable Value</span>
+                        <p className="text-lg font-black font-mono text-slate-900">
+                          ₹{taxCalculation.taxable.toFixed(2)}
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* DYNAMIC TAX LEDGER BREAKDOWN */}
+                    <div className="grid grid-cols-3 gap-4 pt-2 border-t border-slate-200 text-xs">
+                      {!formData.isInterstate ? (
+                        <>
+                          <div className="bg-white p-2.5 rounded-lg border border-slate-200">
+                            <span className="text-[10px] font-bold text-slate-500 uppercase">Input CGST ({formData.gstRate / 2}%)</span>
+                            <p className="text-sm font-bold font-mono text-indigo-700 mt-0.5">₹{taxCalculation.cgst.toFixed(2)}</p>
+                          </div>
+
+                          <div className="bg-white p-2.5 rounded-lg border border-slate-200">
+                            <span className="text-[10px] font-bold text-slate-500 uppercase">Input SGST ({formData.gstRate / 2}%)</span>
+                            <p className="text-sm font-bold font-mono text-indigo-700 mt-0.5">₹{taxCalculation.sgst.toFixed(2)}</p>
+                          </div>
+                        </>
+                      ) : (
+                        <div className="col-span-2 bg-white p-2.5 rounded-lg border border-slate-200">
+                          <span className="text-[10px] font-bold text-slate-500 uppercase">Input IGST ({formData.gstRate}%)</span>
+                          <p className="text-sm font-bold font-mono text-indigo-700 mt-0.5">₹{taxCalculation.igst.toFixed(2)}</p>
+                        </div>
+                      )}
+
+                      <div className="bg-slate-900 text-white p-2.5 rounded-lg text-right">
+                        <span className="text-[10px] font-bold text-slate-300 uppercase">Gross Total Payable</span>
+                        <p className="text-sm font-black font-mono text-emerald-400 mt-0.5">₹{taxCalculation.gross.toFixed(2)}</p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex items-center justify-end pt-2 border-t border-slate-100">
                 <button
                   type="submit"
                   className="px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-bold shadow-sm transition"
@@ -633,7 +765,7 @@ export default function OtherExpensesModule({ activeClient = "The Marx Ventures"
                   <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
                     {expenses.map((exp) => (
                       <tr key={exp.id} className="hover:bg-slate-50/70 transition">
-                        <td className="py-3 px-4 font-mono">{exp.voucherDate || exp.date}</td>
+                        <td className="py-3 px-4 font-mono">{exp.voucherDate}</td>
                         <td className="py-3 px-4 font-bold text-slate-900">{exp.expenseLedger}</td>
                         <td className="py-3 px-4 text-slate-600">{exp.creditLedger}</td>
                         <td className="py-3 px-4 font-medium text-slate-500">{exp.group}</td>
@@ -685,7 +817,6 @@ export default function OtherExpensesModule({ activeClient = "The Marx Ventures"
 
                 return (
                   <div key={group.monthLabel} className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
-                    {/* FOLDER BANNER HEADER */}
                     <div
                       onClick={() => toggleFolder(group.monthLabel)}
                       className="px-6 py-4 bg-slate-50/80 hover:bg-slate-100/80 border-b border-slate-200 flex items-center justify-between cursor-pointer transition select-none"
@@ -722,7 +853,6 @@ export default function OtherExpensesModule({ activeClient = "The Marx Ventures"
                       </div>
                     </div>
 
-                    {/* FOLDER CONTENTS */}
                     {isExpanded && (
                       <table className="w-full text-left text-xs text-slate-600">
                         <thead className="bg-white border-b border-slate-200 uppercase font-semibold text-slate-400 text-[10px]">
