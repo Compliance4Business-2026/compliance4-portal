@@ -8,19 +8,23 @@ import {
   AlertCircle, 
   CheckCircle2, 
   Layers, 
-  BookOpen,
-  Download,
-  Upload,
-  Image as ImageIcon,
-  PenTool,
-  ChevronRight,
-  ArrowLeft,
-  Filter,
-  Edit2,
-  Sparkles,
-  X,
-  ShieldCheck,
-  ShieldAlert
+  BookOpen, 
+  Download, 
+  Upload, 
+  Image as ImageIcon, 
+  PenTool, 
+  ChevronRight, 
+  ArrowLeft, 
+  Filter, 
+  Edit2, 
+  Sparkles, 
+  X, 
+  ShieldCheck, 
+  ShieldAlert,
+  Users,
+  Key,
+  Lock,
+  UserCheck
 } from "lucide-react";
 
 const loadSheetJS = () => {
@@ -49,7 +53,7 @@ const getFreshProfileState = (clientName, savedProfiles) => {
     companyName: clientName,
     gstin: "",
     pan: "",
-    isItcEligible: true, // Default to Yes (Eligible)
+    isItcEligible: true,
     contactPerson: "",
     phone: "",
     email: "",
@@ -113,9 +117,9 @@ const getPlNature = (ledger) => {
   return "Indirect";
 };
 
-export default function SettingsModule({ activeClient, setActiveClient }) {
+export default function SettingsModule({ activeClient, setActiveClient, currentUser = null }) {
   const [viewMode, setViewMode] = useState("directory");
-  const [manageSubTab, setManageSubTab] = useState("profile");
+  const [manageSubTab, setManageSubTab] = useState("profile"); // 'profile' | 'coa' | 'users'
 
   const [profiles, setProfiles] = useState(() => {
     try {
@@ -144,6 +148,20 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
     }
   });
 
+  // Persistent User Directory
+  const [users, setUsers] = useState(() => {
+    try {
+      const saved = localStorage.getItem("c4_user_accounts");
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  useEffect(() => {
+    localStorage.setItem("c4_user_accounts", JSON.stringify(users));
+  }, [users]);
+
   const [currentForm, setCurrentForm] = useState(() => getFreshProfileState(activeClient, profiles));
   const [coaFilter, setCoaFilter] = useState("ALL");
 
@@ -168,6 +186,21 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
   const [newStatementType, setNewStatementType] = useState("P&L");
   const [newLedgerCategory, setNewLedgerCategory] = useState("");
   const [newCostNature, setNewCostNature] = useState("COGS");
+
+  // Form State for Adding New User
+  const [newUser, setNewUser] = useState({
+    fullName: "",
+    username: "",
+    password: "",
+    allowedClients: "ALL", // 'ALL' or specific client name
+    permissions: {
+      dashboard: "view",
+      sales: "edit",
+      purchases: "edit",
+      otherExpenses: "edit",
+      banking: "edit"
+    }
+  });
 
   const [editingLedger, setEditingLedger] = useState(null);
   const [isUploading, setIsUploading] = useState(false);
@@ -215,7 +248,6 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
     setManageSubTab("profile");
   };
 
-  // ADD NEW CLIENT WITH ITC SELECTION
   const handleAddNewClient = () => {
     const newClientName = window.prompt("Enter Legal or Trade Name for the New Client:");
     if (!newClientName || !newClientName.trim()) return;
@@ -250,7 +282,6 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
       signatureUrl: ""
     };
 
-    // Auto-seed "GST Expense on Purchase" in COA if client is not ITC eligible
     const defaultCoa = [];
     if (!itcPrompt) {
       defaultCoa.push({
@@ -273,7 +304,7 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
     setViewMode("manage");
     setManageSubTab("profile");
 
-    notify(`Client "${trimmed}" created (${itcPrompt ? "ITC Eligible" : "Non-ITC Cafe Scheme"})!`, "success");
+    notify(`Client "${trimmed}" created!`, "success");
   };
 
   const handleDeleteClient = (clientNameToDelete, e) => {
@@ -312,7 +343,62 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
     setProfiles(updatedProfiles);
     localStorage.setItem("c4_client_profiles", JSON.stringify(updatedProfiles));
     setActiveClient(targetName);
-    notify(`Profile for "${targetName}" saved (ITC: ${currentForm.isItcEligible ? "Eligible" : "Non-ITC Scheme"})!`, "success");
+    notify(`Profile for "${targetName}" saved!`, "success");
+  };
+
+  // ADD NEW USER HANDLER
+  const handleCreateUser = (e) => {
+    e.preventDefault();
+    if (!newUser.username.trim() || !newUser.password.trim()) {
+      notify("Username and Password are required", "error");
+      return;
+    }
+
+    const cleanUser = newUser.username.trim().toLowerCase();
+    if (cleanUser === "admin" || users.some((u) => u.username.toLowerCase() === cleanUser)) {
+      notify(`Username "${newUser.username}" already taken!`, "error");
+      return;
+    }
+
+    const created = {
+      id: `usr_${Date.now()}`,
+      fullName: newUser.fullName.trim() || newUser.username.trim(),
+      username: cleanUser,
+      password: newUser.password,
+      role: "staff",
+      allowedClients: newUser.allowedClients,
+      permissions: { ...newUser.permissions },
+      isActive: true,
+      createdAt: new Date().toLocaleDateString("en-IN")
+    };
+
+    setUsers((prev) => [created, ...prev]);
+    setNewUser({
+      fullName: "",
+      username: "",
+      password: "",
+      allowedClients: "ALL",
+      permissions: {
+        dashboard: "view",
+        sales: "edit",
+        purchases: "edit",
+        otherExpenses: "edit",
+        banking: "edit"
+      }
+    });
+    notify(`User "${created.fullName}" created with assigned permissions!`, "success");
+  };
+
+  const handleDeleteUser = (id, username) => {
+    if (!window.confirm(`Delete user "${username}"?`)) return;
+    setUsers((prev) => prev.filter((u) => u.id !== id));
+    notify(`User "${username}" removed.`, "info");
+  };
+
+  const handleToggleUserStatus = (id) => {
+    setUsers((prev) =>
+      prev.map((u) => (u.id === id ? { ...u, isActive: !u.isActive } : u))
+    );
   };
 
   const handleAddLedger = (e) => {
@@ -351,9 +437,7 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
       prev.map((l) => {
         if (l.id === id) {
           const currentNature = getPlNature(l);
-          if (currentNature === "Revenue" || currentNature === "Other Income") {
-            return l;
-          }
+          if (currentNature === "Revenue" || currentNature === "Other Income") return l;
           const next = currentNature === "COGS" ? "Indirect" : "COGS";
           notify(`Changed "${l.name}" to ${next === "COGS" ? "Direct (COGS)" : "Indirect Expense"}!`, "info");
           return { ...l, cogsClassification: next };
@@ -439,9 +523,6 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
       const XLSX = await loadSheetJS();
       const templateData = [
         ["Ledger Name", "Statement Type", "Category", "P&L Nature"],
-        ["Sales: Dine In", "P&L", "Sales", "Revenue"],
-        ["Sales: Delivery", "P&L", "Sales", "Revenue"],
-        ["Interest Received", "P&L", "Other Income", "Other Income"],
         ["Purchases - Dairy Products", "P&L", "Purchases", "COGS"],
         ["GST Expense on Purchase", "P&L", "Administrative & General Expenses", "Indirect"],
         ["Supplies - Stationery", "P&L", "Administrative Expenses", "Indirect"],
@@ -696,6 +777,16 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
           >
             <BookOpen className="w-4 h-4" /> Chart of Accounts ({clientCoa.length})
           </button>
+
+          {/* NEW: USER ACCESS TAB (VISIBLE FOR ADMIN) */}
+          <button
+            onClick={() => setManageSubTab("users")}
+            className={`pb-3 text-xs font-bold transition flex items-center gap-2 border-b-2 ${
+              manageSubTab === "users" ? "border-slate-900 text-slate-900" : "border-transparent text-slate-400 hover:text-slate-600"
+            }`}
+          >
+            <Users className="w-4 h-4" /> User Access & Permissions ({users.length})
+          </button>
         </div>
       )}
 
@@ -808,7 +899,6 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
         {/* 2. PROFILE TAB */}
         {viewMode === "manage" && manageSubTab === "profile" && (
           <div className="space-y-6">
-            {/* BRANDING */}
             <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-xs space-y-4">
               <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
                 <ImageIcon className="w-4 h-4 text-slate-600" /> Entity Branding & Signatures (For Invoices)
@@ -857,7 +947,6 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
               </div>
             </div>
 
-            {/* LEGAL & STATUTORY DATA + ITC CONFIGURATION */}
             <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-xs space-y-4">
               <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
                 <Building2 className="w-4 h-4 text-slate-600" /> Legal Entity & GST Configuration
@@ -878,7 +967,6 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
                   <input type="text" placeholder="ABCDE1234F" value={currentForm.pan} onChange={(e) => setCurrentForm({ ...currentForm, pan: e.target.value.toUpperCase() })} className="w-full text-xs font-mono font-bold border border-slate-300 rounded-lg p-2" />
                 </div>
 
-                {/* ITC ELIGIBILITY DROPDOWN */}
                 <div className="col-span-2">
                   <label className="block text-xs font-bold text-slate-700 mb-1">
                     GST Scheme & ITC Eligibility <span className="text-rose-500">*</span>
@@ -903,7 +991,6 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
               </div>
             </div>
 
-            {/* PRIMARY SETTLEMENT BANK */}
             <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-xs space-y-4">
               <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
                 <CreditCard className="w-4 h-4 text-slate-600" /> Primary Settlement Bank
@@ -939,7 +1026,6 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
         {/* 3. CHART OF ACCOUNTS TAB */}
         {viewMode === "manage" && manageSubTab === "coa" && (
           <div className="space-y-6">
-            {/* ADD LEDGER FORM */}
             <form onSubmit={handleAddLedger} className="bg-white rounded-xl border border-slate-200 p-6 shadow-xs space-y-4">
               <div className="flex items-center justify-between border-b border-slate-100 pb-3">
                 <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
@@ -1012,7 +1098,6 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
               </div>
             </form>
 
-            {/* FILTER STRIP */}
             <div className="flex items-center justify-between bg-white px-5 py-3 rounded-xl border border-slate-200">
               <div className="flex items-center gap-2">
                 <Filter className="w-4 h-4 text-slate-500" />
@@ -1033,7 +1118,6 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
               </div>
             </div>
 
-            {/* DYNAMIC LISTING */}
             <div className="space-y-4">
               {Object.keys(categoriesGrouped).length === 0 ? (
                 <div className="bg-white rounded-xl border border-slate-200 p-12 text-center text-slate-400 text-xs">
@@ -1128,88 +1212,252 @@ export default function SettingsModule({ activeClient, setActiveClient }) {
             </div>
           </div>
         )}
-      </div>
 
-      {/* EDIT LEDGER MODAL */}
-      {editingLedger && (
-        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl border border-slate-200 shadow-xl max-w-md w-full p-6 space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                <Edit2 className="w-4 h-4 text-indigo-600" /> Edit Ledger Account
-              </h3>
-              <button onClick={() => setEditingLedger(null)} className="text-slate-400 hover:text-slate-600">
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <div className="space-y-3">
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">Ledger Name</label>
-                <input
-                  type="text"
-                  value={editingLedger.name}
-                  onChange={(e) => setEditingLedger({ ...editingLedger, name: e.target.value })}
-                  className="w-full text-xs font-bold border border-slate-300 rounded-lg p-2"
-                />
+        {/* 4. NEW: USER ACCESS & ROLE-BASED ACCESS CONTROL (RBAC) TAB */}
+        {viewMode === "manage" && manageSubTab === "users" && (
+          <div className="space-y-6">
+            {/* ADD USER FORM */}
+            <form onSubmit={handleCreateUser} className="bg-white rounded-xl border border-slate-200 p-6 shadow-xs space-y-4">
+              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-2">
+                  <UserCheck className="w-4 h-4 text-indigo-600" /> Create New Staff / Client User
+                </h3>
+                <span className="text-[11px] text-slate-400">Controls data visibility & edit rights</span>
               </div>
 
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">Statement Nature</label>
-                <select
-                  value={editingLedger.statementType}
-                  onChange={(e) => setEditingLedger({ ...editingLedger, statementType: e.target.value })}
-                  className="w-full text-xs border border-slate-300 rounded-lg p-2 bg-white"
-                >
-                  <option value="P&L">Profit & Loss (P&L)</option>
-                  <option value="Balance Sheet">Balance Sheet</option>
-                </select>
-              </div>
-
-              {editingLedger.statementType === "P&L" && (
+              <div className="grid grid-cols-4 gap-4">
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">P&L Item Nature</label>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Full Name</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. Rahul Sharma"
+                    value={newUser.fullName}
+                    onChange={(e) => setNewUser({ ...newUser, fullName: e.target.value })}
+                    className="w-full text-xs font-medium border border-slate-300 rounded-lg p-2.5"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Username (User ID)</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. rahul_ops"
+                    value={newUser.username}
+                    onChange={(e) => setNewUser({ ...newUser, username: e.target.value })}
+                    className="w-full text-xs font-mono font-bold border border-slate-300 rounded-lg p-2.5"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Password</label>
+                  <input
+                    type="password"
+                    required
+                    placeholder="••••••••"
+                    value={newUser.password}
+                    onChange={(e) => setNewUser({ ...newUser, password: e.target.value })}
+                    className="w-full text-xs font-medium border border-slate-300 rounded-lg p-2.5"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Assigned Client Entity</label>
                   <select
-                    value={editingLedger.cogsClassification || getPlNature(editingLedger)}
-                    onChange={(e) => setEditingLedger({ ...editingLedger, cogsClassification: e.target.value })}
-                    className="w-full text-xs font-bold border border-slate-300 rounded-lg p-2 bg-white"
+                    value={newUser.allowedClients}
+                    onChange={(e) => setNewUser({ ...newUser, allowedClients: e.target.value })}
+                    className="w-full text-xs font-bold border border-slate-300 rounded-lg p-2.5 bg-white text-slate-800"
                   >
-                    <option value="COGS">Direct Cost / Purchase (COGS)</option>
-                    <option value="Indirect">Indirect Operating Expense (Overhead)</option>
-                    <option value="Revenue">Revenue from Operations (Sales)</option>
-                    <option value="Other Income">Other / Non-Operating Income</option>
+                    <option value="ALL">All Clients (Full Multi-Tenant Access)</option>
+                    {clientListKeys.map((k) => (
+                      <option key={k} value={k}>{k}</option>
+                    ))}
                   </select>
                 </div>
-              )}
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">Category / Group Name</label>
-                <input
-                  type="text"
-                  value={editingLedger.category}
-                  onChange={(e) => setEditingLedger({ ...editingLedger, category: e.target.value })}
-                  className="w-full text-xs border border-slate-300 rounded-lg p-2"
-                />
               </div>
-            </div>
 
-            <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
-              <button
-                onClick={() => setEditingLedger(null)}
-                className="px-4 py-2 border border-slate-200 text-slate-600 rounded-lg text-xs font-bold hover:bg-slate-50 transition"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleSaveEditLedger}
-                className="px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-bold shadow-xs transition"
-              >
-                Save Changes
-              </button>
+              {/* MODULE PERMISSION MATRIX */}
+              <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
+                <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider block">
+                  Module Permission Levels
+                </span>
+                <div className="grid grid-cols-5 gap-3 text-xs">
+                  {/* DASHBOARD */}
+                  <div className="bg-white p-2.5 rounded-lg border border-slate-200">
+                    <label className="block font-bold text-slate-800 mb-1">Dashboard</label>
+                    <select
+                      value={newUser.permissions.dashboard}
+                      onChange={(e) => setNewUser({ ...newUser, permissions: { ...newUser.permissions, dashboard: e.target.value } })}
+                      className="w-full text-xs border border-slate-300 rounded p-1 font-medium bg-white"
+                    >
+                      <option value="view">View Only</option>
+                      <option value="none">No Access</option>
+                    </select>
+                  </div>
+
+                  {/* SALES */}
+                  <div className="bg-white p-2.5 rounded-lg border border-slate-200">
+                    <label className="block font-bold text-slate-800 mb-1">Sales</label>
+                    <select
+                      value={newUser.permissions.sales}
+                      onChange={(e) => setNewUser({ ...newUser, permissions: { ...newUser.permissions, sales: e.target.value } })}
+                      className="w-full text-xs border border-slate-300 rounded p-1 font-medium bg-white"
+                    >
+                      <option value="edit">Full Edit / Create</option>
+                      <option value="view">View Only</option>
+                      <option value="none">No Access</option>
+                    </select>
+                  </div>
+
+                  {/* PURCHASES */}
+                  <div className="bg-white p-2.5 rounded-lg border border-slate-200">
+                    <label className="block font-bold text-slate-800 mb-1">Purchases</label>
+                    <select
+                      value={newUser.permissions.purchases}
+                      onChange={(e) => setNewUser({ ...newUser, permissions: { ...newUser.permissions, purchases: e.target.value } })}
+                      className="w-full text-xs border border-slate-300 rounded p-1 font-medium bg-white"
+                    >
+                      <option value="edit">Full Edit / Approve</option>
+                      <option value="view">View Only</option>
+                      <option value="none">No Access</option>
+                    </select>
+                  </div>
+
+                  {/* OTHER EXPENSES */}
+                  <div className="bg-white p-2.5 rounded-lg border border-slate-200">
+                    <label className="block font-bold text-slate-800 mb-1">Other Expenses</label>
+                    <select
+                      value={newUser.permissions.otherExpenses}
+                      onChange={(e) => setNewUser({ ...newUser, permissions: { ...newUser.permissions, otherExpenses: e.target.value } })}
+                      className="w-full text-xs border border-slate-300 rounded p-1 font-medium bg-white"
+                    >
+                      <option value="edit">Full Edit / Book</option>
+                      <option value="view">View Only</option>
+                      <option value="none">No Access</option>
+                    </select>
+                  </div>
+
+                  {/* BANKING */}
+                  <div className="bg-white p-2.5 rounded-lg border border-slate-200">
+                    <label className="block font-bold text-slate-800 mb-1">Banking</label>
+                    <select
+                      value={newUser.permissions.banking}
+                      onChange={(e) => setNewUser({ ...newUser, permissions: { ...newUser.permissions, banking: e.target.value } })}
+                      className="w-full text-xs border border-slate-300 rounded p-1 font-medium bg-white"
+                    >
+                      <option value="edit">Full Edit / Allocate</option>
+                      <option value="view">View Only</option>
+                      <option value="none">No Access</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex justify-end pt-2">
+                <button
+                  type="submit"
+                  className="px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-bold transition shadow-xs flex items-center gap-1.5"
+                >
+                  <Plus className="w-3.5 h-3.5" /> Save User Credentials
+                </button>
+              </div>
+            </form>
+
+            {/* USERS LIST TABLE */}
+            <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-xs">
+              <div className="px-6 py-3.5 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+                <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
+                  Configured User Accounts ({users.length + 1})
+                </h4>
+              </div>
+
+              <table className="w-full text-left text-xs">
+                <thead className="bg-white border-b border-slate-100 text-slate-400 font-semibold uppercase text-[10px]">
+                  <tr>
+                    <th className="py-3 px-4">User</th>
+                    <th className="py-3 px-4">Role</th>
+                    <th className="py-3 px-4">Assigned Entity Scope</th>
+                    <th className="py-3 px-4">Permissions (S/P/E/B)</th>
+                    <th className="py-3 px-4 text-center">Status</th>
+                    <th className="py-3 px-4 text-center">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
+                  {/* DEFAULT SUPER ADMIN ROW */}
+                  <tr className="bg-slate-50/40">
+                    <td className="py-3 px-4">
+                      <p className="font-bold text-slate-900">Super Administrator</p>
+                      <p className="text-[10px] font-mono text-slate-400">admin</p>
+                    </td>
+                    <td className="py-3 px-4">
+                      <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-900 text-white font-mono">
+                        Super Admin
+                      </span>
+                    </td>
+                    <td className="py-3 px-4 font-bold text-indigo-700">
+                      All Registered Entities
+                    </td>
+                    <td className="py-3 px-4 font-mono text-[11px] text-slate-500">
+                      Full Unrestricted Control
+                    </td>
+                    <td className="py-3 px-4 text-center">
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                        Active
+                      </span>
+                    </td>
+                    <td className="py-3 px-4 text-center text-slate-300 font-mono text-[10px]">
+                      Master
+                    </td>
+                  </tr>
+
+                  {/* CUSTOM USERS */}
+                  {users.map((u) => (
+                    <tr key={u.id} className="hover:bg-slate-50/50">
+                      <td className="py-3 px-4">
+                        <p className="font-bold text-slate-900">{u.fullName}</p>
+                        <p className="text-[10px] font-mono text-slate-400">{u.username}</p>
+                      </td>
+                      <td className="py-3 px-4">
+                        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-50 text-indigo-800 border border-indigo-200">
+                          Staff
+                        </span>
+                      </td>
+                      <td className="py-3 px-4 font-medium text-slate-700 truncate max-w-xs">
+                        {u.allowedClients === "ALL" ? "All Entities" : u.allowedClients}
+                      </td>
+                      <td className="py-3 px-4 font-mono text-[10px] text-slate-500">
+                        Sales:{u.permissions?.sales} | Pur:{u.permissions?.purchases} | Exp:{u.permissions?.otherExpenses} | Bnk:{u.permissions?.banking}
+                      </td>
+                      <td className="py-3 px-4 text-center">
+                        <button
+                          onClick={() => handleToggleUserStatus(u.id)}
+                          className={`px-2 py-0.5 rounded-full text-[10px] font-bold border transition ${
+                            u.isActive
+                              ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                              : "bg-rose-50 text-rose-700 border-rose-200"
+                          }`}
+                        >
+                          {u.isActive ? "Active" : "Disabled"}
+                        </button>
+                      </td>
+                      <td className="py-3 px-4 text-center">
+                        <button
+                          onClick={() => handleDeleteUser(u.id, u.username)}
+                          className="p-1 text-slate-300 hover:text-rose-600 transition"
+                          title="Delete User"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
       {notification && (
         <div
