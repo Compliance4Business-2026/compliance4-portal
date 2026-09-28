@@ -15,14 +15,10 @@ import {
   Landmark,
   Settings,
   LogOut,
-  User,
-  ShieldCheck,
-  CheckCircle2,
   Building2
 } from "lucide-react";
 
 export default function App() {
-  // Session State
   const [currentUser, setCurrentUser] = useState(() => {
     try {
       const saved = localStorage.getItem("c4_auth_session");
@@ -34,7 +30,6 @@ export default function App() {
 
   const [activeTab, setActiveTab] = useState("dashboard");
 
-  // Persistent Client Entities
   const [profiles, setProfiles] = useState(() => {
     try {
       const saved = localStorage.getItem("c4_client_profiles");
@@ -64,7 +59,6 @@ export default function App() {
     localStorage.setItem("c4_active_client", activeClient);
   }, [activeClient]);
 
-  // Restrict client choices if user is bound to a single client
   const availableClients = Object.keys(profiles).filter((clientName) => {
     if (!currentUser || currentUser.role === "admin" || currentUser.allowedClients === "ALL") {
       return true;
@@ -72,7 +66,6 @@ export default function App() {
     return currentUser.allowedClients === clientName;
   });
 
-  // Ensure active client falls within user's permitted entities
   useEffect(() => {
     if (currentUser && currentUser.allowedClients !== "ALL" && currentUser.allowedClients) {
       setActiveClient(currentUser.allowedClients);
@@ -84,7 +77,6 @@ export default function App() {
     setCurrentUser(null);
   };
 
-  // If not authenticated, render Login Gate
   if (!currentUser) {
     return <LoginModal onLoginSuccess={(user) => setCurrentUser(user)} />;
   }
@@ -93,10 +85,10 @@ export default function App() {
 
   return (
     <div className="flex h-screen w-screen bg-[#F8FAFC] overflow-hidden font-sans">
-      {/* SIDEBAR NAVIGATION */}
-      <aside className="w-64 bg-white border-r border-slate-200 flex flex-col justify-between shrink-0 shadow-xs">
+      {/* SIDEBAR NAVIGATION (FIXED & ALWAYS VISIBLE) */}
+      <aside className="w-64 bg-white border-r border-slate-200 flex flex-col justify-between shrink-0 shadow-xs z-30">
         <div>
-          {/* LOGO */}
+          {/* BRAND LOGO */}
           <div className="p-6 border-b border-slate-100 flex items-center justify-between">
             <div className="flex items-center gap-3">
               <div className="w-9 h-9 bg-slate-900 text-white rounded-xl flex items-center justify-center font-black text-sm shadow-sm">
@@ -129,7 +121,7 @@ export default function App() {
             </div>
           </div>
 
-          {/* NAV LINKS (RESPECTS USER ACCESS PERMISSIONS) */}
+          {/* NAV LINKS */}
           <nav className="p-4 space-y-1">
             {perms.dashboard !== "none" && (
               <button
@@ -196,7 +188,7 @@ export default function App() {
               </button>
             )}
 
-            {/* SETTINGS IS RESERVED FOR SUPER ADMIN */}
+            {/* SETTINGS IS ACCESSIBLE TO SUPER ADMIN */}
             {currentUser.role === "admin" && (
               <button
                 onClick={() => setActiveTab("settings")}
@@ -212,15 +204,15 @@ export default function App() {
           </nav>
         </div>
 
-        {/* FOOTER: SESSION DETAILS & LOGOUT */}
+        {/* SIDEBAR FOOTER */}
         <div className="p-4 border-t border-slate-100 space-y-3 bg-slate-50/50">
           <div className="flex items-center gap-2 text-xs">
             <div className="w-7 h-7 rounded-full bg-slate-200 text-slate-700 font-bold flex items-center justify-center text-[11px]">
-              {currentUser.username.substring(0, 2).toUpperCase()}
+              {currentUser.username ? currentUser.username.substring(0, 2).toUpperCase() : "AD"}
             </div>
             <div className="truncate flex-1">
               <p className="font-bold text-slate-800 text-[11px] leading-tight truncate">
-                {currentUser.fullName}
+                {currentUser.fullName || "Administrator"}
               </p>
               <p className="text-[10px] text-slate-400 capitalize">{currentUser.role}</p>
             </div>
@@ -246,15 +238,25 @@ export default function App() {
       {/* MAIN VIEWPORT */}
       <main className="flex-1 flex flex-col h-full overflow-hidden">
         {activeTab === "dashboard" && <DashboardModule activeClient={activeClient} />}
-        {activeTab === "sales" && <SalesModule activeClient={activeClient} />}
-        {activeTab === "purchases" && <PurchaseModule activeClient={activeClient} />}
+        {activeTab === "sales" && (
+          <SalesModule 
+            activeClient={activeClient} 
+            salesPerms={currentUser?.salesSubPerms} 
+            userRole={currentUser?.permissions?.sales} 
+          />
+        )}
+        {activeTab === "purchases" && (
+          <PurchaseModule 
+            activeClient={activeClient} 
+            purchasePerm={currentUser?.permissions?.purchases} 
+          />
+        )}
         {activeTab === "otherExpenses" && <OtherExpensesModule activeClient={activeClient} />}
         {activeTab === "banking" && <BankModule activeClient={activeClient} />}
         {activeTab === "settings" && (
           <SettingsModule
             activeClient={activeClient}
             setActiveClient={setActiveClient}
-            currentUser={currentUser}
           />
         )}
       </main>
