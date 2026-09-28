@@ -212,6 +212,18 @@ function SearchableLedgerSelect({ value, onChange, coaList = [], fallbackOptions
 export default function PurchaseModule({ activeClient = "Pansuria Confectionery & Food" }) {
   const [purchaseSubTab, setPurchaseSubTab] = useState("needs_review");
 
+  // Read active client's profile for ITC Eligibility check
+  const clientProfile = useMemo(() => {
+    try {
+      const profiles = JSON.parse(localStorage.getItem("c4_client_profiles") || "{}");
+      return profiles[activeClient] || { isItcEligible: true };
+    } catch {
+      return { isItcEligible: true };
+    }
+  }, [activeClient]);
+
+  const isClientItcEligible = clientProfile.isItcEligible !== false; // Default true
+
   const [pendingBills, setPendingBills] = useState(() => {
     try {
       const saved = localStorage.getItem(`c4_pending_bills_${activeClient}`);
@@ -263,7 +275,7 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
     return FALLBACK_EXPENSE_LEDGERS;
   }, [clientCoa]);
 
-  // DYNAMIC GST LEDGERS FROM CLIENT COA (BOTH DUTIES & TAXES AND GST EXPENSES)
+  // ALL TAX LEDGERS (BOTH BALANCE SHEET DUTIES & TAXES AND P&L GST EXPENSE)
   const dynamicGstLedgers = useMemo(() => {
     const coaMatches = clientCoa
       .filter((l) => {
@@ -282,7 +294,7 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
       .map((l) => l.name);
 
     if (coaMatches.length > 0) return coaMatches;
-    return ["Input CGST", "Input SGST", "Input IGST", "GST Expense", "CGST Input Tax", "SGST Input Tax"];
+    return ["GST Expense on Purchase", "Input CGST", "Input SGST", "Input IGST", "GST Expense"];
   }, [clientCoa]);
 
   const sundryCreditors = useMemo(() => {
@@ -367,12 +379,18 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
     });
   };
 
+  // OPEN REVIEW: AUTOMATICALLY ASSIGN GST EXPENSE ON PURCHASE IF CLIENT IS NON-ITC
   const openReviewWorkspace = (bill) => {
     setActiveReviewBill(bill);
     setZoomLevel(1);
 
     const defaultLedger = dynamicExpenseLedgers[0] || "Purchase: General Goods";
-    const isCafeNonItc = bill.treatTaxAsExpense || false;
+    
+    // Auto-decide default tax routing based on Client Profile
+    const isNonItcClient = !isClientItcEligible;
+    const defaultTaxLedger = isNonItcClient ? "GST Expense on Purchase" : "Input CGST";
+    const defaultSgstLedger = isNonItcClient ? "GST Expense on Purchase" : "Input SGST";
+    const defaultIgstLedger = isNonItcClient ? "GST Expense on Purchase" : "Input IGST";
 
     const items = bill.items && bill.items.length > 0 ? bill.items : [
       {
@@ -403,10 +421,10 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
       bill_date: bill.bill_date || bill.invoice_date || new Date().toISOString().split("T")[0],
       source_of_supply: bill.source_of_supply || bill.place_of_supply || "Gujarat",
       destination_of_supply: bill.destination_of_supply || "Gujarat",
-      treatTaxAsExpense: isCafeNonItc,
-      cgst_ledger: bill.cgst_ledger || (isCafeNonItc ? "GST Expense" : "Input CGST"),
-      sgst_ledger: bill.sgst_ledger || (isCafeNonItc ? "GST Expense" : "Input SGST"),
-      igst_ledger: bill.igst_ledger || (isCafeNonItc ? "GST Expense" : "Input IGST"),
+      treatTaxAsExpense: isNonItcClient,
+      cgst_ledger: bill.cgst_ledger || defaultTaxLedger,
+      sgst_ledger: bill.sgst_ledger || defaultSgstLedger,
+      igst_ledger: bill.igst_ledger || defaultIgstLedger,
       round_off: bill.round_off || 0.00,
       items: items.map(it => {
         const cleanKey = (it.item_name || it.description || "").trim().toLowerCase();
@@ -527,9 +545,9 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
   };
 
   const handleToggleTaxAsExpense = (checked) => {
-    const taxLedger = checked ? "GST Expense" : "Input CGST";
-    const sgstTaxLedger = checked ? "GST Expense" : "Input SGST";
-    const igstTaxLedger = checked ? "GST Expense" : "Input IGST";
+    const taxLedger = checked ? "GST Expense on Purchase" : "Input CGST";
+    const sgstTaxLedger = checked ? "GST Expense on Purchase" : "Input SGST";
+    const igstTaxLedger = checked ? "GST Expense on Purchase" : "Input IGST";
 
     setVoucherData((prev) => ({
       ...prev,
@@ -541,7 +559,7 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
 
     notify(
       checked 
-        ? "Tax routed to GST Expense (Non-ITC Cafe Scheme)" 
+        ? "Tax routed to GST Expense on Purchase (Non-ITC Scheme)" 
         : "Tax routed to Balance Sheet Input Tax Credit (Duties & Taxes)",
       "info"
     );
@@ -795,7 +813,7 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
 
     return (
       <div className="flex flex-col h-full bg-[#F8FAFC] text-slate-800 font-sans">
-        <header className="h-14 bg-white border-b border-slate-200 px-6 flex items-center justify-between shadow-sm z-10 shrink-0">
+        <header className="h-14 bg-white border-b border-slate-200 px-6 flex items-center justify-between shadow-xs z-10 shrink-0">
           <div className="flex items-center gap-3">
             <button
               onClick={() => setActiveReviewBill(null)}
@@ -829,7 +847,7 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
             </button>
             <button
               onClick={() => setShowAllocationModal(true)}
-              className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold px-4 py-2 rounded-lg transition shadow-sm"
+              className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold px-4 py-2 rounded-lg transition shadow-xs"
             >
               <Check className="w-3.5 h-3.5" /> Approve Bill {hasNextBill ? "& Next →" : ""}
             </button>
@@ -851,7 +869,7 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
         <div className="flex-1 flex overflow-hidden">
           {/* LEFT: PREVIEW */}
           <div className="w-1/2 bg-slate-200 border-r border-slate-300 relative overflow-hidden flex flex-col">
-            <div className="absolute top-4 right-4 z-20 flex items-center gap-1 bg-white/95 backdrop-blur-sm border border-slate-300 shadow-sm rounded-lg p-1">
+            <div className="absolute top-4 right-4 z-20 flex items-center gap-1 bg-white/95 backdrop-blur-sm border border-slate-300 shadow-xs rounded-lg p-1">
               <button 
                 onClick={() => setZoomLevel(prev => Math.min(prev + 0.2, 2.5))}
                 className="p-1.5 hover:bg-slate-100 rounded text-slate-600"
@@ -1151,7 +1169,7 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
                 </div>
               )}
 
-              {/* ACCOUNTING MODE — OVERFLOW VISIBLE FOR FLOATING DROPDOWN */}
+              {/* ACCOUNTING MODE */}
               {voucherMode === "accounting" && (
                 <div className="border-t border-slate-100 pt-4 space-y-3">
                   <div className="flex items-center justify-between">
@@ -1247,7 +1265,7 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
                 </div>
               )}
 
-              {/* GST ROW & TOTALS (NOW WITH CAFE / NON-ITC SCHEME SUPPORT) */}
+              {/* GST ROW & TOTALS (AUTOMATICALLY ROUTED BASED ON CLIENT'S ITC ELIGIBILITY) */}
               <div className="border-t border-slate-100 pt-4 space-y-3">
                 <div className="flex items-center justify-between pb-1">
                   <span className="text-xs text-slate-600 font-medium">Sub Total (Taxable Value):</span>
@@ -1256,24 +1274,34 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
                   </span>
                 </div>
 
-                {/* CAFE / RESTAURANT NON-ITC TOGGLE */}
-                <div className="p-2.5 bg-amber-50/70 border border-amber-200 rounded-lg flex items-center justify-between">
+                {/* AUTOMATIC ITC STATUS BANNER */}
+                <div className={`p-2.5 rounded-lg border flex items-center justify-between ${
+                  !isClientItcEligible 
+                    ? "bg-amber-50/80 border-amber-300 text-amber-900" 
+                    : "bg-slate-50 border-slate-200 text-slate-700"
+                }`}>
                   <div>
-                    <label className="flex items-center gap-2 text-xs font-bold text-amber-900 cursor-pointer">
+                    <label className="flex items-center gap-2 text-xs font-bold cursor-pointer">
                       <input
                         type="checkbox"
                         checked={voucherData.treatTaxAsExpense || false}
                         onChange={(e) => handleToggleTaxAsExpense(e.target.checked)}
-                        className="rounded text-amber-800 focus:ring-amber-800"
+                        className="rounded text-slate-900 focus:ring-slate-900"
                       />
-                      <span>Ineligible ITC / Book Tax as Expense (Restaurant 5% Scheme)</span>
+                      <span>Ineligible ITC / Treat Tax as Expense (Restaurant 5% Scheme)</span>
                     </label>
-                    <p className="text-[10px] text-amber-700 pl-5 mt-0.5">
-                      Routes GST directly into <strong>GST Expense (P&L Overhead)</strong> instead of Balance Sheet asset accounts.
+                    <p className="text-[10px] pl-5 mt-0.5 opacity-80">
+                      {!isClientItcEligible 
+                        ? "Active Client is configured as Non-ITC: taxes auto-default to GST Expense on Purchase (P&L Overhead)."
+                        : "Active Client is ITC Eligible: taxes default to Balance Sheet Input Credit (Duties & Taxes)."}
                     </p>
                   </div>
-                  <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded ${voucherData.treatTaxAsExpense ? "bg-amber-200 text-amber-900" : "bg-white text-slate-600 border border-slate-200"}`}>
-                    {voucherData.treatTaxAsExpense ? "P&L Expense" : "Balance Sheet ITC"}
+                  <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded ${
+                    voucherData.treatTaxAsExpense 
+                      ? "bg-amber-200 text-amber-900" 
+                      : "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                  }`}>
+                    {voucherData.treatTaxAsExpense ? "GST Expense (P&L)" : "Input ITC (B/S)"}
                   </span>
                 </div>
 
@@ -1425,11 +1453,14 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
   // MAIN TAB VIEW
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
-      <header className="h-16 bg-white border-b border-slate-200 px-8 flex items-center justify-between shadow-sm">
+      <header className="h-16 bg-white border-b border-slate-200 px-8 flex items-center justify-between shadow-xs">
         <div>
           <h2 className="text-lg font-bold text-slate-900">Purchase Invoices</h2>
           <div className="flex items-center gap-2">
             <p className="text-xs text-slate-500">{activeClient}</p>
+            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${isClientItcEligible ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-amber-50 text-amber-800 border-amber-300"}`}>
+              {isClientItcEligible ? "ITC Eligible" : "Non-ITC Scheme"}
+            </span>
             {Object.keys(itemRules).length > 0 && (
               <span className="flex items-center gap-1 text-[10px] bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-full font-semibold border border-indigo-200">
                 <Sparkles className="w-2.5 h-2.5" />
@@ -1467,7 +1498,7 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
           <button
             disabled={isUploadingBill}
             onClick={() => invoiceInputRef.current?.click()}
-            className="flex items-center gap-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold px-4 py-2 rounded-lg transition shadow-sm disabled:opacity-50"
+            className="flex items-center gap-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold px-4 py-2 rounded-lg transition shadow-xs disabled:opacity-50"
           >
             <Upload className="w-3.5 h-3.5" />
             {isUploadingBill ? uploadProgress || "Extracting..." : "Upload Bills (Multiple)"}
@@ -1528,7 +1559,7 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
 
         {/* TAB 1: NEEDS REVIEW */}
         {purchaseSubTab === "needs_review" && (
-          <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+          <div className="bg-white border border-slate-200 rounded-xl shadow-xs overflow-hidden">
             {pendingBills.length === 0 ? (
               <div className="p-16 text-center">
                 <Upload className="w-8 h-8 text-slate-300 mx-auto mb-2" />
@@ -1611,7 +1642,7 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
 
         {/* TAB 2: APPROVED INVOICES */}
         {purchaseSubTab === "approved" && (
-          <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+          <div className="bg-white border border-slate-200 rounded-xl shadow-xs overflow-hidden">
             {approvedBills.length === 0 ? (
               <div className="p-16 text-center">
                 <CheckCircle2 className="w-8 h-8 text-emerald-300 mx-auto mb-2" />
@@ -1668,7 +1699,7 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
                           </button>
                           <button
                             onClick={() => handlePushToTally(b)}
-                            className="inline-flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-[11px] px-3.5 py-1.5 rounded transition shadow-sm"
+                            className="inline-flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-[11px] px-3.5 py-1.5 rounded transition shadow-xs"
                           >
                             <Send className="w-3.5 h-3.5" /> Push
                           </button>
@@ -1686,7 +1717,7 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
         {purchaseSubTab === "pushed" && (
           <div className="space-y-4">
             {groupedPushedBills.length === 0 ? (
-              <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-16 text-center">
+              <div className="bg-white border border-slate-200 rounded-xl shadow-xs p-16 text-center">
                 <FileSpreadsheet className="w-8 h-8 text-blue-300 mx-auto mb-2" />
                 <p className="text-sm font-semibold text-slate-700">No invoices pushed yet</p>
                 <p className="text-xs text-slate-400 mt-0.5">Invoices successfully sent to Tally Prime will be organized into monthly folders here</p>
@@ -1696,7 +1727,7 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
                 const isExpanded = expandedFolders[group.monthLabel] !== false;
 
                 return (
-                  <div key={group.monthLabel} className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+                  <div key={group.monthLabel} className="bg-white border border-slate-200 rounded-xl shadow-xs overflow-hidden">
                     <div
                       onClick={() => toggleFolder(group.monthLabel)}
                       className="px-6 py-4 bg-slate-50/80 hover:bg-slate-100/80 border-b border-slate-200 flex items-center justify-between cursor-pointer transition select-none"
