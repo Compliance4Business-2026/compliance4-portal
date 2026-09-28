@@ -142,7 +142,6 @@ const normalizeDateStr = (rawVal) => {
 };
 
 export default function SalesModule({ activeClient = "Panasuria Confectionery" }) {
-  // Top category switcher: 'normal_sales' (B2B) vs 'pos_sales' (POS Consolidated)
   const [activeCategory, setActiveCategory] = useState("normal_sales");
   const [salesSubTab, setSalesSubTab] = useState("create");
 
@@ -260,10 +259,10 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
   };
 
   // =========================================================================
-  // POS CONSOLIDATED SALES: TWO SUB-TABS (ENTRIES vs PUSHED TO TALLY)
+  // POS CONSOLIDATED SALES
   // =========================================================================
-  const [posSubTab, setPosSubTab] = useState("all_entries"); // 'all_entries' | 'pushed_tally'
-  const [viewingJvDetails, setViewingJvDetails] = useState(null); // Modal for single JV inspection
+  const [posSubTab, setPosSubTab] = useState("all_entries");
+  const [viewingJvDetails, setViewingJvDetails] = useState(null);
   const [showManualPosModal, setShowManualPosModal] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef(null);
@@ -593,6 +592,7 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
     setNewCust(prev => ({ ...prev, gstin: cleanGst, state: check.isValid ? check.stateName : prev.state }));
   };
 
+  // Dual sync customer to COA
   const handleSaveCustomerModal = () => {
     if (!newCust.name.trim()) {
       notify("Customer Name is required", "error");
@@ -600,9 +600,33 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
     }
     const created = { ...newCust, id: `cust_${Date.now()}` };
     setCustomers(prev => [created, ...prev]);
+
+    try {
+      const rawCoa = localStorage.getItem(`c4_coa_${activeClient}`);
+      const currentCoa = rawCoa ? JSON.parse(rawCoa) : [];
+      const alreadyExists = currentCoa.some(
+        (l) => l.name.trim().toLowerCase() === created.name.trim().toLowerCase()
+      );
+      if (!alreadyExists) {
+        const newDebtorLedger = {
+          id: `coa_deb_${Date.now()}`,
+          name: created.name.trim(),
+          statementType: "Balance Sheet",
+          category: "Sundry Debtors",
+          subCategory: created.country === "India" ? "Domestic Debtors" : "Foreign / Export Debtors",
+          balanceType: "Debit",
+          gstin: created.gstin || "",
+          state: created.state || ""
+        };
+        localStorage.setItem(`c4_coa_${activeClient}`, JSON.stringify([...currentCoa, newDebtorLedger]));
+      }
+    } catch (err) {
+      console.error(err);
+    }
+
     setShowAddCustomerModal(false);
     selectCustomer(created);
-    notify(`Customer "${created.name}" created!`, "success");
+    notify(`Customer "${created.name}" created and mapped to COA!`, "success");
     setNewCust({ country: "India", gstin: "", name: "", address: "", pincode: "", state: "Gujarat", phone: "", email: "", discountPercent: 0 });
   };
 
@@ -772,6 +796,7 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
       isInterstate,
       vendorProfile: currentProfile,
       status: "approved",
+      pushedToTally: false,
       createdAt: new Date().toLocaleDateString("en-IN")
     };
 
@@ -796,6 +821,158 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
     if (!window.confirm(`Are you sure you want to delete Invoice #${inv.invoiceNumber}?`)) return;
     setSavedInvoices(prev => prev.filter(i => i.id !== inv.id));
     notify(`Invoice #${inv.invoiceNumber} deleted from register.`, "info");
+  };
+
+  // ==========================================
+  // EXPORT TO EXCEL & TALLY XML BUILDER
+  // ==========================================
+  const generateSalesVoucherXml = (inv) => {
+    const tallyDate = (inv.invoiceDate || "").replace(/[^0-9]/g, "") || "20260901";
+    const isInterState = parseFloat(inv.igst || 0) > 0;
+
+    return `<ENVELOPE>
+  <HEADER><TALLYREQUEST>Import Data</TALLYREQUEST></HEADER>
+  <BODY>
+    <IMPORTDATA>
+      <REQUESTDESC>
+        <REPORTNAME>Vouchers</REPORTNAME>
+        <STATICVARIABLES><SVCURRENTCOMPANY>${activeClient}</SVCURRENTCOMPANY></STATICVARIABLES>
+      </REQUESTDESC>
+      <REQUESTDATA>
+        <TALLYMESSAGE xmlns:UDF="TallyUDF">
+          <VOUCHER VCHTYPE="Sales" ACTION="Create">
+            <DATE>${tallyDate}</DATE>
+            <VOUCHERTYPENAME>Sales</VOUCHERTYPENAME>
+            <VOUCHERNUMBER>${inv.invoiceNumber}</VOUCHERNUMBER>
+            <REFERENCE>${inv.poNumber || inv.invoiceNumber}</REFERENCE>
+            <PARTYLEDGERNAME>${inv.customerName}</PARTYLEDGERNAME>
+            <NARRATION>Tax Invoice ${inv.invoiceNumber} [Compliance4 Generated]</NARRATION>
+
+            <!-- DEBIT SUNDRY DEBTOR FOR FULL VALUE -->
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>${inv.customerName}</LEDGERNAME>
+              <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
+              <AMOUNT>-${parseFloat(inv.grandTotal).toFixed(2)}</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+
+            <!-- CREDIT SALES ACCOUNT -->
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Sales Account</LEDGERNAME>
+              <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
+              <AMOUNT>${parseFloat(inv.taxableAmount).toFixed(2)}</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+
+            ${!isInterState ? `
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Output CGST</LEDGERNAME>
+              <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
+              <AMOUNT>${parseFloat(inv.cgst).toFixed(2)}</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Output SGST</LEDGERNAME>
+              <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
+              <AMOUNT>${parseFloat(inv.sgst).toFixed(2)}</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            ` : `
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Output IGST</LEDGERNAME>
+              <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
+              <AMOUNT>${parseFloat(inv.igst).toFixed(2)}</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            `}
+
+            ${parseFloat(inv.roundOff) !== 0 ? `
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>Round Off</LEDGERNAME>
+              <ISDEEMEDPOSITIVE>${parseFloat(inv.roundOff) < 0 ? "Yes" : "No"}</ISDEEMEDPOSITIVE>
+              <AMOUNT>${(parseFloat(inv.roundOff) * -1).toFixed(2)}</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            ` : ""}
+
+          </VOUCHER>
+        </TALLYMESSAGE>
+      </REQUESTDATA>
+    </IMPORTDATA>
+  </BODY>
+</ENVELOPE>`;
+  };
+
+  // Push single invoice to Tally Port 9000
+  const handlePushInvoiceToTally = async (inv) => {
+    const tallyXml = generateSalesVoucherXml(inv);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 2500);
+
+    try {
+      const response = await fetch("http://localhost:9000", {
+        method: "POST",
+        headers: { "Content-Type": "text/xml;charset=utf-8" },
+        body: tallyXml,
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
+
+      if (!response.ok) throw new Error("Tally port error");
+
+      setSavedInvoices(prev => prev.map(i => i.id === inv.id ? { ...i, pushedToTally: true } : i));
+      notify(`Invoice #${inv.invoiceNumber} pushed to Tally Prime!`, "success");
+    } catch {
+      notify("Could not reach Tally Prime on Port 9000. Please ensure Tally is open with XML/ODBC enabled.", "error");
+    }
+  };
+
+  // Download XML for single invoice
+  const handleDownloadInvoiceXml = (inv) => {
+    const xml = generateSalesVoucherXml(inv);
+    const blob = new Blob([xml], { type: "text/xml;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.setAttribute("download", `Sales_Voucher_${inv.invoiceNumber.replace(/[\/\\]/g, "_")}.xml`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    notify(`Downloaded XML for ${inv.invoiceNumber}!`, "success");
+  };
+
+  // Export full Sales Register to Excel / CSV
+  const handleExportSalesExcel = () => {
+    if (savedInvoices.length === 0) {
+      notify("No invoices available to export.", "error");
+      return;
+    }
+
+    const headers = [
+      "Invoice No", "Type", "PO No", "Date", "Customer Name", "Customer GSTIN", "Place of Supply",
+      "Qty", "Taxable (₹)", "CGST (₹)", "SGST (₹)", "IGST (₹)", "Round Off (₹)", "Grand Total (₹)", "In Tally"
+    ];
+
+    const rows = savedInvoices.map(inv => [
+      `"${inv.invoiceNumber}"`,
+      `"${inv.invoiceType || "Tax Invoice"}"`,
+      `"${inv.poNumber || "-"}"`,
+      `"${inv.invoiceDate}"`,
+      `"${(inv.customerName || "").replace(/"/g, '""')}"`,
+      `"${inv.customerGstin || "-"}"`,
+      `"${inv.placeOfSupply || "Gujarat"}"`,
+      inv.totalQuantity || 0,
+      Number(inv.taxableAmount || 0).toFixed(2),
+      Number(inv.cgst || 0).toFixed(2),
+      Number(inv.sgst || 0).toFixed(2),
+      Number(inv.igst || 0).toFixed(2),
+      Number(inv.roundOff || 0).toFixed(2),
+      Number(inv.grandTotal || 0).toFixed(2),
+      inv.pushedToTally ? "Yes" : "No"
+    ]);
+
+    const csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows.map(r => r.join(","))].join("\n");
+    const link = document.createElement("a");
+    link.href = encodeURI(csvContent);
+    link.download = `Sales_Register_${activeClient.replace(/\s+/g, "_")}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    notify(`Exported ${savedInvoices.length} invoices to Excel!`, "success");
   };
 
   const triggerFullPagePrint = (invoice) => {
@@ -1033,7 +1210,6 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
 
   const gstCheck = validateGSTIN(invoiceHeader.customerGstin);
 
-  // Separate POS Journals by Push Status
   const pendingJvs = posJournals.filter((j) => !j.pushedToTally);
   const pushedJvs = posJournals.filter((j) => j.pushedToTally);
   const activeJvList = posSubTab === "all_entries" ? posJournals : pushedJvs;
@@ -1075,7 +1251,7 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
         </div>
       </header>
 
-      {/* TRACK 1: NORMAL SALES INVOICE WORKSPACE (UNTOUCHED & FULLY FUNCTIONAL) */}
+      {/* TRACK 1: NORMAL SALES INVOICE WORKSPACE */}
       {activeCategory === "normal_sales" && (
         <div className="flex-1 flex flex-col overflow-hidden">
           <div className="px-8 pt-4 pb-0 flex items-center justify-between border-b border-slate-200 bg-white shrink-0">
@@ -1106,6 +1282,16 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
             </div>
 
             <div className="flex items-center gap-2 pb-2">
+              {salesSubTab === "invoices" && savedInvoices.length > 0 && (
+                <button
+                  onClick={handleExportSalesExcel}
+                  className="flex items-center gap-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 text-xs font-semibold px-3 py-1.5 rounded-lg transition"
+                  title="Export Sales Register to Excel / CSV"
+                >
+                  <Download className="w-3.5 h-3.5" /> Export Register (Excel)
+                </button>
+              )}
+
               <button
                 onClick={() => setShowAddCustomerModal(true)}
                 className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold transition"
@@ -1587,7 +1773,7 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
             </div>
           )}
 
-          {/* INVOICE REGISTER TABLE */}
+          {/* INVOICE REGISTER TABLE (RESTORED WITH EXCEL, XML & PUSH TO TALLY) */}
           {salesSubTab === "invoices" && (
             <div className="flex-1 p-8 overflow-y-auto">
               {savedInvoices.length === 0 ? (
@@ -1608,6 +1794,7 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
                         <th className="py-3 px-4 text-right">Qty</th>
                         <th className="py-3 px-4 text-right">Taxable (₹)</th>
                         <th className="py-3 px-4 text-right">Grand Total (₹)</th>
+                        <th className="py-3 px-4 text-center">Status</th>
                         <th className="py-3 px-4 text-center">Actions</th>
                       </tr>
                     </thead>
@@ -1625,8 +1812,23 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
                             <p className="font-mono text-[10px] text-slate-400">{inv.customerCountry !== "India" ? `${inv.customerCountry} (Export)` : (inv.customerGstin || "Unregistered")}</p>
                           </td>
                           <td className="py-3 px-4 text-right font-mono text-slate-700">{inv.totalQuantity || 0}</td>
-                          <td className="py-3 px-4 text-right font-mono text-slate-800">₹{inv.taxableAmount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
-                          <td className="py-3 px-4 text-right font-mono font-bold text-emerald-700">₹{inv.grandTotal.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
+                          <td className="py-3 px-4 text-right font-mono text-slate-800">₹{Number(inv.taxableAmount || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
+                          <td className="py-3 px-4 text-right font-mono font-bold text-emerald-700">₹{Number(inv.grandTotal || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
+                          
+                          {/* STATUS BADGE */}
+                          <td className="py-3 px-4 text-center whitespace-nowrap">
+                            {inv.pushedToTally ? (
+                              <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
+                                <Check className="w-3 h-3 text-emerald-600" /> In Tally
+                              </span>
+                            ) : (
+                              <span className="text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full">
+                                Pending
+                              </span>
+                            )}
+                          </td>
+
+                          {/* ACTIONS SUITE */}
                           <td className="py-3 px-4 text-center whitespace-nowrap">
                             <div className="inline-flex items-center gap-1.5">
                               <button
@@ -1636,6 +1838,25 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
                               >
                                 <Printer className="w-3.5 h-3.5" /> Print / PDF
                               </button>
+
+                              {/* PUSH TO TALLY */}
+                              <button
+                                onClick={() => handlePushInvoiceToTally(inv)}
+                                className="inline-flex items-center gap-1 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-[11px] px-2.5 py-1.5 rounded transition shadow-2xs"
+                                title="Push Voucher to Tally Prime (Port 9000)"
+                              >
+                                <Send className="w-3 h-3" /> Push
+                              </button>
+
+                              {/* DOWNLOAD XML */}
+                              <button
+                                onClick={() => handleDownloadInvoiceXml(inv)}
+                                className="inline-flex items-center gap-1 bg-slate-800 hover:bg-slate-900 text-white font-semibold text-[11px] px-2.5 py-1.5 rounded transition shadow-2xs"
+                                title="Download Tally XML File"
+                              >
+                                <Download className="w-3 h-3" /> XML
+                              </button>
+
                               <button
                                 onClick={() => handleDeleteInvoice(inv)}
                                 className="text-slate-400 hover:text-rose-600 hover:bg-rose-50 p-1.5 rounded transition"
@@ -1656,10 +1877,9 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
         </div>
       )}
 
-      {/* TRACK 2: POS CONSOLIDATED SALES (2 DEDICATED TABS & CLEAN LIST BOARD) */}
+      {/* TRACK 2: POS CONSOLIDATED SALES (UNTOUCHED) */}
       {activeCategory === "pos_sales" && (
         <div className="flex-1 flex flex-col overflow-hidden">
-          {/* ACTION & SUB-TAB BAR */}
           <div className="px-8 pt-4 pb-0 flex items-center justify-between border-b border-slate-200 bg-white shrink-0">
             <div className="flex items-center gap-6">
               <button
@@ -1724,7 +1944,6 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
             </div>
           </div>
 
-          {/* COMPACT BOARD VIEW (FEW DETAILS ON BOARD: DATE, VOUCHER NUMBER, AMOUNT) */}
           <div className="flex-1 p-8 overflow-y-auto">
             {activeJvList.length === 0 ? (
               <div className="bg-white rounded-xl border border-slate-200 p-16 flex flex-col items-center justify-center text-center shadow-sm max-w-xl mx-auto">
@@ -1826,7 +2045,7 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
         </div>
       )}
 
-      {/* MODAL: FULL BALANCED DOUBLE-ENTRY JOURNAL INSPECTOR (OPENS ON ROW CLICK) */}
+      {/* MODAL: FULL BALANCED DOUBLE-ENTRY JOURNAL INSPECTOR */}
       {viewingJvDetails && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-xl shadow-2xl max-w-3xl w-full p-6 space-y-4">
@@ -1857,7 +2076,6 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 text-slate-800 font-medium">
-                  {/* DEBITS */}
                   <tr>
                     <td className="py-2 px-4 text-center font-bold text-slate-500">Dr</td>
                     <td className="py-2 px-4 font-bold text-slate-900">AR-Zomato Delivery</td>
