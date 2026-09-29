@@ -339,7 +339,6 @@ export default function OtherExpensesModule({ activeClient = "Pansuria Confectio
   };
 
   const buildSingleXmlVoucher = (exp) => {
-    // Tally format YYYYMMDD
     const rawDate = exp.voucherDate || exp.date || "2026-09-29";
     const tallyDate = String(rawDate).replace(/[^0-9]/g, "").padEnd(8, "0").slice(0, 8);
     
@@ -422,15 +421,9 @@ export default function OtherExpensesModule({ activeClient = "Pansuria Confectio
       </TALLYMESSAGE>`;
   };
 
-  const handleDownloadXML = () => {
-    const list = [...expenses, ...pushedExpenses];
-    if (list.length === 0) {
-      notify("No expense vouchers to export.", "error");
-      return;
-    }
-
-    const xmlVouchers = list.map(e => buildSingleXmlVoucher(e)).join("\n");
-    const fullXML = `<ENVELOPE>
+  const handlePushToTally = async (exp) => {
+    const xmlVoucher = buildSingleXmlVoucher(exp);
+    const xmlPayload = `<ENVELOPE>
   <HEADER>
     <TALLYREQUEST>Import Data</TALLYREQUEST>
   </HEADER>
@@ -443,21 +436,11 @@ export default function OtherExpensesModule({ activeClient = "Pansuria Confectio
         </STATICVARIABLES>
       </REQUESTDESC>
       <REQUESTDATA>
-${xmlVouchers}
+${xmlVoucher}
       </REQUESTDATA>
     </IMPORTDATA>
   </BODY>
 </ENVELOPE>`;
-
-    const blob = new Blob([fullXML], { type: "text/xml;charset=utf-8" });
-    const link = document.createElement("a");
-    link.href = URL.createObjectURL(blob);
-    link.download = `Tally_Import_Expenses_${activeClient.replace(/\s+/g, "_")}.xml`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    notify("Downloaded Tally-compliant XML import file!", "success");
-  };
 
     try {
       await fetch("http://localhost:9000", {
@@ -466,7 +449,7 @@ ${xmlVouchers}
         body: xmlPayload
       });
     } catch (err) {
-      // Dispatched to local listener
+      // Handled for local listener
     }
 
     const pushedRecord = {
@@ -489,17 +472,21 @@ ${xmlVouchers}
     if (expenses.length === 0) return;
     setIsPushingAll(true);
 
-    const xmlVouchers = expenses.map(e => buildSingleXmlVoucher(e)).join("");
+    const xmlVouchers = expenses.map(e => buildSingleXmlVoucher(e)).join("\n");
     const fullXml = `<ENVELOPE>
-  <HEADER><TALLYREQUEST>Import Data</TALLYREQUEST></HEADER>
+  <HEADER>
+    <TALLYREQUEST>Import Data</TALLYREQUEST>
+  </HEADER>
   <BODY>
     <IMPORTDATA>
       <REQUESTDESC>
         <REPORTNAME>Vouchers</REPORTNAME>
-        <STATICVARIABLES><SVCURRENTCOMPANY>${activeClient}</SVCURRENTCOMPANY></STATICVARIABLES>
+        <STATICVARIABLES>
+          <SVCURRENTCOMPANY>${activeClient}</SVCURRENTCOMPANY>
+        </STATICVARIABLES>
       </REQUESTDESC>
       <REQUESTDATA>
-        <TALLYMESSAGE xmlns:UDF="TallyUDF">${xmlVouchers}</TALLYMESSAGE>
+${xmlVouchers}
       </REQUESTDATA>
     </IMPORTDATA>
   </BODY>
@@ -581,23 +568,27 @@ ${xmlVouchers}
       return;
     }
 
-    const xmlVouchers = list.map(e => buildSingleXmlVoucher(e)).join("");
+    const xmlVouchers = list.map(e => buildSingleXmlVoucher(e)).join("\n");
     const fullXML = `<ENVELOPE>
-  <HEADER><TALLYREQUEST>Import Data</TALLYREQUEST></HEADER>
+  <HEADER>
+    <TALLYREQUEST>Import Data</TALLYREQUEST>
+  </HEADER>
   <BODY>
     <IMPORTDATA>
       <REQUESTDESC>
         <REPORTNAME>Vouchers</REPORTNAME>
-        <STATICVARIABLES><SVCURRENTCOMPANY>${activeClient}</SVCURRENTCOMPANY></STATICVARIABLES>
+        <STATICVARIABLES>
+          <SVCURRENTCOMPANY>${activeClient}</SVCURRENTCOMPANY>
+        </STATICVARIABLES>
       </REQUESTDESC>
       <REQUESTDATA>
-        <TALLYMESSAGE xmlns:UDF="TallyUDF">${xmlVouchers}</TALLYMESSAGE>
+${xmlVouchers}
       </REQUESTDATA>
     </IMPORTDATA>
   </BODY>
 </ENVELOPE>`;
 
-    const blob = new Blob([fullXML], { type: "text/xml" });
+    const blob = new Blob([fullXML], { type: "text/xml;charset=utf-8" });
     const link = document.createElement("a");
     link.href = URL.createObjectURL(blob);
     link.download = `Tally_Import_Expenses_${activeClient.replace(/\s+/g, "_")}.xml`;
