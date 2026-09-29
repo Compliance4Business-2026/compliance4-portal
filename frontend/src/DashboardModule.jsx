@@ -5,7 +5,8 @@ import {
   CreditCard, 
   ArrowDownRight, 
   Scale, 
-  Activity
+  Activity,
+  Download
 } from "lucide-react";
 import { api } from "./api";
 
@@ -297,6 +298,86 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
     };
   }, [normalSales, posJournals, allPurchases, allOverheads, bankTransactions, bankPushed, plBreakdown, cloudSummary]);
 
+  // --- DOWNLOAD HANDLERS FOR P&L, AR, AND AP ---
+  const handleDownloadDynamicPL = async () => {
+    try {
+      const coa = await api.getClientCoa(activeClient).catch(() => clientCoa);
+      const revenueLedgers = coa.filter(l => l.statementType === "P&L" && (l.category?.toLowerCase().includes("revenue") || l.category?.toLowerCase().includes("sales")));
+      const cogsLedgers = coa.filter(l => l.statementType === "P&L" && l.cogsClassification === "COGS");
+      const expenseLedgers = coa.filter(l => l.statementType === "P&L" && !revenueLedgers.includes(l) && !cogsLedgers.includes(l));
+
+      const grossProfit = kpiData.totalRevenue - plBreakdown.directCogs;
+      const netProfit = kpiData.netProfit;
+
+      const rows = [
+        `"${activeClient} - Profit & Loss Statement"`,
+        `"Generated On","${new Date().toLocaleDateString("en-IN")}"`,
+        ``,
+        `"PARTICULARS","CATEGORY","AMOUNT (₹)"`,
+        `"REVENUE / INCOME STATEMENTS","",""`
+      ];
+
+      revenueLedgers.forEach(l => {
+        rows.push(`"${l.name}","${l.category || "Revenue"}","0.00"`);
+      });
+      rows.push(`"Total Revenue","","${kpiData.totalRevenue.toFixed(2)}"`);
+      rows.push(``);
+
+      rows.push(`"COST OF GOODS SOLD (COGS) / PURCHASES","",""`);
+      cogsLedgers.forEach(l => {
+        rows.push(`"${l.name}","${l.category || "COGS"}","0.00"`);
+      });
+      rows.push(`"Total Cost of Sales","","${plBreakdown.directCogs.toFixed(2)}"`);
+      rows.push(``);
+
+      rows.push(`"GROSS PROFIT","","${grossProfit.toFixed(2)}"`);
+      rows.push(``);
+
+      rows.push(`"INDIRECT / OPERATING EXPENSES","",""`);
+      Object.entries(plBreakdown.indirectCategories).forEach(([cat, amt]) => {
+        rows.push(`"${cat}","Operating Expenses","${amt.toFixed(2)}"`);
+      });
+      rows.push(`"Total Expenses","","${plBreakdown.totalIndirect.toFixed(2)}"`);
+      rows.push(``);
+      rows.push(`"NET PROFIT / (LOSS)","","${netProfit.toFixed(2)}"`);
+
+      const blob = new Blob([rows.join("\n")], { type: "text/csv;charset=utf-8;" });
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = `Profit_Loss_${activeClient.replace(/\s+/g, "_")}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } catch (err) {
+      console.error("Export error:", err);
+      alert("Failed to generate P&L statement.");
+    }
+  };
+
+  const handleDownloadARAPReport = (type = "AR") => {
+    const isAR = type === "AR";
+    const title = isAR ? "ACCOUNTS RECEIVABLE (AR) REPORT" : "ACCOUNTS PAYABLE (AP) REPORT";
+    const amountVal = isAR ? kpiData.accountsReceivable : kpiData.accountsPayable;
+
+    const headers = ["Party / Ledger Name", "Reference", "Status", "Amount Due (₹)"];
+    const rows = [
+      `"${title}"`,
+      `"Client","${activeClient}"`,
+      `"Generated On","${new Date().toLocaleDateString("en-IN")}"`,
+      ``,
+      headers.join(","),
+      `"Outstanding Balance Total","Summary","Active","${amountVal.toFixed(2)}"`
+    ];
+
+    const blob = new Blob([rows.join("\n")], { type: "text/csv;charset=utf-8;" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = `${type}_Report_${activeClient.replace(/\s+/g, "_")}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   // 4. LAST 6 MONTHS TREND
   const last6MonthsData = useMemo(() => {
     const months = [];
@@ -406,6 +487,34 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
     <div className="flex-1 flex flex-col h-full bg-[#F8FAFC] overflow-y-auto p-6 font-sans">
       <div className="max-w-7xl mx-auto w-full flex flex-col gap-4">
         
+        {/* REPORT DOWNLOAD ACTION BAR */}
+        <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex items-center justify-between shrink-0">
+          <div>
+            <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider">Financial Statements & Reports</h4>
+            <p className="text-[11px] text-slate-500">Direct one-click client download center for P&L, AR, and AP reports</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleDownloadDynamicPL}
+              className="flex items-center gap-1.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold px-3.5 py-2 rounded-lg transition shadow-xs"
+            >
+              <Download className="w-3.5 h-3.5" /> Download P&L Statement
+            </button>
+            <button
+              onClick={() => handleDownloadARAPReport("AR")}
+              className="flex items-center gap-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs font-bold px-3.5 py-2 rounded-lg transition"
+            >
+              <Download className="w-3.5 h-3.5" /> Download AR Report
+            </button>
+            <button
+              onClick={() => handleDownloadARAPReport("AP")}
+              className="flex items-center gap-1.5 bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 text-xs font-bold px-3.5 py-2 rounded-lg transition"
+            >
+              <Download className="w-3.5 h-3.5" /> Download AP Report
+            </button>
+          </div>
+        </div>
+
         {/* 1. TOP: 4 KPI CARDS */}
         <div className="grid grid-cols-4 gap-4 shrink-0">
           <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm flex flex-col justify-between">
@@ -642,11 +751,11 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
               }`}>
                 {last6MonthsData.reduce((acc, m) => acc + m.netProfit, 0) >= 0 ? "+" : ""}
                 ₹{last6MonthsData.reduce((acc, m) => acc + m.netProfit, 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}
-              </span>
-            </div>
-            {renderLineChart(last6MonthsData, "netProfit", "#6366f1", "#6366f1")}
+            </span>
           </div>
+          {renderLineChart(last6MonthsData, "netProfit", "#6366f1", "#6366f1")}
         </div>
+      </div>
 
       </div>
     </div>
