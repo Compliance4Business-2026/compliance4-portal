@@ -18,11 +18,19 @@ import {
   ChevronRight,
   Edit2,
   RotateCcw,
-  Search
+  Search,
+  Building
 } from "lucide-react";
 import { api } from "./api";
 
 const DEFAULT_BANK_LEDGERS = [
+  "HDFC Bank - 8050",
+  "ICICI Bank Current A/c",
+  "SBI Operating Account",
+  "Cash in Hand"
+];
+
+const DEFAULT_EXPENSE_FALLBACKS = [
   "Sales: Direct UPI Collection",
   "Sundry Debtors / Customer Receipts",
   "Tea & Refreshment Expenses",
@@ -205,6 +213,27 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
     }
   });
 
+  // Extract Bank / Cash Ledgers from COA for the dropdown selector
+  const availableBankLedgers = useMemo(() => {
+    if (clientCoa && clientCoa.length > 0) {
+      const banks = clientCoa.filter(l => {
+        const cat = (l.category || "").toLowerCase();
+        const name = (l.name || "").toLowerCase();
+        return cat.includes("bank") || cat.includes("cash") || name.includes("bank") || name.includes("hdfc") || name.includes("sbi") || name.includes("icici");
+      }).map(l => l.name);
+      if (banks.length > 0) return banks;
+    }
+    return DEFAULT_BANK_LEDGERS;
+  }, [clientCoa]);
+
+  const [selectedBankLedger, setSelectedBankLedger] = useState(() => availableBankLedgers[0] || "HDFC Bank - 8050");
+
+  useEffect(() => {
+    if (availableBankLedgers.length > 0 && !availableBankLedgers.includes(selectedBankLedger)) {
+      setSelectedBankLedger(availableBankLedgers[0]);
+    }
+  }, [availableBankLedgers]);
+
   // --- FETCH BANK TRANSACTIONS & COA DIRECTLY FROM FIRESTORE ---
   useEffect(() => {
     let isMounted = true;
@@ -321,17 +350,12 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
     }
 
     const headers = [
-      "Date",
-      "Type",
-      "Narration / Description",
-      "Reference No",
-      "Allocated Ledger (COA)",
-      "Amount (₹)",
-      "Approved At"
+      "Date", "Bank Ledger", "Type", "Narration / Description", "Reference No", "Allocated Ledger (COA)", "Amount (₹)", "Approved At"
     ];
 
     const rows = approvedTransactions.map((tx) => [
       `"${tx.date || ""}"`,
+      `"${tx.bankLedger || selectedBankLedger}"`,
       `"${tx.type || ""}"`,
       `"${(tx.narration || "").replace(/"/g, '""')}"`,
       `"${tx.refNo || "-"}"`,
@@ -430,6 +454,7 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
             parsedRows.push({
               id: `tx_${Date.now()}_${i}_${Math.random().toString(36).substr(2, 4)}`,
               date: dateVal,
+              bankLedger: selectedBankLedger,
               narration: narrVal,
               refNo: refVal,
               type,
@@ -449,7 +474,7 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
               console.warn("Failed saving bank txns to cloud:", err);
             });
 
-            notify(`Extracted and saved ${parsedRows.length} transactions to Firestore!`, "success");
+            notify(`Extracted ${parsedRows.length} transactions for [${selectedBankLedger}] & saved to Firestore!`, "success");
             setBankSubTab("needs_review");
           }
         } catch (err) {
@@ -486,6 +511,7 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
 
     const approvedTx = {
       ...tx,
+      bankLedger: tx.bankLedger || selectedBankLedger,
       allocatedLedger: newLedger,
       isAutoMatched: true,
       approvedAt: new Date().toLocaleString()
@@ -493,9 +519,7 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
     setApprovedTransactions((prev) => [approvedTx, ...prev]);
 
     try {
-      // 1. Save in 'reconciled' stage in Firestore
       await api.saveBankTxns(activeClient, "reconciled", [approvedTx]);
-      // 2. Remove from 'pending' stage in Firestore
       await api.deleteBankTxn(activeClient, "pending", tx.id);
       notify(`Assigned "${newLedger}" & auto-approved to Firestore!`, "success");
     } catch (err) {
@@ -539,7 +563,7 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
   };
 
   const handleApproveSingle = async (tx) => {
-    const approvedTx = { ...tx, approvedAt: new Date().toLocaleString() };
+    const approvedTx = { ...tx, bankLedger: tx.bankLedger || selectedBankLedger, approvedAt: new Date().toLocaleString() };
     setTransactions((prev) => prev.filter((t) => t.id !== tx.id));
     setApprovedTransactions((prev) => [approvedTx, ...prev]);
 
@@ -555,7 +579,7 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
 
   const handleApproveAll = async () => {
     if (transactions.length === 0) return;
-    const toApprove = transactions.map((t) => ({ ...t, approvedAt: new Date().toLocaleString() }));
+    const toApprove = transactions.map((t) => ({ ...t, bankLedger: t.bankLedger || selectedBankLedger, approvedAt: new Date().toLocaleString() }));
     setApprovedTransactions((prev) => [...toApprove, ...prev]);
     setTransactions([]);
     setBankSubTab("approved");
@@ -606,7 +630,7 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
     notify("Transaction dismissed.", "info");
   };
 
-  // 100% TALLY-COMPLIANT SINGLE VOUCHER XML GENERATOR
+  // 100% TALLY-COMPLIANT SINGLE VOUCHER XML GENERATOR (FIXED FOR EXCEPTIONS)
   const buildSingleXmlVoucher = (tx) => {
     const rawDate = tx.date || "2026-09-29";
     const tallyDate = String(rawDate).replace(/[^0-9]/g, "").padEnd(8, "0").slice(0, 8);
@@ -616,7 +640,7 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
     const vchNumber = String(tx.refNo && tx.refNo !== "-" ? tx.refNo : (tx.id || `BNK-${Date.now()}`)).slice(-10);
     const narration = (tx.narration || `${vchType} voucher`).replace(/&/g, "&amp;");
     const allocatedLedger = (tx.allocatedLedger || "Suspense Account").replace(/&/g, "&amp;");
-    const bankLedger = (tx.bankLedger || "Bank Account").replace(/&/g, "&amp;");
+    const bankLedger = (tx.bankLedger || selectedBankLedger || "Bank Account").replace(/&/g, "&amp;");
 
     return `
       <TALLYMESSAGE xmlns:UDF="TallyUDF">
@@ -626,21 +650,11 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
           <VOUCHERTYPENAME>${vchType}</VOUCHERTYPENAME>
           <VOUCHERNUMBER>${vchNumber}</VOUCHERNUMBER>
           <REFERENCE>${vchNumber}</REFERENCE>
-          <PARTYLEDGERNAME>${allocatedLedger}</PARTYLEDGERNAME>
+          <PARTYLEDGERNAME>${bankLedger}</PARTYLEDGERNAME>
           <NARRATION>${narration} [Synced via Compliance4]</NARRATION>
           <ISINVOICE>No</ISINVOICE>
 
-          <!-- ALLOCATED / CONTRA / EXPENSE / INCOME LEDGER -->
-          <ALLLEDGERENTRIES.LIST>
-            <LEDGERNAME>${allocatedLedger}</LEDGERNAME>
-            <ISDEEMEDPOSITIVE>${isReceipt ? "No" : "Yes"}</ISDEEMEDPOSITIVE>
-            <LEDGERFROMITEM>No</LEDGERFROMITEM>
-            <REMOVEZEROENTRIES>No</REMOVEZEROENTRIES>
-            <ISPARTYLEDGER>Yes</ISPARTYLEDGER>
-            <AMOUNT>${isReceipt ? amountVal : `-${amountVal}`}</AMOUNT>
-          </ALLLEDGERENTRIES.LIST>
-
-          <!-- BANK LEDGER ENTRY -->
+          <!-- BANK LEDGER (Top Header Party Ledger in Tally) -->
           <ALLLEDGERENTRIES.LIST>
             <LEDGERNAME>${bankLedger}</LEDGERNAME>
             <ISDEEMEDPOSITIVE>${isReceipt ? "Yes" : "No"}</ISDEEMEDPOSITIVE>
@@ -648,6 +662,16 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
             <REMOVEZEROENTRIES>No</REMOVEZEROENTRIES>
             <ISPARTYLEDGER>Yes</ISPARTYLEDGER>
             <AMOUNT>${isReceipt ? `-${amountVal}` : amountVal}</AMOUNT>
+          </ALLLEDGERENTRIES.LIST>
+
+          <!-- ALLOCATED / COUNTER LEDGER (Expense / Income / Debtor / Creditor) -->
+          <ALLLEDGERENTRIES.LIST>
+            <LEDGERNAME>${allocatedLedger}</LEDGERNAME>
+            <ISDEEMEDPOSITIVE>${isReceipt ? "No" : "Yes"}</ISDEEMEDPOSITIVE>
+            <LEDGERFROMITEM>No</LEDGERFROMITEM>
+            <REMOVEZEROENTRIES>No</REMOVEZEROENTRIES>
+            <ISPARTYLEDGER>No</ISPARTYLEDGER>
+            <AMOUNT>${isReceipt ? amountVal : `-${amountVal}`}</AMOUNT>
           </ALLLEDGERENTRIES.LIST>
         </VOUCHER>
       </TALLYMESSAGE>`;
@@ -738,7 +762,6 @@ ${xmlVoucher}
       setApprovedTransactions((prev) => prev.filter((t) => t.id !== tx.id));
       setPushedTransactions((prev) => [pushedRecord, ...prev]);
 
-      // Move in Firestore from 'reconciled' to 'pushed'
       await api.saveBankTxns(activeClient, "pushed", [pushedRecord]).catch(() => null);
       await api.deleteBankTxn(activeClient, "reconciled", tx.id).catch(() => null);
 
@@ -774,7 +797,6 @@ ${xmlVoucher}
       setApprovedTransactions((prev) => prev.filter((t) => !pushedIds.has(t.id)));
       setPushedTransactions((prev) => [...successfullyPushed, ...prev]);
 
-      // Persist batch pushed records in Firestore
       await api.saveBankTxns(activeClient, "pushed", successfullyPushed).catch(() => null);
       for (const pushed of successfullyPushed) {
         await api.deleteBankTxn(activeClient, "reconciled", pushed.id).catch(() => null);
@@ -860,8 +882,24 @@ ${xmlVoucher}
           </div>
         </div>
 
-        {/* ACTIONS */}
+        {/* BANK ACCOUNT SELECTOR & ACTIONS */}
         <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-lg">
+            <Building className="w-4 h-4 text-slate-500" />
+            <div className="text-left">
+              <span className="block text-[9px] font-bold text-slate-400 uppercase leading-none">Target Bank Account</span>
+              <select
+                value={selectedBankLedger}
+                onChange={(e) => setSelectedBankLedger(e.target.value)}
+                className="text-xs font-bold text-slate-900 bg-transparent border-none focus:outline-none cursor-pointer pr-4"
+              >
+                {availableBankLedgers.map((bank) => (
+                  <option key={bank} value={bank}>{bank}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
           {approvedTransactions.length > 0 && (
             <button
               onClick={handleDownloadApprovedExcel}
@@ -903,7 +941,7 @@ ${xmlVoucher}
             className="flex items-center gap-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold px-4 py-2 rounded-lg transition shadow-xs disabled:opacity-50"
           >
             <Upload className="w-3.5 h-3.5" />
-            {isUploading ? "Processing..." : "Upload Bank Statement (Excel / CSV)"}
+            {isUploading ? "Processing..." : "Upload Bank Statement"}
           </button>
         </div>
       </header>
@@ -1031,6 +1069,7 @@ ${xmlVoucher}
                   <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 font-semibold uppercase text-[10px]">
                     <tr>
                       <th className="py-3 px-4">Date</th>
+                      <th className="py-3 px-4">Bank Account</th>
                       <th className="py-3 px-4">Type</th>
                       <th className="py-3 px-4">Narration / Description</th>
                       <th className="py-3 px-4 w-72">Ledger Allocation</th>
@@ -1043,6 +1082,10 @@ ${xmlVoucher}
                       <tr key={tx.id} className="hover:bg-slate-50/70 transition">
                         <td className="py-3 px-4 whitespace-nowrap text-slate-500 font-mono">
                           {tx.date}
+                        </td>
+
+                        <td className="py-3 px-4 whitespace-nowrap font-mono text-slate-600 font-semibold">
+                          {tx.bankLedger || selectedBankLedger}
                         </td>
 
                         <td className="py-3 px-4 whitespace-nowrap">
@@ -1071,7 +1114,7 @@ ${xmlVoucher}
                                   value={tx.allocatedLedger}
                                   onChange={(selectedLedger) => handleLedgerSelectAndAutoApprove(tx, selectedLedger)}
                                   coaList={clientCoa}
-                                  fallbackOptions={DEFAULT_BANK_LEDGERS}
+                                  fallbackOptions={DEFAULT_EXPENSE_FALLBACKS}
                                   placeholder="Type to allocate & approve →"
                                 />
                               </div>
@@ -1088,7 +1131,7 @@ ${xmlVoucher}
                                   value={tx.allocatedLedger}
                                   onChange={(selectedLedger) => handleUpdateApprovedLedger(tx.id, selectedLedger)}
                                   coaList={clientCoa}
-                                  fallbackOptions={DEFAULT_BANK_LEDGERS}
+                                  fallbackOptions={DEFAULT_EXPENSE_FALLBACKS}
                                   placeholder="Type to re-allocate..."
                                 />
                               </div>
@@ -1230,6 +1273,7 @@ ${xmlVoucher}
                         <thead className="bg-white border-b border-slate-200 uppercase font-semibold text-slate-400 text-[10px]">
                           <tr>
                             <th className="px-6 py-3">Date</th>
+                            <th className="px-6 py-3">Bank Account</th>
                             <th className="px-6 py-3">Type</th>
                             <th className="px-6 py-3">Narration / Description</th>
                             <th className="px-6 py-3">Allocated Ledger (COA)</th>
@@ -1243,6 +1287,9 @@ ${xmlVoucher}
                             <tr key={tx.id || idx} className="hover:bg-slate-50/60 transition">
                               <td className="px-6 py-3.5 font-mono text-slate-900 font-bold whitespace-nowrap">
                                 {tx.date}
+                              </td>
+                              <td className="px-6 py-3.5 font-mono text-slate-600 font-semibold whitespace-nowrap">
+                                {tx.bankLedger}
                               </td>
                               <td className="px-6 py-3.5 whitespace-nowrap">
                                 {tx.type === "Receipt" ? (
