@@ -1,163 +1,301 @@
-import React, { useState } from "react";
-import { Lock, User, AlertCircle } from "lucide-react";
+import React, { useState, useEffect } from "react";
+import DashboardModule from "./DashboardModule";
+import SalesModule from "./SalesModule";
+import PurchaseModule from "./PurchaseModule";
+import OtherExpensesModule from "./OtherExpensesModule";
+import BankModule from "./BankModule";
+import SettingsModule from "./SettingsModule";
+import LoginModal from "./LoginModal";
+import { api } from "./api";
 
-export default function LoginModal({ onLoginSuccess }) {
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
+import {
+  LayoutDashboard,
+  Receipt,
+  FileSpreadsheet,
+  Layers,
+  Landmark,
+  Settings,
+  LogOut,
+  Building2
+} from "lucide-react";
 
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    setError("");
-
-    const cleanUser = username.trim().toLowerCase();
-
-    // 1. Fetch Dynamic Admin Credentials from storage
-    let adminCreds = { username: "admin", password: "admin123", fullName: "Super Administrator" };
+export default function App() {
+  // Session State: Using a new session key forces a fresh login for all users (clears old browser caches)
+  const [currentUser, setCurrentUser] = useState(() => {
     try {
-      const savedAdmin = localStorage.getItem("c4_admin_credentials");
-      if (savedAdmin) {
-        adminCreds = JSON.parse(savedAdmin);
-      }
-    } catch (err) {
-      console.warn("Using default fallback credentials");
-    }
-
-    if (cleanUser === adminCreds.username.toLowerCase() && password === adminCreds.password) {
-      const adminSession = {
-        id: "super_admin",
-        username: adminCreds.username,
-        fullName: adminCreds.fullName || "Super Administrator",
-        role: "admin",
-        allowedClients: "ALL",
-        permissions: {
-          dashboard: "edit",
-          sales: "edit",
-          purchases: "edit",
-          otherExpenses: "edit",
-          banking: "edit",
-          settings: "edit"
-        },
-        salesSubPerms: {
-          allowNormal: true,
-          allowPos: true,
-          allowedDocTypes: ["Tax Invoice", "Bill of Supply", "Export Invoice"]
-        }
-      };
-      localStorage.setItem("c4_auth_session", JSON.stringify(adminSession));
-      onLoginSuccess(adminSession);
-      return;
-    }
-
-    // 2. Staff Fallback: Bhargavi Lodhiya
-    if (cleanUser === "bhargavi" && password === "bhargavi123") {
-      const bhargaviSession = {
-        id: "usr_bhargavi",
-        username: "bhargavi",
-        fullName: "Bhargavi Lodhiya",
-        role: "staff",
-        allowedClients: "ALL",
-        permissions: {
-          dashboard: "view",
-          sales: "edit",
-          purchases: "edit",
-          otherExpenses: "edit",
-          banking: "edit"
-        },
-        salesSubPerms: {
-          allowNormal: true,
-          allowPos: true,
-          allowedDocTypes: ["Tax Invoice", "Bill of Supply", "Export Invoice"]
-        }
-      };
-      localStorage.setItem("c4_auth_session", JSON.stringify(bhargaviSession));
-      onLoginSuccess(bhargaviSession);
-      return;
-    }
-
-    // 3. Custom Staff Accounts in Storage
-    try {
-      const users = JSON.parse(localStorage.getItem("c4_user_accounts") || "[]");
-      const matched = users.find(
-        (u) => u.username.toLowerCase() === cleanUser && u.password === password
-      );
-
-      if (matched) {
-        if (!matched.isActive) {
-          setError("This user account has been deactivated by administrator.");
-          return;
-        }
-        localStorage.setItem("c4_auth_session", JSON.stringify(matched));
-        onLoginSuccess(matched);
-        return;
-      }
+      const saved = localStorage.getItem("c4_auth_session_v2");
+      if (saved) return JSON.parse(saved);
     } catch {}
+    return null;
+  });
 
-    setError("Invalid Username or Password.");
+  const [activeTab, setActiveTab] = useState("dashboard");
+
+  const [profiles, setProfiles] = useState(() => {
+    try {
+      const saved = localStorage.getItem("c4_client_profiles");
+      if (saved && Object.keys(JSON.parse(saved)).length > 0) return JSON.parse(saved);
+      return {
+        "Pansuria Confectionery & Food": {
+          companyName: "Pansuria Confectionery & Food",
+          isItcEligible: false
+        }
+      };
+    } catch {
+      return {
+        "Pansuria Confectionery & Food": {
+          companyName: "Pansuria Confectionery & Food",
+          isItcEligible: false
+        }
+      };
+    }
+  });
+
+  const [activeClient, setActiveClient] = useState(() => {
+    try {
+      const saved = localStorage.getItem("c4_active_client");
+      if (saved) return saved;
+      return "Pansuria Confectionery & Food";
+    } catch {
+      return "Pansuria Confectionery & Food";
+    }
+  });
+
+  // --- SYNC CLIENTS FROM GOOGLE CLOUD FIRESTORE ON APP LOAD ---
+  useEffect(() => {
+    async function loadCloudClients() {
+      try {
+        const cloudClients = await api.getClients();
+        if (cloudClients && Object.keys(cloudClients).length > 0) {
+          setProfiles(cloudClients);
+          localStorage.setItem("c4_client_profiles", JSON.stringify(cloudClients));
+        }
+      } catch (err) {
+        console.error("Error fetching clients from cloud:", err);
+      }
+    }
+    loadCloudClients();
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem("c4_active_client", activeClient);
+  }, [activeClient]);
+
+  const availableClients = Object.keys(profiles).filter((clientName) => {
+    if (!currentUser || currentUser.role === "admin" || currentUser.allowedClients === "ALL") {
+      return true;
+    }
+    return currentUser.allowedClients === clientName;
+  });
+
+  useEffect(() => {
+    if (currentUser && currentUser.allowedClients !== "ALL" && currentUser.allowedClients) {
+      setActiveClient(currentUser.allowedClients);
+    }
+  }, [currentUser]);
+
+  const handleLogout = () => {
+    if (window.confirm("Do you want to switch user or sign in again?")) {
+      localStorage.removeItem("c4_auth_session_v2");
+      setCurrentUser(null);
+    }
   };
 
+  // If user is not logged in, strictly enforce the login gate
+  if (!currentUser) {
+    return (
+      <LoginModal 
+        onLoginSuccess={(user) => {
+          setCurrentUser(user);
+          localStorage.setItem("c4_auth_session_v2", JSON.stringify(user));
+        }} 
+      />
+    );
+  }
+
+  const perms = currentUser.permissions || {};
+
   return (
-    <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 z-[9999]">
-      <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl max-w-sm w-full p-8 space-y-6 animate-in fade-in zoom-in-95 duration-200">
-        
-        {/* LOGO & HEADING */}
-        <div className="text-center space-y-2.5">
-          <div className="w-14 h-14 bg-slate-900 text-white rounded-2xl mx-auto flex items-center justify-center font-black text-base tracking-tight shadow-lg">
-            C4B
+    <div className="flex h-screen w-screen bg-[#F8FAFC] overflow-hidden font-sans">
+      {/* SIDEBAR NAVIGATION (PERMANENT & UNBREAKABLE) */}
+      <aside className="w-64 bg-white border-r border-slate-200 flex flex-col justify-between shrink-0 shadow-xs z-30">
+        <div>
+          {/* BRAND LOGO */}
+          <div className="p-5 border-b border-slate-100 flex items-center justify-between">
+            <div className="flex items-center gap-3.5">
+              <div className="w-11 h-11 bg-slate-900 text-white rounded-xl flex items-center justify-center font-black text-sm tracking-tight shadow-md shrink-0">
+                C4B
+              </div>
+              <div className="flex flex-col justify-center">
+                <span className="text-base font-extrabold text-slate-900 tracking-tight leading-tight">
+                  Compliance4
+                </span>
+                <span className="text-xs font-bold text-slate-500 uppercase tracking-widest leading-none mt-0.5">
+                  Business
+                </span>
+              </div>
+            </div>
           </div>
-          <div>
-            <h2 className="text-xl font-extrabold text-slate-900 tracking-tight">Compliance4</h2>
-            <p className="text-xs font-bold text-slate-500 uppercase tracking-widest mt-0.5">Business</p>
+
+          {/* ACTIVE CLIENT ENTITY SWITCHER */}
+          <div className="p-4 border-b border-slate-100 bg-slate-50/50">
+            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
+              Active Client Entity
+            </span>
+            <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-lg p-2 shadow-2xs">
+              <Building2 className="w-4 h-4 text-slate-500 shrink-0" />
+              <select
+                value={activeClient}
+                onChange={(e) => setActiveClient(e.target.value)}
+                disabled={currentUser.allowedClients !== "ALL"}
+                className="w-full text-xs font-bold text-slate-800 bg-transparent focus:outline-none truncate cursor-pointer disabled:opacity-75 disabled:cursor-not-allowed"
+              >
+                {availableClients.map((name) => (
+                  <option key={name} value={name}>{name}</option>
+                ))}
+              </select>
+            </div>
           </div>
-          <p className="text-xs text-slate-400">Sign in to manage client ledgers & compliance</p>
+
+          {/* NAV LINKS */}
+          <nav className="p-4 space-y-1">
+            {perms.dashboard !== "none" && (
+              <button
+                onClick={() => setActiveTab("dashboard")}
+                className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition ${
+                  activeTab === "dashboard"
+                    ? "bg-slate-900 text-white shadow-sm"
+                    : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+                }`}
+              >
+                <LayoutDashboard className="w-4 h-4" /> Dashboard
+              </button>
+            )}
+
+            {perms.sales !== "none" && (
+              <button
+                onClick={() => setActiveTab("sales")}
+                className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition ${
+                  activeTab === "sales"
+                    ? "bg-slate-900 text-white shadow-sm"
+                    : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+                }`}
+              >
+                <Receipt className="w-4 h-4" /> Sales
+              </button>
+            )}
+
+            {perms.purchases !== "none" && (
+              <button
+                onClick={() => setActiveTab("purchases")}
+                className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition ${
+                  activeTab === "purchases"
+                    ? "bg-slate-900 text-white shadow-sm"
+                    : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+                }`}
+              >
+                <FileSpreadsheet className="w-4 h-4" /> Purchases
+              </button>
+            )}
+
+            {perms.otherExpenses !== "none" && (
+              <button
+                onClick={() => setActiveTab("otherExpenses")}
+                className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition ${
+                  activeTab === "otherExpenses"
+                    ? "bg-slate-900 text-white shadow-sm"
+                    : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+                }`}
+              >
+                <Layers className="w-4 h-4" /> Other Expenses
+              </button>
+            )}
+
+            {perms.banking !== "none" && (
+              <button
+                onClick={() => setActiveTab("banking")}
+                className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition ${
+                  activeTab === "banking"
+                    ? "bg-slate-900 text-white shadow-sm"
+                    : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+                }`}
+              >
+                <Landmark className="w-4 h-4" /> Banking
+              </button>
+            )}
+
+            {currentUser.role === "admin" && (
+              <button
+                onClick={() => setActiveTab("settings")}
+                className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition ${
+                  activeTab === "settings"
+                    ? "bg-slate-900 text-white shadow-sm"
+                    : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+                }`}
+              >
+                <Settings className="w-4 h-4" /> Settings & Masters
+              </button>
+            )}
+          </nav>
         </div>
 
-        {error && (
-          <div className="p-3 bg-rose-50 border border-rose-200 text-rose-700 text-xs rounded-xl flex items-center gap-2">
-            <AlertCircle className="w-4 h-4 shrink-0 text-rose-500" />
-            <span>{error}</span>
+        {/* SIDEBAR FOOTER */}
+        <div className="p-4 border-t border-slate-100 space-y-3 bg-slate-50/50">
+          <div className="flex items-center gap-2 text-xs">
+            <div className="w-7 h-7 rounded-full bg-slate-200 text-slate-700 font-bold flex items-center justify-center text-[11px]">
+              {currentUser.username ? currentUser.username.substring(0, 2).toUpperCase() : "AD"}
+            </div>
+            <div className="truncate flex-1">
+              <p className="font-bold text-slate-800 text-[11px] leading-tight truncate">
+                {currentUser.fullName || "Administrator"}
+              </p>
+              <p className="text-[10px] text-slate-400 capitalize">{currentUser.role}</p>
+            </div>
+            <button
+              onClick={handleLogout}
+              className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition"
+              title="Sign Out"
+            >
+              <LogOut className="w-4 h-4" />
+            </button>
           </div>
+
+          <div className="flex items-center justify-between px-2 py-1.5 rounded-lg bg-emerald-50 text-emerald-800 text-[10px] font-bold">
+            <span className="flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+              Tally Port 9000
+            </span>
+            <span className="font-mono text-emerald-600 uppercase">Online</span>
+          </div>
+        </div>
+      </aside>
+
+      {/* MAIN VIEWPORT */}
+      <main className="flex-1 flex flex-col h-full overflow-hidden">
+        {activeTab === "dashboard" && <DashboardModule activeClient={activeClient} />}
+        {activeTab === "sales" && (
+          <SalesModule 
+            activeClient={activeClient} 
+            salesPerms={currentUser?.salesSubPerms} 
+            userRole={currentUser?.permissions?.sales} 
+          />
         )}
-
-        <form onSubmit={handleSubmit} className="space-y-4 text-xs font-sans">
-          <div>
-            <label className="block font-bold text-slate-700 mb-1">User ID / Username</label>
-            <div className="relative">
-              <input
-                type="text"
-                required
-                placeholder="Username"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                className="w-full pl-9 pr-3 py-2.5 border border-slate-300 rounded-xl font-medium focus:outline-none focus:ring-2 focus:ring-slate-900"
-              />
-              <User className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
-            </div>
-          </div>
-
-          <div>
-            <label className="block font-bold text-slate-700 mb-1">Password</label>
-            <div className="relative">
-              <input
-                type="password"
-                required
-                placeholder="••••••••"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="w-full pl-9 pr-3 py-2.5 border border-slate-300 rounded-xl font-medium focus:outline-none focus:ring-2 focus:ring-slate-900"
-              />
-              <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
-            </div>
-          </div>
-
-          <button
-            type="submit"
-            className="w-full py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-xl shadow-md transition text-xs"
-          >
-            Authenticate & Open Workspace
-          </button>
-        </form>
-      </div>
+        {activeTab === "purchases" && (
+          <PurchaseModule 
+            activeClient={activeClient} 
+            purchasePerm={currentUser?.permissions?.purchases} 
+          />
+        )}
+        {activeTab === "otherExpenses" && <OtherExpensesModule activeClient={activeClient} />}
+        {activeTab === "banking" && <BankModule activeClient={activeClient} />}
+        {activeTab === "settings" && (
+          <SettingsModule
+            activeClient={activeClient}
+            setActiveClient={setActiveClient}
+            onGoToDashboard={() => setActiveTab("dashboard")}
+          />
+        )}
+      </main>
     </div>
   );
 }
