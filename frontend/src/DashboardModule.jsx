@@ -1,4 +1,4 @@
-import React, { useMemo } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { 
   TrendingUp, 
   TrendingDown, 
@@ -7,8 +7,35 @@ import {
   Scale, 
   Activity
 } from "lucide-react";
+import { api } from "./api";
 
 export default function DashboardModule({ activeClient = "Pansuria Confectionery & Food" }) {
+  const [cloudSummary, setCloudSummary] = useState(null);
+
+  // --- FETCH DASHBOARD SUMMARY FROM FIRESTORE ON LOAD / CLIENT SWITCH ---
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadCloudDashboard() {
+      try {
+        const summary = await api.getDashboardSummary(activeClient);
+        if (isMounted && summary) {
+          setCloudSummary(summary);
+        }
+      } catch (err) {
+        console.warn("Using local fallback calculations for dashboard:", err);
+      }
+    }
+
+    if (activeClient) {
+      loadCloudDashboard();
+    }
+
+    return () => {
+      isMounted = false;
+    };
+  }, [activeClient]);
+
   // STRICT CLIENT DATA EXTRACTION (ONLY from activeClient)
   const clientCoa = useMemo(() => {
     try {
@@ -167,31 +194,33 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
 
   // 2. SCHEDULE BREAKDOWN
   const plBreakdown = useMemo(() => {
-    let directCogs = 0;
+    let directCogs = cloudSummary ? cloudSummary.totalPurchases : 0;
     let otherIncomeTotal = 0;
     const indirectCategories = {};
 
-    // A. Purchase Register Line-Item Inspection
-    allPurchases.forEach((bill) => {
-      const lines = bill.accounting_ledgers || bill.items || [];
-      if (lines.length > 0) {
-        lines.forEach((line) => {
-          const lName = line.ledger_name || line.ledger || "";
-          const amt = parseFloat(line.amount) || 0;
-          const nature = getLedgerPlNature(lName, clientCoa);
+    if (!cloudSummary) {
+      // A. Purchase Register Line-Item Inspection
+      allPurchases.forEach((bill) => {
+        const lines = bill.accounting_ledgers || bill.items || [];
+        if (lines.length > 0) {
+          lines.forEach((line) => {
+            const lName = line.ledger_name || line.ledger || "";
+            const amt = parseFloat(line.amount) || 0;
+            const nature = getLedgerPlNature(lName, clientCoa);
 
-          if (nature === "COGS") {
-            directCogs += amt;
-          } else if (nature === "Indirect") {
-            const cat = getCategoryForLedger(lName, clientCoa);
-            indirectCategories[cat] = (indirectCategories[cat] || 0) + amt;
-          }
-        });
-      } else {
-        const bAmt = parseFloat(bill.taxableAmount) || 0;
-        directCogs += bAmt;
-      }
-    });
+            if (nature === "COGS") {
+              directCogs += amt;
+            } else if (nature === "Indirect") {
+              const cat = getCategoryForLedger(lName, clientCoa);
+              indirectCategories[cat] = (indirectCategories[cat] || 0) + amt;
+            }
+          });
+        } else {
+          const bAmt = parseFloat(bill.taxableAmount) || 0;
+          directCogs += bAmt;
+        }
+      });
+    }
 
     // B. Other Expenses Register Vouchers
     allOverheads.forEach((exp) => {
@@ -200,13 +229,17 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
 
       if (nature === "Other Income") {
         otherIncomeTotal += amt;
-      } else if (nature === "COGS") {
+      } else if (nature === "COGS" && !cloudSummary) {
         directCogs += amt;
-      } else {
+      } else if (!cloudSummary) {
         const cat = exp.group || "Administrative & General Expenses";
         indirectCategories[cat] = (indirectCategories[cat] || 0) + amt;
       }
     });
+
+    if (cloudSummary) {
+      indirectCategories["Administrative & General Expenses"] = cloudSummary.totalExpenses;
+    }
 
     const totalIndirect = Object.values(indirectCategories).reduce((acc, v) => acc + v, 0);
 
@@ -216,20 +249,22 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
       totalIndirect,
       otherIncomeTotal
     };
-  }, [allPurchases, allOverheads, clientCoa]);
+  }, [allPurchases, allOverheads, clientCoa, cloudSummary]);
 
   // 3. TOP 4 KPI CALCULATIONS
   const kpiData = useMemo(() => {
     const normalRev = normalSales.reduce((acc, inv) => acc + (parseFloat(inv.taxableAmount) || 0), 0);
     const posRev = posJournals.reduce((acc, jv) => acc + (parseFloat(jv.totalTaxable) || 0), 0);
-    const totalRevenue = normalRev + posRev;
+    const localRevenue = normalRev + posRev;
+    const totalRevenue = cloudSummary ? cloudSummary.totalSales : localRevenue;
 
     const normalGross = normalSales.reduce((acc, inv) => acc + (parseFloat(inv.grandTotal) || 0), 0);
     const posGross = posJournals.reduce((acc, jv) => acc + (parseFloat(jv.totalDebits) || 0), 0);
     const totalGross = normalGross + posGross;
 
     const totalCost = plBreakdown.directCogs + plBreakdown.totalIndirect;
-    const netProfit = totalRevenue + plBreakdown.otherIncomeTotal - totalCost;
+    const localNetProfit = totalRevenue + plBreakdown.otherIncomeTotal - totalCost;
+    const netProfit = cloudSummary ? (cloudSummary.totalSales - (cloudSummary.totalPurchases + cloudSummary.totalExpenses)) : localNetProfit;
     const netMargin = totalRevenue > 0 ? (netProfit / totalRevenue) * 100 : 0;
 
     const totalVendorBills = allPurchases.reduce((acc, b) => acc + (parseFloat(b.grandTotal || b.taxableAmount) || 0), 0);
@@ -260,7 +295,7 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
       accountsReceivable,
       salesCount: normalSales.length + posJournals.length
     };
-  }, [normalSales, posJournals, allPurchases, allOverheads, bankTransactions, bankPushed, plBreakdown]);
+  }, [normalSales, posJournals, allPurchases, allOverheads, bankTransactions, bankPushed, plBreakdown, cloudSummary]);
 
   // 4. LAST 6 MONTHS TREND
   const last6MonthsData = useMemo(() => {
