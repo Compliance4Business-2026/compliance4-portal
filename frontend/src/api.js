@@ -247,3 +247,45 @@ export const api = {
     });
   }
 };
+// 10. Dashboard & Financial Analytics Summary
+  async getDashboardSummary(clientName) {
+    try {
+      const [bills, sales, bankTxns, expenses] = await Promise.all([
+        this.getBills(clientName, "approved").catch(() => []),
+        this.getSales(clientName, "approved").catch(() => []),
+        this.getBankTxns(clientName, "reconciled").catch(() => []),
+        this.getExpenses(clientName, "approved").catch(() => [])
+      ]);
+
+      const totalPurchases = bills.reduce((acc, b) => acc + (parseFloat(b.grand_total || b.taxable_amount) || 0), 0);
+      const totalSales = sales.reduce((acc, s) => acc + (parseFloat(s.grandTotal || s.taxableAmount) || 0), 0);
+      const totalExpenses = expenses.reduce((acc, e) => acc + (parseFloat(e.grandTotal || e.taxableAmount || e.amount) || 0), 0);
+      
+      const totalBankReceipts = bankTxns
+        .filter(t => t.type === "Receipt")
+        .reduce((acc, t) => acc + (parseFloat(t.amount) || 0), 0);
+        
+      const totalBankPayments = bankTxns
+        .filter(t => t.type === "Payment")
+        .reduce((acc, t) => acc + (parseFloat(t.amount) || 0), 0);
+
+      return {
+        totalPurchases,
+        totalSales,
+        totalExpenses,
+        totalBankReceipts,
+        totalBankPayments,
+        netOperatingMargin: totalSales - (totalPurchases + totalExpenses)
+      };
+    } catch (err) {
+      console.warn("Failed to compute dashboard analytics from cloud:", err);
+      return {
+        totalPurchases: 0,
+        totalSales: 0,
+        totalExpenses: 0,
+        totalBankReceipts: 0,
+        totalBankPayments: 0,
+        netOperatingMargin: 0
+      };
+    }
+  }
