@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useRef } from "react";
 import {
   Upload,
   Download,
+  FileCode,
   CheckCircle2,
   AlertCircle,
   FileSpreadsheet,
@@ -605,38 +606,106 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
     notify("Transaction dismissed.", "info");
   };
 
-  const pushVoucherToTallyXml = async (tx) => {
-    const tallyDate = (tx.date || "").replace(/[^0-9]/g, "");
+  // 100% TALLY-COMPLIANT SINGLE VOUCHER XML GENERATOR
+  const buildSingleXmlVoucher = (tx) => {
+    const rawDate = tx.date || "2026-09-29";
+    const tallyDate = String(rawDate).replace(/[^0-9]/g, "").padEnd(8, "0").slice(0, 8);
     const isReceipt = tx.type === "Receipt";
+    const vchType = isReceipt ? "Receipt" : "Payment";
+    const amountVal = Number(tx.amount || 0).toFixed(2);
+    const vchNumber = String(tx.refNo && tx.refNo !== "-" ? tx.refNo : (tx.id || `BNK-${Date.now()}`)).slice(-10);
+    const narration = (tx.narration || `${vchType} voucher`).replace(/&/g, "&amp;");
+    const allocatedLedger = (tx.allocatedLedger || "Suspense Account").replace(/&/g, "&amp;");
+    const bankLedger = (tx.bankLedger || "Bank Account").replace(/&/g, "&amp;");
 
-    const tallyXml = `<ENVELOPE>
-  <HEADER><TALLYREQUEST>Import Data</TALLYREQUEST></HEADER>
+    return `
+      <TALLYMESSAGE xmlns:UDF="TallyUDF">
+        <VOUCHER VCHTYPE="${vchType}" ACTION="Create" OBJVIEW="Accounting Voucher View">
+          <DATE>${tallyDate}</DATE>
+          <EFFECTIVEDATE>${tallyDate}</EFFECTIVEDATE>
+          <VOUCHERTYPENAME>${vchType}</VOUCHERTYPENAME>
+          <VOUCHERNUMBER>${vchNumber}</VOUCHERNUMBER>
+          <REFERENCE>${vchNumber}</REFERENCE>
+          <PARTYLEDGERNAME>${allocatedLedger}</PARTYLEDGERNAME>
+          <NARRATION>${narration} [Synced via Compliance4]</NARRATION>
+          <ISINVOICE>No</ISINVOICE>
+
+          <!-- ALLOCATED / CONTRA / EXPENSE / INCOME LEDGER -->
+          <ALLLEDGERENTRIES.LIST>
+            <LEDGERNAME>${allocatedLedger}</LEDGERNAME>
+            <ISDEEMEDPOSITIVE>${isReceipt ? "No" : "Yes"}</ISDEEMEDPOSITIVE>
+            <LEDGERFROMITEM>No</LEDGERFROMITEM>
+            <REMOVEZEROENTRIES>No</REMOVEZEROENTRIES>
+            <ISPARTYLEDGER>Yes</ISPARTYLEDGER>
+            <AMOUNT>${isReceipt ? amountVal : `-${amountVal}`}</AMOUNT>
+          </ALLLEDGERENTRIES.LIST>
+
+          <!-- BANK LEDGER ENTRY -->
+          <ALLLEDGERENTRIES.LIST>
+            <LEDGERNAME>${bankLedger}</LEDGERNAME>
+            <ISDEEMEDPOSITIVE>${isReceipt ? "Yes" : "No"}</ISDEEMEDPOSITIVE>
+            <LEDGERFROMITEM>No</LEDGERFROMITEM>
+            <REMOVEZEROENTRIES>No</REMOVEZEROENTRIES>
+            <ISPARTYLEDGER>Yes</ISPARTYLEDGER>
+            <AMOUNT>${isReceipt ? `-${amountVal}` : amountVal}</AMOUNT>
+          </ALLLEDGERENTRIES.LIST>
+        </VOUCHER>
+      </TALLYMESSAGE>`;
+  };
+
+  const handleDownloadXML = () => {
+    const list = [...approvedTransactions, ...pushedTransactions];
+    if (list.length === 0) {
+      notify("No approved bank transactions to export.", "error");
+      return;
+    }
+
+    const xmlVouchers = list.map((t) => buildSingleXmlVoucher(t)).join("\n");
+    const fullXML = `<ENVELOPE>
+  <HEADER>
+    <TALLYREQUEST>Import Data</TALLYREQUEST>
+  </HEADER>
   <BODY>
     <IMPORTDATA>
       <REQUESTDESC>
         <REPORTNAME>Vouchers</REPORTNAME>
-        <STATICVARIABLES><SVCURRENTCOMPANY>${activeClient}</SVCURRENTCOMPANY></STATICVARIABLES>
+        <STATICVARIABLES>
+          <SVCURRENTCOMPANY>${activeClient}</SVCURRENTCOMPANY>
+        </STATICVARIABLES>
       </REQUESTDESC>
       <REQUESTDATA>
-        <TALLYMESSAGE xmlns:UDF="TallyUDF">
-          <VOUCHER VCHTYPE="${isReceipt ? "Receipt" : "Payment"}" ACTION="Create">
-            <DATE>${tallyDate || "20260901"}</DATE>
-            <VOUCHERTYPENAME>${isReceipt ? "Receipt" : "Payment"}</VOUCHERTYPENAME>
-            <REFERENCE>${tx.refNo !== "-" ? tx.refNo : tx.id}</REFERENCE>
-            <PARTYLEDGERNAME>${tx.allocatedLedger}</PARTYLEDGERNAME>
-            <NARRATION>${(tx.narration || "").replace(/&/g, "&amp;")} [Synced via Compliance4]</NARRATION>
-            <ALLLEDGERENTRIES.LIST>
-              <LEDGERNAME>${tx.allocatedLedger}</LEDGERNAME>
-              <ISDEEMEDPOSITIVE>${isReceipt ? "No" : "Yes"}</ISDEEMEDPOSITIVE>
-              <AMOUNT>${isReceipt ? tx.amount.toFixed(2) : `-${tx.amount.toFixed(2)}`}</AMOUNT>
-            </ALLLEDGERENTRIES.LIST>
-            <ALLLEDGERENTRIES.LIST>
-              <LEDGERNAME>Bank Account</LEDGERNAME>
-              <ISDEEMEDPOSITIVE>${isReceipt ? "Yes" : "No"}</ISDEEMEDPOSITIVE>
-              <AMOUNT>${isReceipt ? `-${tx.amount.toFixed(2)}` : tx.amount.toFixed(2)}</AMOUNT>
-            </ALLLEDGERENTRIES.LIST>
-          </VOUCHER>
-        </TALLYMESSAGE>
+${xmlVouchers}
+      </REQUESTDATA>
+    </IMPORTDATA>
+  </BODY>
+</ENVELOPE>`;
+
+    const blob = new Blob([fullXML], { type: "text/xml;charset=utf-8" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = `Tally_Import_Bank_${activeClient.replace(/\s+/g, "_")}.xml`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    notify("Downloaded Tally-compliant XML import file!", "success");
+  };
+
+  const pushVoucherToTallyXml = async (tx) => {
+    const xmlVoucher = buildSingleXmlVoucher(tx);
+    const tallyXml = `<ENVELOPE>
+  <HEADER>
+    <TALLYREQUEST>Import Data</TALLYREQUEST>
+  </HEADER>
+  <BODY>
+    <IMPORTDATA>
+      <REQUESTDESC>
+        <REPORTNAME>Vouchers</REPORTNAME>
+        <STATICVARIABLES>
+          <SVCURRENTCOMPANY>${activeClient}</SVCURRENTCOMPANY>
+        </STATICVARIABLES>
+      </REQUESTDESC>
+      <REQUESTDATA>
+${xmlVoucher}
       </REQUESTDATA>
     </IMPORTDATA>
   </BODY>
@@ -802,6 +871,14 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
               <Download className="w-3.5 h-3.5" /> Export Approved (Excel)
             </button>
           )}
+
+          <button
+            onClick={handleDownloadXML}
+            className="flex items-center gap-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 text-xs font-semibold px-3 py-2 rounded-lg transition border border-blue-200"
+            title="Download Tally-compliant XML import file"
+          >
+            <FileCode className="w-3.5 h-3.5" /> Download Tally XML
+          </button>
 
           <button
             onClick={handleDownloadTemplate}
@@ -1157,7 +1234,7 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
                             <th className="px-6 py-3">Narration / Description</th>
                             <th className="px-6 py-3">Allocated Ledger (COA)</th>
                             <th className="px-6 py-3">Pushed At</th>
-                            <th className="px-6 py-3 text-right">Amount (₹)</th>
+                            <th className="px-6 py-3 font-mono text-right">Amount (₹)</th>
                             <th className="px-6 py-3 text-right">Status</th>
                           </tr>
                         </thead>
