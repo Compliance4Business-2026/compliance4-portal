@@ -48,7 +48,7 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
 
   const normalSales = useMemo(() => {
     try {
-      const data = localStorage.getItem(`c4_normal_sales_invoices_${activeClient}`);
+      const data = localStorage.getItem(`c4_sales_${activeClient}`) || localStorage.getItem(`c4_normal_sales_invoices_${activeClient}`);
       return data ? JSON.parse(data) : [];
     } catch {
       return [];
@@ -256,7 +256,7 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
     const normalRev = normalSales.reduce((acc, inv) => acc + (parseFloat(inv.taxableAmount) || 0), 0);
     const posRev = posJournals.reduce((acc, jv) => acc + (parseFloat(jv.totalTaxable) || 0), 0);
     const localRevenue = normalRev + posRev;
-    const totalRevenue = cloudSummary ? cloudSummary.totalSales : localRevenue;
+    const totalRevenue = localRevenue > 0 ? localRevenue : (cloudSummary ? cloudSummary.totalSales : 0);
 
     const normalGross = normalSales.reduce((acc, inv) => acc + (parseFloat(inv.grandTotal) || 0), 0);
     const posGross = posJournals.reduce((acc, jv) => acc + (parseFloat(jv.totalDebits) || 0), 0);
@@ -264,7 +264,7 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
 
     const totalCost = plBreakdown.directCogs + plBreakdown.totalIndirect;
     const localNetProfit = totalRevenue + plBreakdown.otherIncomeTotal - totalCost;
-    const netProfit = cloudSummary ? (cloudSummary.totalSales - (cloudSummary.totalPurchases + cloudSummary.totalExpenses)) : localNetProfit;
+    const netProfit = cloudSummary && localRevenue === 0 ? (cloudSummary.totalSales - (cloudSummary.totalPurchases + cloudSummary.totalExpenses)) : localNetProfit;
     const netMargin = totalRevenue > 0 ? (netProfit / totalRevenue) * 100 : 0;
 
     const totalVendorBills = allPurchases.reduce((acc, b) => acc + (parseFloat(b.grandTotal || b.taxableAmount) || 0), 0);
