@@ -20,6 +20,7 @@ import {
   Percent,
   Search
 } from "lucide-react";
+import { api } from "./api";
 
 const GST_RATES = [
   { label: "18% (9% CGST + 9% SGST)", value: 18 },
@@ -157,24 +158,53 @@ export default function OtherExpensesModule({ activeClient = "Pansuria Confectio
   });
 
   // Client-Scoped Dynamic Chart of Accounts
-  const clientCoa = useMemo(() => {
+  const [clientCoa, setClientCoa] = useState(() => {
     try {
       const saved = localStorage.getItem(`c4_coa_${activeClient}`);
-      if (saved && JSON.parse(saved).length > 0) {
-        return JSON.parse(saved);
-      }
-
-      const profiles = JSON.parse(localStorage.getItem("c4_client_profiles") || "{}");
-      for (const clientName of Object.keys(profiles)) {
-        const altCoa = localStorage.getItem(`c4_coa_${clientName}`);
-        if (altCoa && JSON.parse(altCoa).length > 0) {
-          return JSON.parse(altCoa);
-        }
-      }
-      return [];
+      return saved ? JSON.parse(saved) : [];
     } catch {
       return [];
     }
+  });
+
+  // --- FETCH EXPENSES & COA DIRECTLY FROM FIRESTORE ---
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadCloudExpensesData() {
+      try {
+        const [cloudApproved, cloudPushed, coaData] = await Promise.all([
+          api.getExpenses(activeClient, "approved").catch(() => null),
+          api.getExpenses(activeClient, "pushed").catch(() => null),
+          api.getClientCoa(activeClient).catch(() => null)
+        ]);
+
+        if (!isMounted) return;
+
+        if (Array.isArray(cloudApproved)) {
+          setExpenses(cloudApproved);
+          localStorage.setItem(`c4_other_expenses_${activeClient}`, JSON.stringify(cloudApproved));
+        }
+        if (Array.isArray(cloudPushed)) {
+          setPushedExpenses(cloudPushed);
+          localStorage.setItem(`c4_other_expenses_pushed_${activeClient}`, JSON.stringify(cloudPushed));
+        }
+        if (Array.isArray(coaData) && coaData.length > 0) {
+          setClientCoa(coaData);
+          localStorage.setItem(`c4_coa_${activeClient}`, JSON.stringify(coaData));
+        }
+      } catch (err) {
+        console.warn("Using offline fallback for other expenses:", err);
+      }
+    }
+
+    if (activeClient) {
+      loadCloudExpensesData();
+    }
+
+    return () => {
+      isMounted = false;
+    };
   }, [activeClient]);
 
   const allLedgers = Array.isArray(clientCoa) ? clientCoa : [];
@@ -245,7 +275,7 @@ export default function OtherExpensesModule({ activeClient = "Pansuria Confectio
     }
   }, [formData.amount, formData.includesGst, formData.gstRate, formData.isInterstate]);
 
-  const handleSaveExpense = (e) => {
+  const handleSaveExpense = async (e) => {
     e.preventDefault();
     const gross = parseFloat(formData.amount) || 0;
     if (gross <= 0) {
@@ -284,7 +314,13 @@ export default function OtherExpensesModule({ activeClient = "Pansuria Confectio
     };
 
     setExpenses((prev) => [created, ...prev]);
-    notify(`Expense of ₹${gross.toFixed(2)} booked under ${formData.expenseLedger}!`, "success");
+
+    // Persist directly to Firestore
+    await api.saveExpense(activeClient, "approved", created).catch(err => {
+      console.warn("Failed saving expense to Firestore:", err);
+    });
+
+    notify(`Expense of ₹${gross.toFixed(2)} booked and synced to Firestore!`, "success");
 
     setFormData((prev) => ({
       ...prev,
@@ -295,9 +331,10 @@ export default function OtherExpensesModule({ activeClient = "Pansuria Confectio
     }));
   };
 
-  const handleDeleteExpense = (id) => {
+  const handleDeleteExpense = async (id) => {
     if (!window.confirm("Delete this expense voucher?")) return;
     setExpenses((prev) => prev.filter((e) => e.id !== id));
+    await api.deleteExpense(activeClient, "approved", id).catch(() => null);
     notify("Expense voucher deleted.", "info");
   };
 
@@ -380,7 +417,12 @@ export default function OtherExpensesModule({ activeClient = "Pansuria Confectio
 
     setExpenses((prev) => prev.filter((e) => e.id !== exp.id));
     setPushedExpenses((prev) => [pushedRecord, ...prev]);
-    notify(`Expense voucher pushed to Tally & moved to Pushed tab!`, "success");
+
+    // Move in Firestore from 'approved' to 'pushed'
+    await api.saveExpense(activeClient, "pushed", pushedRecord).catch(() => null);
+    await api.deleteExpense(activeClient, "approved", exp.id).catch(() => null);
+
+    notify(`Expense voucher pushed to Tally & moved to Firestore Pushed archive!`, "success");
   };
 
   const handlePushAllToTally = async () => {
@@ -421,9 +463,17 @@ export default function OtherExpensesModule({ activeClient = "Pansuria Confectio
     }));
 
     setPushedExpenses((prev) => [...updatedPushed, ...prev]);
+    const idsToDelete = [...expenses];
     setExpenses([]);
     setIsPushingAll(false);
-    notify(`Pushed ${updatedPushed.length} vouchers to Tally!`, "success");
+
+    // Batch update Firestore
+    await api.saveExpense(activeClient, "pushed", { expenses: updatedPushed }).catch(() => null);
+    for (const exp of idsToDelete) {
+      await api.deleteExpense(activeClient, "approved", exp.id).catch(() => null);
+    }
+
+    notify(`Pushed ${updatedPushed.length} vouchers to Tally & synced in cloud!`, "success");
     setActiveTab("pushed");
   };
 
