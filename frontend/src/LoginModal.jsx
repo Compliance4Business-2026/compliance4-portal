@@ -99,11 +99,14 @@ export default function LoginModal({ onLoginSuccess }) {
       <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl max-w-sm w-full p-8 space-y-6 animate-in fade-in zoom-in-95 duration-200">
         
         {/* LOGO & HEADING */}
-        <div className="text-center space-y-2">
-          <div className="w-12 h-12 bg-slate-900 text-white rounded-xl mx-auto flex items-center justify-center font-black text-sm tracking-tight shadow-md">
+        <div className="text-center space-y-2.5">
+          <div className="w-14 h-14 bg-slate-900 text-white rounded-2xl mx-auto flex items-center justify-center font-black text-base tracking-tight shadow-lg">
             C4B
           </div>
-          <h2 className="text-lg font-bold text-slate-900 tracking-tight">Compliance4 Business</h2>
+          <div>
+            <h2 className="text-xl font-extrabold text-slate-900 tracking-tight">Compliance4</h2>
+            <p className="text-xs font-bold text-slate-500 uppercase tracking-widest mt-0.5">Business</p>
+          </div>
           <p className="text-xs text-slate-400">Sign in to manage client ledgers & compliance</p>
         </div>
 
