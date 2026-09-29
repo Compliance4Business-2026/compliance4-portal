@@ -216,16 +216,23 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
   // Extract Bank / Cash Ledgers from COA for the dropdown selector
   const availableBankLedgers = useMemo(() => {
     if (clientCoa && clientCoa.length > 0) {
-      const banks = clientCoa.filter(l => {
+      const banks = clientCoa.filter((l) => {
         const cat = (l.category || "").toLowerCase();
+        const sub = (l.subCategory || "").toLowerCase();
         const name = (l.name || "").toLowerCase();
-        return cat.includes("bank") || cat.includes("cash") || name.includes("bank") || name.includes("hdfc") || name.includes("sbi") || name.includes("icici");
-      }).map(l => l.name);
+        const stmt = (l.statementType || "").toLowerCase();
+        
+        // Strict match for Balance Sheet assets under Bank or Cash
+        return (
+          stmt === "balance sheet" &&
+          (cat.includes("bank") || cat.includes("cash") || sub.includes("bank") || sub.includes("cash") || name.includes("bank") || name.includes("hdfc") || name.includes("sbi") || name.includes("icici"))
+        );
+      }).map((l) => l.name);
+
       if (banks.length > 0) return banks;
     }
     return DEFAULT_BANK_LEDGERS;
   }, [clientCoa]);
-
   const [selectedBankLedger, setSelectedBankLedger] = useState(() => availableBankLedgers[0] || "HDFC Bank - 8050");
 
   useEffect(() => {
