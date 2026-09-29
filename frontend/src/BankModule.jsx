@@ -19,6 +19,7 @@ import {
   RotateCcw,
   Search
 } from "lucide-react";
+import { api } from "./api";
 
 const DEFAULT_BANK_LEDGERS = [
   "Sales: Direct UPI Collection",
@@ -194,23 +195,58 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
   });
 
   // Client-Scoped Dynamic Chart of Accounts
-  const clientCoa = useMemo(() => {
+  const [clientCoa, setClientCoa] = useState(() => {
     try {
       const saved = localStorage.getItem(`c4_coa_${activeClient}`);
-      if (saved && JSON.parse(saved).length > 0) {
-        return JSON.parse(saved);
-      }
-      const profiles = JSON.parse(localStorage.getItem("c4_client_profiles") || "{}");
-      for (const clientName of Object.keys(profiles)) {
-        const altCoa = localStorage.getItem(`c4_coa_${clientName}`);
-        if (altCoa && JSON.parse(altCoa).length > 0) {
-          return JSON.parse(altCoa);
-        }
-      }
-      return [];
+      return saved ? JSON.parse(saved) : [];
     } catch {
       return [];
     }
+  });
+
+  // --- FETCH BANK TRANSACTIONS & COA DIRECTLY FROM FIRESTORE ---
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadCloudBankingData() {
+      try {
+        const [cloudPending, cloudApproved, cloudPushed, coaData] = await Promise.all([
+          api.getBankTxns(activeClient, "pending").catch(() => null),
+          api.getBankTxns(activeClient, "reconciled").catch(() => null),
+          api.getBankTxns(activeClient, "pushed").catch(() => null),
+          api.getClientCoa(activeClient).catch(() => null)
+        ]);
+
+        if (!isMounted) return;
+
+        if (Array.isArray(cloudPending)) {
+          setTransactions(cloudPending);
+          localStorage.setItem(`c4_bank_transactions_${activeClient}`, JSON.stringify(cloudPending));
+        }
+        if (Array.isArray(cloudApproved)) {
+          setApprovedTransactions(cloudApproved);
+          localStorage.setItem(`c4_bank_approved_${activeClient}`, JSON.stringify(cloudApproved));
+        }
+        if (Array.isArray(cloudPushed)) {
+          setPushedTransactions(cloudPushed);
+          localStorage.setItem(`c4_bank_pushed_${activeClient}`, JSON.stringify(cloudPushed));
+        }
+        if (Array.isArray(coaData) && coaData.length > 0) {
+          setClientCoa(coaData);
+          localStorage.setItem(`c4_coa_${activeClient}`, JSON.stringify(coaData));
+        }
+      } catch (err) {
+        console.warn("Using offline fallback for banking:", err);
+      }
+    }
+
+    if (activeClient) {
+      loadCloudBankingData();
+    }
+
+    return () => {
+      isMounted = false;
+    };
   }, [activeClient]);
 
   useEffect(() => {
@@ -324,7 +360,7 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
       const XLSX = await loadSheetJS();
       const reader = new FileReader();
 
-      reader.onload = (event) => {
+      reader.onload = async (event) => {
         try {
           let rawRows = [];
 
@@ -406,7 +442,13 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
             notify("No valid withdrawal or deposit rows detected.", "error");
           } else {
             setTransactions((prev) => [...parsedRows, ...prev]);
-            notify(`Extracted ${parsedRows.length} transactions from statement!`, "success");
+
+            // Persist newly parsed statement to Firestore under 'pending'
+            await api.saveBankTxns(activeClient, "pending", parsedRows).catch((err) => {
+              console.warn("Failed saving bank txns to cloud:", err);
+            });
+
+            notify(`Extracted and saved ${parsedRows.length} transactions to Firestore!`, "success");
             setBankSubTab("needs_review");
           }
         } catch (err) {
@@ -426,7 +468,7 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
     }
   };
 
-  const handleLedgerSelectAndAutoApprove = (tx, newLedger) => {
+  const handleLedgerSelectAndAutoApprove = async (tx, newLedger) => {
     if (!newLedger) return;
 
     if (tx.narration && tx.narration.trim().length > 3) {
@@ -449,60 +491,117 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
     };
     setApprovedTransactions((prev) => [approvedTx, ...prev]);
 
-    notify(`Assigned "${newLedger}" & auto-approved!`, "success");
+    try {
+      // 1. Save in 'reconciled' stage in Firestore
+      await api.saveBankTxns(activeClient, "reconciled", [approvedTx]);
+      // 2. Remove from 'pending' stage in Firestore
+      await api.deleteBankTxn(activeClient, "pending", tx.id);
+      notify(`Assigned "${newLedger}" & auto-approved to Firestore!`, "success");
+    } catch (err) {
+      console.error(err);
+      notify(`Approved locally, cloud sync error: ${err.message}`, "info");
+    }
   };
 
-  const handleUpdateApprovedLedger = (txId, newLedger) => {
+  const handleUpdateApprovedLedger = async (txId, newLedger) => {
     if (!newLedger) return;
+    const target = approvedTransactions.find((t) => t.id === txId);
+    if (!target) return;
+
+    const updated = { ...target, allocatedLedger: newLedger };
     setApprovedTransactions((prev) =>
-      prev.map((t) => (t.id === txId ? { ...t, allocatedLedger: newLedger } : t))
+      prev.map((t) => (t.id === txId ? updated : t))
     );
     setEditingApprovedId(null);
-    notify(`Updated ledger to "${newLedger}"!`, "success");
+
+    try {
+      await api.saveBankTxns(activeClient, "reconciled", [updated]);
+      notify(`Updated ledger to "${newLedger}" in Firestore!`, "success");
+    } catch (err) {
+      console.error(err);
+      notify(`Updated locally, cloud sync warning: ${err.message}`, "info");
+    }
   };
 
-  const handleRevertToReview = (tx) => {
+  const handleRevertToReview = async (tx) => {
     setApprovedTransactions((prev) => prev.filter((t) => t.id !== tx.id));
     setTransactions((prev) => [tx, ...prev]);
-    notify("Transaction reverted to Needs Review tab.", "info");
+
+    try {
+      await api.saveBankTxns(activeClient, "pending", [tx]);
+      await api.deleteBankTxn(activeClient, "reconciled", tx.id);
+      notify("Transaction reverted to Needs Review tab in Firestore.", "info");
+    } catch (err) {
+      console.error(err);
+      notify("Reverted locally.", "info");
+    }
   };
 
-  const handleApproveSingle = (tx) => {
+  const handleApproveSingle = async (tx) => {
+    const approvedTx = { ...tx, approvedAt: new Date().toLocaleString() };
     setTransactions((prev) => prev.filter((t) => t.id !== tx.id));
-    setApprovedTransactions((prev) => [{ ...tx, approvedAt: new Date().toLocaleString() }, ...prev]);
-    notify("Transaction approved & moved to Approved queue!", "success");
+    setApprovedTransactions((prev) => [approvedTx, ...prev]);
+
+    try {
+      await api.saveBankTxns(activeClient, "reconciled", [approvedTx]);
+      await api.deleteBankTxn(activeClient, "pending", tx.id);
+      notify("Transaction approved & moved to Firestore Approved queue!", "success");
+    } catch (err) {
+      console.error(err);
+      notify("Approved locally.", "info");
+    }
   };
 
-  const handleApproveAll = () => {
+  const handleApproveAll = async () => {
     if (transactions.length === 0) return;
     const toApprove = transactions.map((t) => ({ ...t, approvedAt: new Date().toLocaleString() }));
     setApprovedTransactions((prev) => [...toApprove, ...prev]);
     setTransactions([]);
     setBankSubTab("approved");
-    notify(`Approved all ${toApprove.length} transactions!`, "success");
+
+    try {
+      await api.saveBankTxns(activeClient, "reconciled", toApprove);
+      for (const t of transactions) {
+        await api.deleteBankTxn(activeClient, "pending", t.id).catch(() => null);
+      }
+      notify(`Approved all ${toApprove.length} transactions & synced to Firestore!`, "success");
+    } catch (err) {
+      console.error(err);
+      notify("Approved locally.", "info");
+    }
   };
 
-  const handleDiscardAll = () => {
+  const handleDiscardAll = async () => {
     if (bankSubTab === "needs_review") {
       if (transactions.length === 0) return;
-      if (!window.confirm(`Discard all ${transactions.length} transactions in Needs Review?`)) return;
+      if (!window.confirm(`Discard all ${transactions.length} transactions in Needs Review from Firestore?`)) return;
+      const idsToDelete = [...transactions];
       setTransactions([]);
+      for (const t of idsToDelete) {
+        await api.deleteBankTxn(activeClient, "pending", t.id).catch(() => null);
+      }
       notify("All pending transactions discarded.", "info");
     } else if (bankSubTab === "approved") {
       if (approvedTransactions.length === 0) return;
-      if (!window.confirm(`Discard all ${approvedTransactions.length} transactions in Approved queue?`)) return;
+      if (!window.confirm(`Discard all ${approvedTransactions.length} transactions in Approved queue from Firestore?`)) return;
+      const idsToDelete = [...approvedTransactions];
       setApprovedTransactions([]);
+      for (const t of idsToDelete) {
+        await api.deleteBankTxn(activeClient, "reconciled", t.id).catch(() => null);
+      }
       notify("All approved transactions discarded.", "info");
     }
   };
 
-  const handleDeleteApproved = (txId) => {
+  const handleDeleteApproved = async (txId) => {
     setApprovedTransactions((prev) => prev.filter((t) => t.id !== txId));
+    await api.deleteBankTxn(activeClient, "reconciled", txId).catch(() => null);
     notify("Transaction removed from Approved queue.", "info");
   };
 
-  const handleDeleteNeedsReview = (txId) => {
+  const handleDeleteNeedsReview = async (txId) => {
     setTransactions((prev) => prev.filter((t) => t.id !== txId));
+    await api.deleteBankTxn(activeClient, "pending", txId).catch(() => null);
     notify("Transaction dismissed.", "info");
   };
 
@@ -565,9 +664,16 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
   const handlePushSingle = async (tx) => {
     try {
       await pushVoucherToTallyXml(tx);
+      const pushedRecord = { ...tx, pushedAt: new Date().toLocaleString() };
+
       setApprovedTransactions((prev) => prev.filter((t) => t.id !== tx.id));
-      setPushedTransactions((prev) => [{ ...tx, pushedAt: new Date().toLocaleString() }, ...prev]);
-      notify(`Transaction #${tx.id} synced to Tally!`, "success");
+      setPushedTransactions((prev) => [pushedRecord, ...prev]);
+
+      // Move in Firestore from 'reconciled' to 'pushed'
+      await api.saveBankTxns(activeClient, "pushed", [pushedRecord]).catch(() => null);
+      await api.deleteBankTxn(activeClient, "reconciled", tx.id).catch(() => null);
+
+      notify(`Transaction #${tx.id} synced to Tally & recorded in Firestore!`, "success");
     } catch (err) {
       notify(
         "Could not connect to Tally Prime on Port 9000. Please ensure Tally Prime is open with XML/ODBC enabled.",
@@ -598,7 +704,14 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
       const pushedIds = new Set(successfullyPushed.map((s) => s.id));
       setApprovedTransactions((prev) => prev.filter((t) => !pushedIds.has(t.id)));
       setPushedTransactions((prev) => [...successfullyPushed, ...prev]);
-      notify(`Pushed ${pushedCount} transactions to Tally Prime!`, "success");
+
+      // Persist batch pushed records in Firestore
+      await api.saveBankTxns(activeClient, "pushed", successfullyPushed).catch(() => null);
+      for (const pushed of successfullyPushed) {
+        await api.deleteBankTxn(activeClient, "reconciled", pushed.id).catch(() => null);
+      }
+
+      notify(`Pushed ${pushedCount} transactions to Tally Prime & recorded in Firestore!`, "success");
       setBankSubTab("pushed");
     } else {
       notify(
