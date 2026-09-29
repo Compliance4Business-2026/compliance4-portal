@@ -20,31 +20,13 @@ import {
 } from "lucide-react";
 
 export default function App() {
-  // Session State: If empty, default to Super Administrator so you are never locked out
+  // Session State: Require explicit login instead of auto-fallback to super admin
   const [currentUser, setCurrentUser] = useState(() => {
     try {
       const saved = localStorage.getItem("c4_auth_session");
       if (saved) return JSON.parse(saved);
     } catch {}
-    
-    // Auto-fallback Super Admin to prevent blank/trapped screens
-    const defaultAdmin = {
-      id: "super_admin",
-      username: "admin",
-      fullName: "Super Administrator",
-      role: "admin",
-      allowedClients: "ALL",
-      permissions: {
-        dashboard: "edit",
-        sales: "edit",
-        purchases: "edit",
-        otherExpenses: "edit",
-        banking: "edit",
-        settings: "edit"
-      }
-    };
-    localStorage.setItem("c4_auth_session", JSON.stringify(defaultAdmin));
-    return defaultAdmin;
+    return null;
   });
 
   const [activeTab, setActiveTab] = useState("dashboard");
@@ -78,6 +60,7 @@ export default function App() {
       return "Pansuria Confectionery & Food";
     }
   });
+
   // --- SYNC CLIENTS FROM GOOGLE CLOUD FIRESTORE ON APP LOAD ---
   useEffect(() => {
     async function loadCloudClients() {
@@ -118,9 +101,16 @@ export default function App() {
     }
   };
 
-  // If user explicitly signed out, show clean login overlay
+  // If user is not logged in, show clean login overlay and gate portal access
   if (!currentUser) {
-    return <LoginModal onLoginSuccess={(user) => setCurrentUser(user)} />;
+    return (
+      <LoginModal 
+        onLoginSuccess={(user) => {
+          setCurrentUser(user);
+          localStorage.setItem("c4_auth_session", JSON.stringify(user));
+        }} 
+      />
+    );
   }
 
   const perms = currentUser.permissions || {};
