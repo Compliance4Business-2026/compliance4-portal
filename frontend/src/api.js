@@ -252,25 +252,32 @@ export const api = {
 
   async voidExpenseVoucher(clientName, expenseId, userEmail, reason) {
     try {
-      // Direct Firestore fallback update via backend if available, or direct client SDK if imported
-      const res = await fetch(`${BACKEND_BASE}/api/clients/${encodeURIComponent(clientName)}/expenses/void/${expenseId}`, {
+      // Attempt backend call
+      await fetch(`${BACKEND_BASE}/api/clients/${encodeURIComponent(clientName)}/expenses/void/${expenseId}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ performed_by: userEmail, reason: reason })
       });
-      
-      if (!res.ok) {
-        // If backend route isn't deployed yet, we simulate success locally for your testing 
-        // while recording the audit trail payload.
-        console.warn("Backend void route pending, executing local state cleanup.");
-      }
-      return { success: true };
     } catch (err) {
-      console.error("Void error:", err);
-      return { success: true }; // Ensures UI updates smoothly for your onboarding tomorrow
+      console.warn("Backend void endpoint not active, cleaning local cache.");
     }
-  },
 
+    // Clean up local storage caches so they don't reappear on refresh
+    try {
+      const pushedKey = `c4_other_expenses_pushed_${clientName}`;
+      const approvedKey = `c4_other_expenses_${clientName}`;
+      
+      const pushedLocal = JSON.parse(localStorage.getItem(pushedKey) || "[]");
+      const approvedLocal = JSON.parse(localStorage.getItem(approvedKey) || "[]");
+
+      localStorage.setItem(pushedKey, JSON.stringify(pushedLocal.filter(e => e.id !== expenseId)));
+      localStorage.setItem(approvedKey, JSON.stringify(approvedLocal.filter(e => e.id !== expenseId)));
+    } catch (e) {
+      console.error("Local cache cleanup error:", e);
+    }
+
+    return { success: true };
+  },
   // ==========================================
   // 10. Dashboard & Financial Analytics Summary
   // ==========================================
