@@ -3,6 +3,7 @@ import io
 import csv
 import json
 import re
+import time
 from datetime import datetime, date
 from typing import Optional, List, Dict, Any
 
@@ -12,7 +13,9 @@ from pydantic import BaseModel
 import httpx
 import openpyxl
 import pandas as pd
+from google.cloud import firestore
 
+# Initialize FastAPI App
 app = FastAPI(title="Compliance4 Accounting Portal API", version="2.0.0")
 
 app.add_middleware(
@@ -23,9 +26,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Initialize Google Cloud Firestore (uses default credentials from Cloud Run)
+db = firestore.Client()
+
+# ----------------- DATA MODELS ----------------- #
 class TallyPushRequest(BaseModel):
     bill: Dict[str, Any]
     company_name: Optional[str] = "Panasuria Confectionery"
+
+class LoginAuthRequest(BaseModel):
+    username: str
+    password: str
 
 @app.get("/")
 def health_check():
@@ -186,7 +197,6 @@ async def reconcile_bank_file(
     if df is None or df.empty:
         raise HTTPException(status_code=400, detail="The file is empty.")
 
-    # Match standardized columns (case-insensitive)
     cols = {str(c).strip().lower(): c for c in df.columns}
     
     date_col = next((cols[k] for k in cols if "date" in k), None)
@@ -194,7 +204,6 @@ async def reconcile_bank_file(
     debit_col = next((cols[k] for k in cols if any(x in k for x in ["debit", "withdrawal", "dr"])), None)
     credit_col = next((cols[k] for k in cols if any(x in k for x in ["credit", "deposit", "cr"])), None)
 
-    # Fallback by column position if headers are unnamed or slightly different
     if date_col is None and len(df.columns) >= 1:
         date_col = df.columns[0]
     if narr_col is None and len(df.columns) >= 2:
@@ -206,7 +215,6 @@ async def reconcile_bank_file(
 
     txns = []
     for idx, row in df.iterrows():
-        # Skip empty rows
         if pd.isna(row.get(date_col)) and pd.isna(row.get(narr_col)):
             continue
 
@@ -403,3 +411,149 @@ async def push_bank_voucher_to_tally(payload: dict = Body(...)):
             return {"status": "success", "response": resp.text}
     except Exception:
         return {"status": "dispatched", "message": f"Bank Voucher XML generated for {voucher_type}"}
+
+# ==============================================================================
+# ROUTE 5: FIRESTORE DATA PERSISTENCE & MULTI-TENANT SYNC
+# ==============================================================================
+
+# --- 5.1 Central Authentication ---
+@app.post("/api/auth/login")
+def login(creds: LoginAuthRequest):
+    clean_user = creds.username.strip().lower()
+
+    # Check Super Admin
+    admin_doc = db.collection("system_config").document("admin_credentials").get()
+    admin_data = admin_doc.to_dict() if admin_doc.exists else {
+        "username": "admin",
+        "password": "admin123",
+        "fullName": "Super Administrator"
+    }
+
+    if clean_user == admin_data["username"].lower() and creds.password == admin_data["password"]:
+        return {
+            "id": "super_admin",
+            "username": admin_data["username"],
+            "fullName": admin_data.get("fullName", "Super Administrator"),
+            "role": "admin",
+            "allowedClients": "ALL",
+            "permissions": {
+                "dashboard": "edit", "sales": "edit", "purchases": "edit",
+                "otherExpenses": "edit", "banking": "edit", "settings": "edit"
+            },
+            "salesSubPerms": {
+                "allowNormal": True, "allowPos": True,
+                "allowedDocTypes": ["Tax Invoice", "Bill of Supply", "Export Invoice"]
+            }
+        }
+
+    # Query Staff / Client user from Firestore
+    user_ref = db.collection("users").document(clean_user).get()
+    if not user_ref.exists:
+        raise HTTPException(status_code=401, detail="Invalid username or password")
+
+    user_data = user_ref.to_dict()
+    if user_data.get("password") != creds.password:
+        raise HTTPException(status_code=401, detail="Invalid username or password")
+    if not user_data.get("isActive", True):
+        raise HTTPException(status_code=403, detail="Account is deactivated")
+
+    return user_data
+
+# --- 5.2 User Access Management ---
+@app.get("/api/users")
+def get_users():
+    docs = db.collection("users").stream()
+    return [doc.to_dict() for doc in docs]
+
+@app.post("/api/users")
+def save_user(user: Dict[str, Any] = Body(...)):
+    username = user.get("username", "").strip().lower()
+    if not username:
+        raise HTTPException(status_code=400, detail="Username is required")
+    db.collection("users").document(username).set(user)
+    return {"status": "success", "username": username}
+
+@app.delete("/api/users/{username}")
+def delete_user(username: str):
+    db.collection("users").document(username.strip().lower()).delete()
+    return {"status": "deleted"}
+
+# --- 5.3 Client Entities & COA ---
+@app.get("/api/clients")
+def get_clients():
+    docs = db.collection("client_profiles").stream()
+    return {doc.id: doc.to_dict() for doc in docs}
+
+@app.post("/api/clients/{client_name}")
+def save_client_profile(client_name: str, profile: Dict[str, Any] = Body(...)):
+    db.collection("client_profiles").document(client_name.strip()).set(profile)
+    return {"status": "success"}
+
+@app.delete("/api/clients/{client_name}")
+def delete_client_profile(client_name: str):
+    db.collection("client_profiles").document(client_name.strip()).delete()
+    db.collection("client_coa").document(client_name.strip()).delete()
+    return {"status": "deleted"}
+
+@app.get("/api/clients/{client_name}/coa")
+def get_client_coa(client_name: str):
+    doc = db.collection("client_coa").document(client_name.strip()).get()
+    return doc.to_dict().get("ledgers", []) if doc.exists else []
+
+@app.post("/api/clients/{client_name}/coa")
+def save_client_coa(client_name: str, payload: Dict[str, Any] = Body(...)):
+    ledgers = payload.get("ledgers", [])
+    db.collection("client_coa").document(client_name.strip()).set({"ledgers": ledgers})
+    return {"status": "success", "count": len(ledgers)}
+
+# --- 5.4 Purchases & Invoice Workflow ---
+@app.get("/api/clients/{client_name}/bills")
+def get_bills(client_name: str, stage: str = "needs_review"):
+    docs = db.collection("purchases").document(client_name.strip()).collection(stage).stream()
+    return [doc.to_dict() for doc in docs]
+
+@app.post("/api/clients/{client_name}/bills")
+def save_bill(client_name: str, stage: str = "needs_review", bill: Dict[str, Any] = Body(...)):
+    bill_id = str(bill.get("id") or f"inv_{int(time.time() * 1000)}")
+    db.collection("purchases").document(client_name.strip()).collection(stage).document(bill_id).set(bill)
+    return {"status": "success", "id": bill_id}
+
+@app.delete("/api/clients/{client_name}/bills/{stage}/{bill_id}")
+def delete_bill(client_name: str, stage: str, bill_id: str):
+    db.collection("purchases").document(client_name.strip()).collection(stage).document(str(bill_id)).delete()
+    return {"status": "deleted"}
+
+# --- 5.5 Bulk Seeder (Browser localStorage to Firestore) ---
+@app.post("/api/system/seed-from-backup")
+def seed_from_backup(payload: Dict[str, Any] = Body(...)):
+    """Receives your full exported browser backup and writes it directly to Firestore."""
+    batch = db.batch()
+
+    # 1. Seed Client Profiles
+    if "c4_client_profiles" in payload:
+        raw_profiles = payload["c4_client_profiles"]
+        profiles = json.loads(raw_profiles) if isinstance(raw_profiles, str) else raw_profiles
+        for cname, pdata in profiles.items():
+            ref = db.collection("client_profiles").document(cname.strip())
+            batch.set(ref, pdata)
+
+    # 2. Seed Users
+    if "c4_user_accounts" in payload:
+        raw_users = payload["c4_user_accounts"]
+        users = json.loads(raw_users) if isinstance(raw_users, str) else raw_users
+        for u in users:
+            uname = u.get("username", "").strip().lower()
+            if uname:
+                ref = db.collection("users").document(uname)
+                batch.set(ref, u)
+
+    # 3. Seed Chart of Accounts (COAs)
+    for key, val in payload.items():
+        if key.startswith("c4_coa_"):
+            cname = key.replace("c4_coa_", "").strip()
+            ledgers = json.loads(val) if isinstance(val, str) else val
+            ref = db.collection("client_coa").document(cname)
+            batch.set(ref, {"ledgers": ledgers})
+
+    batch.commit()
+    return {"status": "success", "message": "All profiles, COAs, and users successfully committed to Firestore"}
