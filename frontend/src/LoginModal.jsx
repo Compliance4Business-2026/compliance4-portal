@@ -21,7 +21,7 @@ export default function LoginModal({ onLoginSuccess }) {
       }
     } catch (err) {
       console.warn("Using default fallback credentials");
-    }    } catch {}
+    }
 
     if (cleanUser === adminCreds.username.toLowerCase() && password === adminCreds.password) {
       const adminSession = {
@@ -157,10 +157,6 @@ export default function LoginModal({ onLoginSuccess }) {
             Authenticate & Open Workspace
           </button>
         </form>
-
-        <div className="pt-2 text-center text-[11px] text-slate-400">
-          Super Admin: <span className="font-mono font-bold text-slate-600">admin</span> / <span className="font-mono font-bold text-slate-600">admin123</span>
-        </div>
       </div>
     </div>
   );
