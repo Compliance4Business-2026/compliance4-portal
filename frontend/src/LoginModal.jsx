@@ -12,14 +12,16 @@ export default function LoginModal({ onLoginSuccess }) {
 
     const cleanUser = username.trim().toLowerCase();
 
-    // 1. Fetch Dynamic Admin Credentials (or default admin/admin123)
-    let adminCreds = { username: , password: , fullName: "Super Administrator" };
+    // 1. Fetch Dynamic Admin Credentials from storage
+    let adminCreds = { username: "admin", password: "admin123", fullName: "Super Administrator" };
     try {
       const savedAdmin = localStorage.getItem("c4_admin_credentials");
       if (savedAdmin) {
         adminCreds = JSON.parse(savedAdmin);
       }
-    } catch {}
+    } catch (err) {
+      console.warn("Using default fallback credentials");
+    }    } catch {}
 
     if (cleanUser === adminCreds.username.toLowerCase() && password === adminCreds.password) {
       const adminSession = {
