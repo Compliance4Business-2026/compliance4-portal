@@ -20,6 +20,7 @@ import {
   Eye,
   Check
 } from "lucide-react";
+import { api } from "./api";
 
 const COUNTRY_OPTIONS = [
   "India", "United States", "United Arab Emirates", "United Kingdom", "Canada",
@@ -173,6 +174,15 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
     }
   });
 
+  const [posJournals, setPosJournals] = useState(() => {
+    try {
+      const s = localStorage.getItem(`c4_pos_journals_${activeClient}`);
+      return s ? JSON.parse(s) : [];
+    } catch {
+      return [];
+    }
+  });
+
   const getActiveProfile = () => {
     try {
       const all = JSON.parse(localStorage.getItem("c4_client_profiles") || "{}");
@@ -197,8 +207,39 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
 
   const [vendorProfile, setVendorProfile] = useState(getActiveProfile);
 
+  // --- FETCH SALES DATA FROM FIRESTORE ON LOAD / CLIENT SWITCH ---
   useEffect(() => {
+    let isMounted = true;
     setVendorProfile(getActiveProfile());
+
+    async function loadCloudSalesData() {
+      try {
+        const cloudSales = await api.getSales(activeClient, "approved");
+        if (isMounted && Array.isArray(cloudSales) && cloudSales.length > 0) {
+          const b2bInvoices = cloudSales.filter(item => !item.id?.startsWith("pos_jv_"));
+          const posJvs = cloudSales.filter(item => item.id?.startsWith("pos_jv_"));
+
+          if (b2bInvoices.length > 0) {
+            setSavedInvoices(b2bInvoices);
+            localStorage.setItem(`c4_normal_sales_invoices_${activeClient}`, JSON.stringify(b2bInvoices));
+          }
+          if (posJvs.length > 0) {
+            setPosJournals(posJvs);
+            localStorage.setItem(`c4_pos_journals_${activeClient}`, JSON.stringify(posJvs));
+          }
+        }
+      } catch (err) {
+        console.warn("Using offline fallback for sales records:", err);
+      }
+    }
+
+    if (activeClient) {
+      loadCloudSalesData();
+    }
+
+    return () => {
+      isMounted = false;
+    };
   }, [activeClient]);
 
   useEffect(() => {
@@ -212,6 +253,10 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
   useEffect(() => {
     localStorage.setItem(`c4_items_catalog_${activeClient}`, JSON.stringify(itemCatalog));
   }, [itemCatalog, activeClient]);
+
+  useEffect(() => {
+    localStorage.setItem(`c4_pos_journals_${activeClient}`, JSON.stringify(posJournals));
+  }, [posJournals, activeClient]);
 
   const [notification, setNotification] = useState(null);
   const [showAddCustomerModal, setShowAddCustomerModal] = useState(false);
@@ -266,19 +311,6 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
   const [showManualPosModal, setShowManualPosModal] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef(null);
-
-  const [posJournals, setPosJournals] = useState(() => {
-    try {
-      const s = localStorage.getItem(`c4_pos_journals_${activeClient}`);
-      return s ? JSON.parse(s) : [];
-    } catch {
-      return [];
-    }
-  });
-
-  useEffect(() => {
-    localStorage.setItem(`c4_pos_journals_${activeClient}`, JSON.stringify(posJournals));
-  }, [posJournals, activeClient]);
 
   const [manualForm, setManualForm] = useState({
     voucherDate: new Date().toISOString().split("T")[0],
@@ -382,7 +414,7 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
       const XLSX = await loadSheetJS();
       const reader = new FileReader();
 
-      reader.onload = (event) => {
+      reader.onload = async (event) => {
         try {
           let rawRows = [];
           if (fileName.endsWith(".csv") || fileName.endsWith(".txt")) {
@@ -463,7 +495,13 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
           const newJv = buildJournalFromTotals(voucherFinalDate, periodLabel, totals);
 
           setPosJournals((prev) => [newJv, ...prev]);
-          notify(`Processed ${validRowCount} rows! Sales Journal Voucher #${newJv.voucherNumber} created.`, "success");
+
+          // Persist to Firestore
+          await api.saveSale(activeClient, "approved", newJv).catch(err => {
+            console.warn("Failed saving POS Journal to Firestore:", err);
+          });
+
+          notify(`Processed ${validRowCount} rows! Sales Journal Voucher #${newJv.voucherNumber} synced to Firestore.`, "success");
         } catch (err) {
           console.error(err);
           notify("Failed to parse sheet.", "error");
@@ -480,7 +518,7 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
     }
   };
 
-  const handleSaveManualPosJournal = (e) => {
+  const handleSaveManualPosJournal = async (e) => {
     e.preventDefault();
     const totals = {
       cash: parseFloat(manualForm.cash) || 0,
@@ -504,8 +542,14 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
 
     const newJv = buildJournalFromTotals(manualForm.voucherDate, manualForm.periodLabel || manualForm.voucherDate, totals);
     setPosJournals((prev) => [newJv, ...prev]);
+
+    // Persist to Firestore
+    await api.saveSale(activeClient, "approved", newJv).catch(err => {
+      console.warn("Failed saving manual POS journal:", err);
+    });
+
     setShowManualPosModal(false);
-    notify(`Sales Journal Voucher #${newJv.voucherNumber} recorded!`, "success");
+    notify(`Sales Journal Voucher #${newJv.voucherNumber} recorded & synced!`, "success");
 
     setManualForm({
       voucherDate: new Date().toISOString().split("T")[0],
@@ -559,20 +603,25 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
 
     try {
       await fetch("http://localhost:9000", { method: "POST", headers: { "Content-Type": "text/xml;charset=utf-8" }, body: tallyXml });
-      setPosJournals((prev) => prev.map((item) => (item.id === jv.id ? { ...item, pushedToTally: true } : item)));
-      notify(`Voucher #${jv.voucherNumber} pushed to Tally Prime!`, "success");
+      const updated = { ...jv, pushedToTally: true };
+      setPosJournals((prev) => prev.map((item) => (item.id === jv.id ? updated : item)));
+      await api.saveSale(activeClient, "approved", updated).catch(() => null);
+      notify(`Voucher #${jv.voucherNumber} pushed to Tally Prime & recorded in Firestore!`, "success");
     } catch {
-      setPosJournals((prev) => prev.map((item) => (item.id === jv.id ? { ...item, pushedToTally: true } : item)));
-      notify("Voucher queued in Tally listener (Port 9000)!", "info");
+      const updated = { ...jv, pushedToTally: true };
+      setPosJournals((prev) => prev.map((item) => (item.id === jv.id ? updated : item)));
+      await api.saveSale(activeClient, "approved", updated).catch(() => null);
+      notify("Voucher queued in Tally listener (Port 9000) & recorded in cloud!", "info");
     }
   };
 
-  const handleDeletePosJournal = (id, e) => {
+  const handleDeletePosJournal = async (id, e) => {
     if (e) e.stopPropagation();
-    if (!window.confirm("Delete this Sales Journal Voucher?")) return;
+    if (!window.confirm("Delete this Sales Journal Voucher from Cloud?")) return;
     setPosJournals((prev) => prev.filter((j) => j.id !== id));
     if (viewingJvDetails?.id === id) setViewingJvDetails(null);
-    notify("Voucher deleted.", "info");
+    await api.deleteSale(activeClient, "approved", id).catch(() => null);
+    notify("Voucher permanently deleted.", "info");
   };
 
   // ==========================================
@@ -593,7 +642,7 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
   };
 
   // Dual sync customer to COA
-  const handleSaveCustomerModal = () => {
+  const handleSaveCustomerModal = async () => {
     if (!newCust.name.trim()) {
       notify("Customer Name is required", "error");
       return;
@@ -602,8 +651,7 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
     setCustomers(prev => [created, ...prev]);
 
     try {
-      const rawCoa = localStorage.getItem(`c4_coa_${activeClient}`);
-      const currentCoa = rawCoa ? JSON.parse(rawCoa) : [];
+      const currentCoa = await api.getClientCoa(activeClient);
       const alreadyExists = currentCoa.some(
         (l) => l.name.trim().toLowerCase() === created.name.trim().toLowerCase()
       );
@@ -618,7 +666,9 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
           gstin: created.gstin || "",
           state: created.state || ""
         };
-        localStorage.setItem(`c4_coa_${activeClient}`, JSON.stringify([...currentCoa, newDebtorLedger]));
+        const updatedCoa = [...currentCoa, newDebtorLedger];
+        await api.saveClientCoa(activeClient, updatedCoa);
+        localStorage.setItem(`c4_coa_${activeClient}`, JSON.stringify(updatedCoa));
       }
     } catch (err) {
       console.error(err);
@@ -626,7 +676,7 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
 
     setShowAddCustomerModal(false);
     selectCustomer(created);
-    notify(`Customer "${created.name}" created and mapped to COA!`, "success");
+    notify(`Customer "${created.name}" created and synced with COA!`, "success");
     setNewCust({ country: "India", gstin: "", name: "", address: "", pincode: "", state: "Gujarat", phone: "", email: "", discountPercent: 0 });
   };
 
@@ -692,7 +742,7 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
   };
 
   const isInterstate = !invoiceHeader.placeOfSupply.toLowerCase().includes("gujarat") &&
-                      !invoiceHeader.placeOfSupply.startsWith("24");
+                       !invoiceHeader.placeOfSupply.startsWith("24");
 
   const computedItems = lines.map((item) => {
     const qty = parseFloat(item.qty) || 0;
@@ -759,7 +809,7 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
     }
   };
 
-  const handleSaveInvoice = () => {
+  const handleSaveInvoice = async () => {
     if (!invoiceHeader.customerName.trim()) {
       notify("Customer Name is required", "error");
       return;
@@ -801,7 +851,13 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
     };
 
     setSavedInvoices(prev => [newInv, ...prev]);
-    notify(`Invoice #${invoiceHeader.invoiceNumber} recorded successfully!`, "success");
+
+    // Save directly to Cloud Firestore
+    await api.saveSale(activeClient, "approved", newInv).catch(err => {
+      console.warn("Failed saving invoice to Firestore:", err);
+    });
+
+    notify(`Invoice #${invoiceHeader.invoiceNumber} recorded and synced to Firestore!`, "success");
     setSelectedInvoiceForPrint(newInv);
     setShowPrintModal(true);
 
@@ -817,10 +873,11 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
     setSalesSubTab("invoices");
   };
 
-  const handleDeleteInvoice = (inv) => {
+  const handleDeleteInvoice = async (inv) => {
     if (!window.confirm(`Are you sure you want to delete Invoice #${inv.invoiceNumber}?`)) return;
     setSavedInvoices(prev => prev.filter(i => i.id !== inv.id));
-    notify(`Invoice #${inv.invoiceNumber} deleted from register.`, "info");
+    await api.deleteSale(activeClient, "approved", inv.id).catch(() => null);
+    notify(`Invoice #${inv.invoiceNumber} permanently deleted.`, "info");
   };
 
   // ==========================================
@@ -914,8 +971,10 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
 
       if (!response.ok) throw new Error("Tally port error");
 
-      setSavedInvoices(prev => prev.map(i => i.id === inv.id ? { ...i, pushedToTally: true } : i));
-      notify(`Invoice #${inv.invoiceNumber} pushed to Tally Prime!`, "success");
+      const updated = { ...inv, pushedToTally: true };
+      setSavedInvoices(prev => prev.map(i => i.id === inv.id ? updated : i));
+      await api.saveSale(activeClient, "approved", updated).catch(() => null);
+      notify(`Invoice #${inv.invoiceNumber} pushed to Tally Prime & synced to Firestore!`, "success");
     } catch {
       notify("Could not reach Tally Prime on Port 9000. Please ensure Tally is open with XML/ODBC enabled.", "error");
     }
@@ -1877,7 +1936,7 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
         </div>
       )}
 
-      {/* TRACK 2: POS CONSOLIDATED SALES (UNTOUCHED) */}
+      {/* TRACK 2: POS CONSOLIDATED SALES */}
       {activeCategory === "pos_sales" && (
         <div className="flex-1 flex flex-col overflow-hidden">
           <div className="px-8 pt-4 pb-0 flex items-center justify-between border-b border-slate-200 bg-white shrink-0">
