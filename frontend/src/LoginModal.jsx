@@ -13,7 +13,7 @@ export default function LoginModal({ onLoginSuccess }) {
     const cleanUser = username.trim().toLowerCase();
 
     // 1. Fetch Dynamic Admin Credentials (or default admin/admin123)
-    let adminCreds = { username: "admin", password: "admin123", fullName: "Super Administrator" };
+    let adminCreds = { username: , password: , fullName: "Super Administrator" };
     try {
       const savedAdmin = localStorage.getItem("c4_admin_credentials");
       if (savedAdmin) {
