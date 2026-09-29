@@ -115,13 +115,21 @@ export default function App() {
       <aside className="w-64 bg-white border-r border-slate-200 flex flex-col justify-between shrink-0 shadow-xs z-30">
         <div>
           {/* BRAND LOGO */}
-          <div className="p-6 border-b border-slate-100 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="w-9 h-9 bg-slate-900 text-white rounded-xl flex items-center justify-center font-black text-xs tracking-tight shadow-sm shrink-0">
+          <div className="p-5 border-b border-slate-100 flex items-center justify-between">
+            <div className="flex items-center gap-3.5">
+              {/* Enlarged C4B Squircle Badge */}
+              <div className="w-11 h-11 bg-slate-900 text-white rounded-xl flex items-center justify-center font-black text-sm tracking-tight shadow-md shrink-0">
                 C4B
               </div>
-              <div>
-                <h1 className="text-sm font-bold text-slate-900 leading-tight">Compliance4 Business</h1>
+              
+              {/* Stacked Wordmark with Increased Typography */}
+              <div className="flex flex-col justify-center">
+                <span className="text-base font-extrabold text-slate-900 tracking-tight leading-tight">
+                  Compliance4
+                </span>
+                <span className="text-xs font-bold text-slate-500 uppercase tracking-widest leading-none mt-0.5">
+                  Business
+                </span>
               </div>
             </div>
           </div>
