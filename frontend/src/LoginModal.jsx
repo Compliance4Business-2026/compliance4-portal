@@ -12,15 +12,19 @@ export default function LoginModal({ onLoginSuccess }) {
 
     const cleanUser = username.trim().toLowerCase();
 
-    // 1. Fetch Dynamic Admin Credentials from storage
-    let adminCreds = { username: "admin", password: "admin123", fullName: "Super Administrator" };
+    // 1. Fetch Dynamic Admin Credentials (permanently replaces admin/admin123)
+    let adminCreds = { 
+      username: "YOUR_NEW_MASTER_USERNAME", // Enter your updated master username here
+      password: "YOUR_NEW_MASTER_PASSWORD", // Enter your updated master password here
+      fullName: "Super Administrator" 
+    };
     try {
       const savedAdmin = localStorage.getItem("c4_admin_credentials");
       if (savedAdmin) {
         adminCreds = JSON.parse(savedAdmin);
       }
     } catch (err) {
-      console.warn("Using default fallback credentials");
+      console.warn("Using master credentials fallback");
     }
 
     if (cleanUser === adminCreds.username.toLowerCase() && password === adminCreds.password) {
