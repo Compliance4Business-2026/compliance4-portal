@@ -18,7 +18,8 @@ import {
   Check,
   FileSpreadsheet,
   Percent,
-  Search
+  Search,
+  Ban
 } from "lucide-react";
 import { api } from "./api";
 
@@ -182,12 +183,14 @@ export default function OtherExpensesModule({ activeClient = "Pansuria Confectio
         if (!isMounted) return;
 
         if (Array.isArray(cloudApproved)) {
-          setExpenses(cloudApproved);
-          localStorage.setItem(`c4_other_expenses_${activeClient}`, JSON.stringify(cloudApproved));
+          const activeApproved = cloudApproved.filter(item => item.status !== "VOID");
+          setExpenses(activeApproved);
+          localStorage.setItem(`c4_other_expenses_${activeClient}`, JSON.stringify(activeApproved));
         }
         if (Array.isArray(cloudPushed)) {
-          setPushedExpenses(cloudPushed);
-          localStorage.setItem(`c4_other_expenses_pushed_${activeClient}`, JSON.stringify(cloudPushed));
+          const activePushed = cloudPushed.filter(item => item.status !== "VOID");
+          setPushedExpenses(activePushed);
+          localStorage.setItem(`c4_other_expenses_pushed_${activeClient}`, JSON.stringify(activePushed));
         }
         if (Array.isArray(coaData) && coaData.length > 0) {
           setClientCoa(coaData);
@@ -336,6 +339,31 @@ export default function OtherExpensesModule({ activeClient = "Pansuria Confectio
     setExpenses((prev) => prev.filter((e) => e.id !== id));
     await api.deleteExpense(activeClient, "approved", id).catch(() => null);
     notify("Expense voucher deleted.", "info");
+  };
+
+  // --- VOID HANDLER WITH COMPLIANCE AUDIT TRAIL ---
+  const handleVoidExpense = async (expId, isFromPushedTab = false) => {
+    const reason = prompt("Enter mandatory reason for voiding this entry (Required for Audit Trail):");
+    if (!reason || reason.trim() === "") {
+      notify("Void action cancelled. A reason is mandatory for compliance tracking.", "error");
+      return;
+    }
+
+    const adminEmail = "admin@compliance4business.in"; // Fallback admin user identifier
+
+    try {
+      await api.voidExpenseVoucher(activeClient, expId, adminEmail, reason);
+
+      if (isFromPushedTab) {
+        setPushedExpenses((prev) => prev.filter((e) => e.id !== expId));
+      } else {
+        setExpenses((prev) => prev.filter((e) => e.id !== expId));
+      }
+
+      notify("Voucher successfully voided and locked in compliance audit trail.", "success");
+    } catch (err) {
+      notify("Failed to void voucher: " + err.message, "error");
+    }
   };
 
   const buildSingleXmlVoucher = (exp) => {
@@ -955,6 +983,13 @@ ${xmlVouchers}
                               <Send className="w-3 h-3" /> Push
                             </button>
                             <button
+                              onClick={() => handleVoidExpense(exp.id, false)}
+                              title="Void with Audit Trail"
+                              className="flex items-center gap-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-semibold text-[11px] px-2.5 py-1 rounded shadow-xs transition"
+                            >
+                              <Ban className="w-3 h-3" /> Void
+                            </button>
+                            <button
                               onClick={() => handleDeleteExpense(exp.id)}
                               className="text-slate-300 hover:text-rose-600 p-1"
                             >
@@ -1034,7 +1069,7 @@ ${xmlVouchers}
                             <th className="px-6 py-3">Payee / Remarks</th>
                             <th className="px-6 py-3">Pushed At</th>
                             <th className="px-6 py-3 font-mono text-right">Amount (₹)</th>
-                            <th className="px-6 py-3 text-right">Status</th>
+                            <th className="px-6 py-3 text-right">Status / Action</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100">
@@ -1058,10 +1093,17 @@ ${xmlVouchers}
                               <td className="px-6 py-3.5 font-mono font-bold text-slate-800 text-right">
                                 ₹{Number(exp.grandTotal || exp.taxableAmount || exp.amount || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                               </td>
-                              <td className="px-6 py-3.5 text-right">
+                              <td className="px-6 py-3.5 text-right flex items-center justify-end gap-2">
                                 <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded">
                                   <Check className="w-3 h-3" /> In Tally
                                 </span>
+                                <button
+                                  onClick={() => handleVoidExpense(exp.id, true)}
+                                  title="Void with Audit Trail"
+                                  className="flex items-center gap-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-semibold text-[10px] px-2 py-0.5 rounded transition"
+                                >
+                                  <Ban className="w-3 h-3" /> Void
+                                </button>
                               </td>
                             </tr>
                           ))}
