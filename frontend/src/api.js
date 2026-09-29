@@ -245,9 +245,11 @@ export const api = {
     await fetch(`${BACKEND_BASE}/api/clients/${encodeURIComponent(clientName)}/expenses/${status}/${recordId}`, {
       method: "DELETE"
     });
-  }
-};
-// 10. Dashboard & Financial Analytics Summary
+  },
+
+  // ==========================================
+  // 10. Dashboard & Financial Analytics Summary
+  // ==========================================
   async getDashboardSummary(clientName) {
     try {
       const [bills, sales, bankTxns, expenses] = await Promise.all([
@@ -289,3 +291,4 @@ export const api = {
       };
     }
   }
+};
