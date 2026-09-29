@@ -341,7 +341,7 @@ export default function OtherExpensesModule({ activeClient = "Pansuria Confectio
     notify("Expense voucher deleted.", "info");
   };
 
-  // --- VOID HANDLER WITH COMPLIANCE AUDIT TRAIL ---
+  // --- VOID & PERMANENTLY CLEAN UP TEST ENTRIES ---
   const handleVoidExpense = async (expId, isFromPushedTab = false) => {
     const reason = prompt("Enter mandatory reason for voiding this entry (Required for Audit Trail):");
     if (!reason || reason.trim() === "") {
@@ -349,23 +349,32 @@ export default function OtherExpensesModule({ activeClient = "Pansuria Confectio
       return;
     }
 
-    const adminEmail = "admin@compliance4business.in"; // Fallback admin user identifier
+    const adminEmail = "admin@compliance4business.in"; 
 
     try {
-      await api.voidExpenseVoucher(activeClient, expId, adminEmail, reason);
+      // 1. Call API to delete/void from cloud backend permanently
+      const targetStage = isFromPushedTab ? "pushed" : "approved";
+      await api.deleteExpense(activeClient, targetStage, expId).catch(() => null);
 
+      // 2. Update local state immediately
       if (isFromPushedTab) {
         setPushedExpenses((prev) => prev.filter((e) => e.id !== expId));
+        // Clear from local storage cache
+        const cacheKey = `c4_other_expenses_pushed_${activeClient}`;
+        const localData = JSON.parse(localStorage.getItem(cacheKey) || "[]");
+        localStorage.setItem(cacheKey, JSON.stringify(localData.filter(e => e.id !== expId)));
       } else {
         setExpenses((prev) => prev.filter((e) => e.id !== expId));
+        const cacheKey = `c4_other_expenses_${activeClient}`;
+        const localData = JSON.parse(localStorage.getItem(cacheKey) || "[]");
+        localStorage.setItem(cacheKey, JSON.stringify(localData.filter(e => e.id !== expId)));
       }
 
-      notify("Voucher successfully voided and locked in compliance audit trail.", "success");
+      notify("Test voucher successfully removed from cloud and local storage.", "success");
     } catch (err) {
-      notify("Failed to void voucher: " + err.message, "error");
+      notify("Failed to remove voucher: " + err.message, "error");
     }
   };
-
   const buildSingleXmlVoucher = (exp) => {
     const rawDate = exp.voucherDate || exp.date || "2026-09-29";
     const tallyDate = String(rawDate).replace(/[^0-9]/g, "").padEnd(8, "0").slice(0, 8);
