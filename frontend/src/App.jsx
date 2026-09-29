@@ -20,13 +20,14 @@ import {
 } from "lucide-react";
 
 export default function App() {
-  // Session State: Require explicit login instead of auto-fallback to super admin
+  // STRICT SESSION GATE: If no session exists, currentUser is strictly null
   const [currentUser, setCurrentUser] = useState(() => {
     try {
-      const saved = localStorage.getItem("c4_auth_session");
-      if (saved) return JSON.parse(saved);
-    } catch {}
-    return null;
+      const saved = localStorage.getItem("c4_auth_session_secure");
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
   });
 
   const [activeTab, setActiveTab] = useState("dashboard");
@@ -54,8 +55,7 @@ export default function App() {
   const [activeClient, setActiveClient] = useState(() => {
     try {
       const saved = localStorage.getItem("c4_active_client");
-      if (saved) return saved;
-      return "Pansuria Confectionery & Food";
+      return saved || "Pansuria Confectionery & Food";
     } catch {
       return "Pansuria Confectionery & Food";
     }
@@ -95,19 +95,19 @@ export default function App() {
   }, [currentUser]);
 
   const handleLogout = () => {
-    if (window.confirm("Do you want to switch user or sign in again?")) {
-      localStorage.removeItem("c4_auth_session");
+    if (window.confirm("Do you want to sign out?")) {
+      localStorage.removeItem("c4_auth_session_secure");
       setCurrentUser(null);
     }
   };
 
-  // If user is not logged in, show clean login overlay and gate portal access
+  // --- HARD GATE: RENDER LOGIN MODAL EXCLUSIVELY IF NOT LOGGED IN ---
   if (!currentUser) {
     return (
       <LoginModal 
         onLoginSuccess={(user) => {
+          localStorage.setItem("c4_auth_session_secure", JSON.stringify(user));
           setCurrentUser(user);
-          localStorage.setItem("c4_auth_session", JSON.stringify(user));
         }} 
       />
     );
@@ -117,18 +117,15 @@ export default function App() {
 
   return (
     <div className="flex h-screen w-screen bg-[#F8FAFC] overflow-hidden font-sans">
-      {/* SIDEBAR NAVIGATION (PERMANENT & UNBREAKABLE) */}
+      {/* SIDEBAR NAVIGATION */}
       <aside className="w-64 bg-white border-r border-slate-200 flex flex-col justify-between shrink-0 shadow-xs z-30">
         <div>
           {/* BRAND LOGO */}
           <div className="p-5 border-b border-slate-100 flex items-center justify-between">
             <div className="flex items-center gap-3.5">
-              {/* Enlarged C4B Squircle Badge */}
               <div className="w-11 h-11 bg-slate-900 text-white rounded-xl flex items-center justify-center font-black text-sm tracking-tight shadow-md shrink-0">
                 C4B
               </div>
-              
-              {/* Stacked Wordmark with Increased Typography */}
               <div className="flex flex-col justify-center">
                 <span className="text-base font-extrabold text-slate-900 tracking-tight leading-tight">
                   Compliance4
