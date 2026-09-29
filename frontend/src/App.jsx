@@ -117,12 +117,11 @@ export default function App() {
           {/* BRAND LOGO */}
           <div className="p-6 border-b border-slate-100 flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <div className="w-9 h-9 bg-slate-900 text-white rounded-xl flex items-center justify-center font-black text-sm shadow-sm">
-                C4
+              <div className="w-9 h-9 bg-slate-900 text-white rounded-xl flex items-center justify-center font-black text-xs tracking-tight shadow-sm shrink-0">
+                C4B
               </div>
               <div>
-                <h1 className="text-sm font-bold text-slate-900 leading-tight">Compliance4</h1>
-                <p className="text-[10px] text-slate-400 font-medium">OPERATIONS HUB</p>
+                <h1 className="text-sm font-bold text-slate-900 leading-tight">Compliance4 Business</h1>
               </div>
             </div>
           </div>
