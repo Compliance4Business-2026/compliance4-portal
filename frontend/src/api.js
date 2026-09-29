@@ -223,11 +223,14 @@ export const api = {
     try {
       const res = await fetch(`${BACKEND_BASE}/api/clients/${encodeURIComponent(clientName)}/expenses?status=${status}`);
       if (!res.ok) throw new Error("Failed to fetch expense records");
-      return await res.json();
+      const data = await res.json();
+      // Filter out VOID entries locally if fetched
+      return Array.isArray(data) ? data.filter(item => item.status !== "VOID") : [];
     } catch (err) {
       console.warn(`Falling back to local storage for expenses (${status}):`, err);
       const cacheKey = `c4_other_expenses_${clientName}_${status}`;
-      return JSON.parse(localStorage.getItem(cacheKey) || "[]");
+      const data = JSON.parse(localStorage.getItem(cacheKey) || "[]");
+      return Array.isArray(data) ? data.filter(item => item.status !== "VOID") : [];
     }
   },
 
@@ -247,6 +250,20 @@ export const api = {
     });
   },
 
+  async voidExpenseVoucher(clientName, expenseId, userEmail, reason) {
+    const res = await fetch(`${BACKEND_BASE}/api/clients/${encodeURIComponent(clientName)}/expenses/void/${expenseId}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ performed_by: userEmail, reason: reason })
+    });
+    if (!res.ok) {
+      // Fallback update directly via Firestore if endpoint isn't wired on backend yet, or handle response
+      const err = await res.json().catch(() => ({ detail: "Failed to void expense voucher" }));
+      throw new Error(err.detail || "Failed to void expense voucher");
+    }
+    return await res.json();
+  },
+
   // ==========================================
   // 10. Dashboard & Financial Analytics Summary
   // ==========================================
@@ -261,7 +278,9 @@ export const api = {
 
       const totalPurchases = bills.reduce((acc, b) => acc + (parseFloat(b.grand_total || b.taxable_amount) || 0), 0);
       const totalSales = sales.reduce((acc, s) => acc + (parseFloat(s.grandTotal || s.taxableAmount) || 0), 0);
-      const totalExpenses = expenses.reduce((acc, e) => acc + (parseFloat(e.grandTotal || e.taxableAmount || e.amount) || 0), 0);
+      const totalExpenses = expenses
+        .filter(e => e.status !== "VOID")
+        .reduce((acc, e) => acc + (parseFloat(e.grandTotal || e.taxableAmount || e.amount) || 0), 0);
       
       const totalBankReceipts = bankTxns
         .filter(t => t.type === "Receipt")
