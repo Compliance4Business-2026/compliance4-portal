@@ -25,6 +25,7 @@ import {
   UserCheck, 
   LayoutDashboard 
 } from "lucide-react";
+import { api } from "./api";
 
 const loadSheetJS = () => {
   return new Promise((resolve, reject) => {
@@ -138,28 +139,8 @@ export default function SettingsModule({ activeClient, setActiveClient, onGoToDa
     }
   });
 
-  useEffect(() => {
-    localStorage.setItem("c4_user_accounts", JSON.stringify(users));
-  }, [users]);
-
   const [currentForm, setCurrentForm] = useState(() => getFreshProfileState(activeClient, profiles));
   const [coaFilter, setCoaFilter] = useState("ALL");
-
-  useEffect(() => {
-    try {
-      const savedProfiles = JSON.parse(localStorage.getItem("c4_client_profiles") || "{}");
-      setCurrentForm(getFreshProfileState(activeClient, savedProfiles));
-    } catch {
-      setCurrentForm(getFreshProfileState(activeClient, {}));
-    }
-
-    try {
-      const savedCoa = localStorage.getItem(`c4_coa_${activeClient}`);
-      setClientCoa(savedCoa ? JSON.parse(savedCoa) : []);
-    } catch {
-      setClientCoa([]);
-    }
-  }, [activeClient]);
 
   const [newLedgerName, setNewLedgerName] = useState("");
   const [newStatementType, setNewStatementType] = useState("P&L");
@@ -193,18 +174,81 @@ export default function SettingsModule({ activeClient, setActiveClient, onGoToDa
   const signatureInputRef = useRef(null);
   const fileInputRef = useRef(null);
 
+  const notify = (msg, type = "success") => {
+    setNotification({ msg, type });
+    setTimeout(() => setNotification(null), 4000);
+  };
+
+  // --- INITIAL CLOUD DATA RECONCILIATION ---
+  useEffect(() => {
+    async function loadCloudSettings() {
+      try {
+        const cloudProfiles = await api.getClients();
+        if (cloudProfiles && Object.keys(cloudProfiles).length > 0) {
+          setProfiles(cloudProfiles);
+          localStorage.setItem("c4_client_profiles", JSON.stringify(cloudProfiles));
+        }
+
+        const cloudUsers = await api.getUsers();
+        if (cloudUsers && cloudUsers.length > 0) {
+          setUsers(cloudUsers);
+          localStorage.setItem("c4_user_accounts", JSON.stringify(cloudUsers));
+        }
+      } catch (err) {
+        console.warn("Using offline fallback for settings:", err);
+      }
+    }
+    loadCloudSettings();
+  }, []);
+
+  // --- SYNC COA & PROFILE UPON ACTIVE CLIENT SWITCH ---
+  useEffect(() => {
+    try {
+      const savedProfiles = JSON.parse(localStorage.getItem("c4_client_profiles") || "{}");
+      setCurrentForm(getFreshProfileState(activeClient, savedProfiles));
+    } catch {
+      setCurrentForm(getFreshProfileState(activeClient, {}));
+    }
+
+    async function loadActiveClientCoa() {
+      try {
+        const coaData = await api.getClientCoa(activeClient);
+        if (coaData && Array.isArray(coaData) && coaData.length > 0) {
+          setClientCoa(coaData);
+          localStorage.setItem(`c4_coa_${activeClient}`, JSON.stringify(coaData));
+          return;
+        }
+      } catch (err) {
+        console.warn("Cloud COA fetch fallback to localStorage:", err);
+      }
+
+      try {
+        const savedCoa = localStorage.getItem(`c4_coa_${activeClient}`);
+        setClientCoa(savedCoa ? JSON.parse(savedCoa) : []);
+      } catch {
+        setClientCoa([]);
+      }
+    }
+
+    if (activeClient) {
+      loadActiveClientCoa();
+    }
+  }, [activeClient]);
+
+  // Keep local storage synchronized
+  useEffect(() => {
+    localStorage.setItem("c4_user_accounts", JSON.stringify(users));
+  }, [users]);
+
   useEffect(() => {
     localStorage.setItem("c4_client_profiles", JSON.stringify(profiles));
   }, [profiles]);
 
   useEffect(() => {
-    localStorage.setItem(`c4_coa_${activeClient}`, JSON.stringify(clientCoa));
+    if (activeClient) {
+      localStorage.setItem(`c4_coa_${activeClient}`, JSON.stringify(clientCoa));
+    }
   }, [clientCoa, activeClient]);
-
-  const notify = (msg, type = "success") => {
-    setNotification({ msg, type });
-    setTimeout(() => setNotification(null), 4000);
-  };
 
   const handleImageUpload = (e, field) => {
     const file = e.target.files[0];
@@ -223,15 +267,25 @@ export default function SettingsModule({ activeClient, setActiveClient, onGoToDa
     reader.readAsDataURL(file);
   };
 
-  const handleOpenClient = (clientName) => {
+  const handleOpenClient = async (clientName) => {
     setActiveClient(clientName);
     const savedProfiles = JSON.parse(localStorage.getItem("c4_client_profiles") || "{}");
     setCurrentForm(getFreshProfileState(clientName, savedProfiles));
     setActiveTab("manage_client");
     setManageSubTab("profile");
+
+    try {
+      const coaData = await api.getClientCoa(clientName);
+      if (coaData && Array.isArray(coaData) && coaData.length > 0) {
+        setClientCoa(coaData);
+        localStorage.setItem(`c4_coa_${clientName}`, JSON.stringify(coaData));
+      }
+    } catch (e) {
+      console.warn("COA fetch on client open:", e);
+    }
   };
 
-  const handleAddNewClient = () => {
+  const handleAddNewClient = async () => {
     const newClientName = window.prompt("Enter Legal or Trade Name for the New Client:");
     if (!newClientName || !newClientName.trim()) return;
 
@@ -276,21 +330,31 @@ export default function SettingsModule({ activeClient, setActiveClient, onGoToDa
       });
     }
 
-    const updated = { ...profiles, [trimmed]: newProfile };
-    setProfiles(updated);
-    localStorage.setItem("c4_client_profiles", JSON.stringify(updated));
-    localStorage.setItem(`c4_coa_${trimmed}`, JSON.stringify(defaultCoa));
+    try {
+      // 1. Persist new Client Profile & COA to Firestore
+      await api.saveClientProfile(trimmed, newProfile);
+      await api.saveClientCoa(trimmed, defaultCoa);
 
-    setActiveClient(trimmed);
-    setCurrentForm(newProfile);
-    setClientCoa(defaultCoa);
-    setActiveTab("manage_client");
-    setManageSubTab("profile");
+      // 2. Update Local State
+      const updated = { ...profiles, [trimmed]: newProfile };
+      setProfiles(updated);
+      localStorage.setItem("c4_client_profiles", JSON.stringify(updated));
+      localStorage.setItem(`c4_coa_${trimmed}`, JSON.stringify(defaultCoa));
 
-    notify(`Client "${trimmed}" created!`, "success");
+      setActiveClient(trimmed);
+      setCurrentForm(newProfile);
+      setClientCoa(defaultCoa);
+      setActiveTab("manage_client");
+      setManageSubTab("profile");
+
+      notify(`Client "${trimmed}" created and persisted to Firestore!`, "success");
+    } catch (err) {
+      console.error(err);
+      notify("Failed to save new client to cloud: " + err.message, "error");
+    }
   };
 
-  const handleDeleteClient = (clientNameToDelete, e) => {
+  const handleDeleteClient = async (clientNameToDelete, e) => {
     e.stopPropagation();
     const clientKeys = Object.keys(profiles);
     if (clientKeys.length <= 1) {
@@ -298,57 +362,91 @@ export default function SettingsModule({ activeClient, setActiveClient, onGoToDa
       return;
     }
 
-    if (!window.confirm(`Are you sure you want to delete "${clientNameToDelete}"?`)) return;
+    if (!window.confirm(`Are you sure you want to delete "${clientNameToDelete}" and its COA from Firestore?`)) return;
 
-    const updated = { ...profiles };
-    delete updated[clientNameToDelete];
-    setProfiles(updated);
-    localStorage.setItem("c4_client_profiles", JSON.stringify(updated));
+    try {
+      // 1. Delete from Cloud Firestore
+      await api.deleteClientProfile(clientNameToDelete);
 
-    if (activeClient === clientNameToDelete) {
-      const remainingKey = Object.keys(updated)[0];
-      setActiveClient(remainingKey);
+      // 2. Update State
+      const updated = { ...profiles };
+      delete updated[clientNameToDelete];
+      setProfiles(updated);
+      localStorage.setItem("c4_client_profiles", JSON.stringify(updated));
+      localStorage.removeItem(`c4_coa_${clientNameToDelete}`);
+
+      if (activeClient === clientNameToDelete) {
+        const remainingKey = Object.keys(updated)[0];
+        setActiveClient(remainingKey);
+      }
+
+      notify(`Client "${clientNameToDelete}" permanently deleted.`, "info");
+    } catch (err) {
+      console.error(err);
+      notify("Failed to delete client: " + err.message, "error");
     }
-
-    notify(`Client "${clientNameToDelete}" removed.`, "info");
   };
 
-  const handleSaveProfile = () => {
+  const handleSaveProfile = async () => {
     if (!currentForm.companyName.trim()) {
       notify("Please provide a Legal Company Name", "error");
       return;
     }
     const targetName = currentForm.companyName.trim();
-    const updatedProfiles = {
-      ...profiles,
-      [targetName]: { ...currentForm, companyName: targetName }
-    };
-    setProfiles(updatedProfiles);
-    localStorage.setItem("c4_client_profiles", JSON.stringify(updatedProfiles));
-    setActiveClient(targetName);
-    notify(`Profile for "${targetName}" saved!`, "success");
+    const profilePayload = { ...currentForm, companyName: targetName };
+
+    try {
+      // 1. Save directly to Cloud Firestore
+      await api.saveClientProfile(targetName, profilePayload);
+
+      // 2. Update Local State & Storage
+      const updatedProfiles = {
+        ...profiles,
+        [targetName]: profilePayload
+      };
+      setProfiles(updatedProfiles);
+      localStorage.setItem("c4_client_profiles", JSON.stringify(updatedProfiles));
+      setActiveClient(targetName);
+      notify(`Profile for "${targetName}" saved to Firestore!`, "success");
+    } catch (err) {
+      console.error(err);
+      notify("Failed to save profile to cloud: " + err.message, "error");
+    }
   };
 
-  const handleSaveAdminCredentials = (e) => {
+  const handleSaveAdminCredentials = async (e) => {
     e.preventDefault();
     if (!adminForm.username.trim() || !adminForm.password.trim()) {
       notify("Master Username and Password cannot be blank", "error");
       return;
     }
-    setAdminCreds({ ...adminForm });
-    localStorage.setItem("c4_admin_credentials", JSON.stringify(adminForm));
 
-    const currentSession = JSON.parse(localStorage.getItem("c4_auth_session") || "{}");
-    if (currentSession.role === "admin") {
-      currentSession.username = adminForm.username.trim();
-      currentSession.fullName = adminForm.fullName.trim();
-      localStorage.setItem("c4_auth_session", JSON.stringify(currentSession));
+    try {
+      // Save Super Admin credentials to Firestore config collection
+      const res = await fetch("https://compliance4-backend-1021821620394.asia-south1.run.app/api/system/admin-credentials", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(adminForm)
+      }).catch(() => null);
+
+      setAdminCreds({ ...adminForm });
+      localStorage.setItem("c4_admin_credentials", JSON.stringify(adminForm));
+
+      const currentSession = JSON.parse(localStorage.getItem("c4_auth_session") || "{}");
+      if (currentSession.role === "admin") {
+        currentSession.username = adminForm.username.trim();
+        currentSession.fullName = adminForm.fullName.trim();
+        localStorage.setItem("c4_auth_session", JSON.stringify(currentSession));
+      }
+
+      notify("Super Admin credentials updated successfully!", "success");
+    } catch (err) {
+      console.error(err);
+      notify("Updated locally. Cloud sync warning: " + err.message, "info");
     }
-
-    notify("Super Admin credentials updated successfully!", "success");
   };
 
-  const handleCreateUser = (e) => {
+  const handleCreateUser = async (e) => {
     e.preventDefault();
     if (!newUser.username.trim() || !newUser.password.trim()) {
       notify("Username and Password are required", "error");
@@ -374,38 +472,63 @@ export default function SettingsModule({ activeClient, setActiveClient, onGoToDa
       createdAt: new Date().toLocaleDateString("en-IN")
     };
 
-    setUsers((prev) => [created, ...prev]);
-    setNewUser({
-      fullName: "",
-      username: "",
-      password: "",
-      allowedClients: "ALL",
-      permissions: {
-        dashboard: "view",
-        sales: "edit",
-        purchases: "edit",
-        otherExpenses: "edit",
-        banking: "edit"
-      },
-      salesSubPerms: {
-        allowNormal: true,
-        allowPos: true,
-        allowedDocTypes: ["Tax Invoice", "Bill of Supply", "Export Invoice"]
-      }
-    });
-    notify(`User "${created.fullName}" created with customized rights!`, "success");
+    try {
+      // Save user directly to Firestore
+      await api.saveUser(created);
+      setUsers((prev) => [created, ...prev]);
+
+      setNewUser({
+        fullName: "",
+        username: "",
+        password: "",
+        allowedClients: "ALL",
+        permissions: {
+          dashboard: "view",
+          sales: "edit",
+          purchases: "edit",
+          otherExpenses: "edit",
+          banking: "edit"
+        },
+        salesSubPerms: {
+          allowNormal: true,
+          allowPos: true,
+          allowedDocTypes: ["Tax Invoice", "Bill of Supply", "Export Invoice"]
+        }
+      });
+      notify(`User "${created.fullName}" created & saved to Firestore!`, "success");
+    } catch (err) {
+      console.error(err);
+      notify("Error persisting user to cloud: " + err.message, "error");
+    }
   };
 
-  const handleDeleteUser = (id, username) => {
-    if (!window.confirm(`Delete user "${username}"?`)) return;
-    setUsers((prev) => prev.filter((u) => u.id !== id));
-    notify(`User "${username}" removed.`, "info");
+  const handleDeleteUser = async (id, username) => {
+    if (!window.confirm(`Delete user "${username}" from Cloud Database?`)) return;
+    try {
+      await api.deleteUser(username);
+      setUsers((prev) => prev.filter((u) => u.id !== id));
+      notify(`User "${username}" permanently deleted.`, "info");
+    } catch (err) {
+      console.error(err);
+      notify("Failed to delete user: " + err.message, "error");
+    }
   };
 
-  const handleToggleUserStatus = (id) => {
-    setUsers((prev) =>
-      prev.map((u) => (u.id === id ? { ...u, isActive: !u.isActive } : u))
-    );
+  const handleToggleUserStatus = async (id) => {
+    const target = users.find((u) => u.id === id);
+    if (!target) return;
+
+    const updatedUser = { ...target, isActive: !target.isActive };
+    try {
+      await api.saveUser(updatedUser);
+      setUsers((prev) =>
+        prev.map((u) => (u.id === id ? updatedUser : u))
+      );
+      notify(`User "${updatedUser.username}" is now ${updatedUser.isActive ? "Active" : "Disabled"}.`, "info");
+    } catch (err) {
+      console.error(err);
+      notify("Failed to update status: " + err.message, "error");
+    }
   };
 
   const handleDocTypeToggle = (type) => {
@@ -425,7 +548,7 @@ export default function SettingsModule({ activeClient, setActiveClient, onGoToDa
     });
   };
 
-  const handleAddLedger = (e) => {
+  const handleAddLedger = async (e) => {
     e.preventDefault();
     if (!newLedgerName.trim()) {
       notify("Ledger Name cannot be blank", "error");
@@ -449,97 +572,130 @@ export default function SettingsModule({ activeClient, setActiveClient, onGoToDa
       cogsClassification: newStatementType === "P&L" ? newCostNature : null
     };
 
-    setClientCoa((prev) => [...prev, created]);
+    const nextList = [...clientCoa, created];
+    setClientCoa(nextList);
     setNewLedgerName("");
     setNewLedgerCategory("");
     setNewCostNature("COGS");
-    notify(`Ledger "${created.name}" saved under ${created.category}!`, "success");
+
+    try {
+      await api.saveClientCoa(activeClient, nextList);
+      notify(`Ledger "${created.name}" saved and synced to Firestore!`, "success");
+    } catch (err) {
+      console.error(err);
+      notify(`Ledger saved locally, cloud sync error: ${err.message}`, "error");
+    }
   };
 
-  const handleToggleCogsClassification = (id) => {
-    setClientCoa((prev) =>
-      prev.map((l) => {
-        if (l.id === id) {
-          const currentNature = getPlNature(l);
-          if (currentNature === "Revenue" || currentNature === "Other Income") return l;
-          const next = currentNature === "COGS" ? "Indirect" : "COGS";
-          notify(`Changed "${l.name}" to ${next === "COGS" ? "Direct (COGS)" : "Indirect Expense"}!`, "info");
-          return { ...l, cogsClassification: next };
-        }
-        return l;
-      })
-    );
+  const handleToggleCogsClassification = async (id) => {
+    const nextList = clientCoa.map((l) => {
+      if (l.id === id) {
+        const currentNature = getPlNature(l);
+        if (currentNature === "Revenue" || currentNature === "Other Income") return l;
+        const next = currentNature === "COGS" ? "Indirect" : "COGS";
+        return { ...l, cogsClassification: next };
+      }
+      return l;
+    });
+
+    setClientCoa(nextList);
+
+    try {
+      await api.saveClientCoa(activeClient, nextList);
+      notify("Classification updated in Firestore!", "info");
+    } catch (err) {
+      console.error(err);
+    }
   };
 
-  const handleAutoFixPurchasesToCogs = () => {
+  const handleAutoFixPurchasesToCogs = async () => {
     let updatedCount = 0;
-    setClientCoa((prev) =>
-      prev.map((l) => {
-        if (l.statementType === "P&L") {
-          const nature = getPlNature(l);
-          if (nature === "Revenue" || nature === "Other Income") return l;
+    const nextList = clientCoa.map((l) => {
+      if (l.statementType === "P&L") {
+        const nature = getPlNature(l);
+        if (nature === "Revenue" || nature === "Other Income") return l;
 
-          const lowerName = l.name.toLowerCase();
-          const lowerCat = (l.category || "").toLowerCase();
+        const lowerName = l.name.toLowerCase();
+        const lowerCat = (l.category || "").toLowerCase();
 
-          const isPurchase =
-            lowerCat.includes("purchase") ||
-            lowerName.includes("purchase") ||
-            lowerName.includes("dairy") ||
-            lowerName.includes("groceries") ||
-            lowerName.includes("beverage") ||
-            lowerName.includes("dessert") ||
-            lowerName.includes("frozen") ||
-            lowerName.includes("sauces") ||
-            lowerName.includes("vegetable") ||
-            lowerName.includes("packing") ||
-            lowerName.includes("ingredient") ||
-            lowerName.includes("gas");
+        const isPurchase =
+          lowerCat.includes("purchase") ||
+          lowerName.includes("purchase") ||
+          lowerName.includes("dairy") ||
+          lowerName.includes("groceries") ||
+          lowerName.includes("beverage") ||
+          lowerName.includes("dessert") ||
+          lowerName.includes("frozen") ||
+          lowerName.includes("sauces") ||
+          lowerName.includes("vegetable") ||
+          lowerName.includes("packing") ||
+          lowerName.includes("ingredient") ||
+          lowerName.includes("gas");
 
-          if (isPurchase && l.cogsClassification !== "COGS") {
-            updatedCount++;
-            return { ...l, cogsClassification: "COGS" };
-          }
+        if (isPurchase && l.cogsClassification !== "COGS") {
+          updatedCount++;
+          return { ...l, cogsClassification: "COGS" };
         }
-        return l;
-      })
-    );
+      }
+      return l;
+    });
 
     if (updatedCount > 0) {
-      notify(`Auto-tagged ${updatedCount} purchase ledgers to Direct (COGS)!`, "success");
+      setClientCoa(nextList);
+      try {
+        await api.saveClientCoa(activeClient, nextList);
+        notify(`Auto-tagged ${updatedCount} purchase ledgers to Direct (COGS) & synced to Firestore!`, "success");
+      } catch (err) {
+        console.error(err);
+        notify(`Tagged locally. Firestore sync warning: ${err.message}`, "info");
+      }
     } else {
       notify("All purchase ledgers are already classified as COGS.", "info");
     }
   };
 
-  const handleSaveEditLedger = () => {
+  const handleSaveEditLedger = async () => {
     if (!editingLedger || !editingLedger.name.trim()) return;
 
-    setClientCoa((prev) =>
-      prev.map((l) =>
-        l.id === editingLedger.id
-          ? {
-              ...l,
-              name: editingLedger.name.trim(),
-              category: editingLedger.category.trim(),
-              statementType: editingLedger.statementType,
-              cogsClassification:
-                editingLedger.statementType === "P&L"
-                  ? editingLedger.cogsClassification
-                  : null
-            }
-          : l
-      )
+    const nextList = clientCoa.map((l) =>
+      l.id === editingLedger.id
+        ? {
+            ...l,
+            name: editingLedger.name.trim(),
+            category: editingLedger.category.trim(),
+            statementType: editingLedger.statementType,
+            cogsClassification:
+              editingLedger.statementType === "P&L"
+                ? editingLedger.cogsClassification
+                : null
+          }
+        : l
     );
 
-    notify(`Updated ledger "${editingLedger.name}"!`, "success");
+    setClientCoa(nextList);
     setEditingLedger(null);
+
+    try {
+      await api.saveClientCoa(activeClient, nextList);
+      notify(`Updated ledger "${editingLedger.name}" in Firestore!`, "success");
+    } catch (err) {
+      console.error(err);
+      notify("Saved locally. Firestore error: " + err.message, "error");
+    }
   };
 
-  const handleDeleteLedger = (id, name) => {
-    if (!window.confirm(`Delete ledger "${name}"?`)) return;
-    setClientCoa((prev) => prev.filter((l) => l.id !== id));
-    notify(`Ledger "${name}" deleted.`, "info");
+  const handleDeleteLedger = async (id, name) => {
+    if (!window.confirm(`Delete ledger "${name}" from Firestore?`)) return;
+    const nextList = clientCoa.filter((l) => l.id !== id);
+    setClientCoa(nextList);
+
+    try {
+      await api.saveClientCoa(activeClient, nextList);
+      notify(`Ledger "${name}" deleted from Firestore.`, "info");
+    } catch (err) {
+      console.error(err);
+      notify("Deleted locally. Firestore sync error: " + err.message, "error");
+    }
   };
 
   const handleDownloadTemplate = async () => {
@@ -575,7 +731,7 @@ export default function SettingsModule({ activeClient, setActiveClient, onGoToDa
       const XLSX = await loadSheetJS();
       const reader = new FileReader();
 
-      reader.onload = (event) => {
+      reader.onload = async (event) => {
         try {
           let rawRows = [];
 
@@ -659,18 +815,23 @@ export default function SettingsModule({ activeClient, setActiveClient, onGoToDa
             `Found ${parsedLedgers.length} ledgers!\n\nClick OK to REPLACE the entire Chart of Accounts for ${activeClient}.\nClick CANCEL to APPEND new ledgers.`
           );
 
+          let finalLedgers = [];
           if (replaceOption) {
-            setClientCoa(parsedLedgers);
-            notify(`Uploaded ${parsedLedgers.length} ledgers for ${activeClient}!`, "success");
+            finalLedgers = parsedLedgers;
           } else {
             const existingNames = new Set(clientCoa.map((l) => l.name.toLowerCase()));
             const newOnly = parsedLedgers.filter((l) => !existingNames.has(l.name.toLowerCase()));
-            setClientCoa((prev) => [...prev, ...newOnly]);
-            notify(`Appended ${newOnly.length} new ledgers!`, "success");
+            finalLedgers = [...clientCoa, ...newOnly];
           }
+
+          setClientCoa(finalLedgers);
+
+          // Write updated bulk COA directly to Firestore
+          await api.saveClientCoa(activeClient, finalLedgers);
+          notify(`Successfully uploaded & synced ${finalLedgers.length} ledgers to Firestore!`, "success");
         } catch (err) {
           console.error(err);
-          notify("Failed to parse spreadsheet file.", "error");
+          notify("Failed to process spreadsheet file: " + err.message, "error");
         } finally {
           setIsUploading(false);
           if (fileInputRef.current) fileInputRef.current.value = "";
@@ -1601,6 +1762,87 @@ export default function SettingsModule({ activeClient, setActiveClient, onGoToDa
           </div>
         )}
       </div>
+
+      {/* EDIT LEDGER MODAL */}
+      {editingLedger && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4 border border-slate-200 animate-in fade-in duration-150">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <h3 className="text-sm font-bold text-slate-900">Edit Chart of Account Ledger</h3>
+              <button onClick={() => setEditingLedger(null)} className="text-slate-400 hover:text-slate-600 p-1 rounded">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs">
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">Ledger Name</label>
+                <input
+                  type="text"
+                  value={editingLedger.name}
+                  onChange={(e) => setEditingLedger({ ...editingLedger, name: e.target.value })}
+                  className="w-full border border-slate-300 rounded-lg p-2.5 font-semibold text-slate-900"
+                />
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">Category / Head</label>
+                <input
+                  type="text"
+                  value={editingLedger.category}
+                  onChange={(e) => setEditingLedger({ ...editingLedger, category: e.target.value })}
+                  className="w-full border border-slate-300 rounded-lg p-2.5 font-medium text-slate-800"
+                />
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">Statement Nature</label>
+                <select
+                  value={editingLedger.statementType}
+                  onChange={(e) => setEditingLedger({ ...editingLedger, statementType: e.target.value })}
+                  className="w-full border border-slate-300 rounded-lg p-2.5 font-medium bg-white"
+                >
+                  <option value="P&L">Profit & Loss (P&L)</option>
+                  <option value="Balance Sheet">Balance Sheet</option>
+                </select>
+              </div>
+
+              {editingLedger.statementType === "P&L" && (
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">P&L Cost Nature</label>
+                  <select
+                    value={editingLedger.cogsClassification || "Indirect"}
+                    onChange={(e) => setEditingLedger({ ...editingLedger, cogsClassification: e.target.value })}
+                    className="w-full border border-slate-300 rounded-lg p-2.5 font-bold bg-white text-slate-900"
+                  >
+                    <option value="COGS">Direct Cost / Purchase (COGS)</option>
+                    <option value="Indirect">Indirect Operating Expense (Overhead)</option>
+                    <option value="Revenue">Revenue from Operations</option>
+                    <option value="Other Income">Other / Non-Operating Income</option>
+                  </select>
+                </div>
+              )}
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setEditingLedger(null)}
+                className="px-4 py-2 border border-slate-200 hover:bg-slate-50 text-slate-600 rounded-lg text-xs font-semibold transition"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveEditLedger}
+                className="px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-bold transition shadow-xs"
+              >
+                Update Ledger
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {notification && (
         <div
