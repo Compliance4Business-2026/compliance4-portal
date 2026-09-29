@@ -18,17 +18,29 @@ export const api = {
   },
 
   // ==========================================
-  // 2. Client Profiles
+  // 2. Client Profiles (Smart Local/Cloud Merge)
   // ==========================================
   async getClients() {
+    let cloudClients = {};
     try {
       const res = await fetch(`${BACKEND_BASE}/api/clients`);
-      if (!res.ok) throw new Error("Failed to load clients");
-      return await res.json();
+      if (res.ok) {
+        cloudClients = await res.json();
+      }
     } catch (err) {
-      console.warn("Falling back to local profiles:", err);
-      return JSON.parse(localStorage.getItem("c4_client_profiles") || "{}");
+      console.warn("Cloud client fetch skipped, relying on local profiles:", err);
     }
+
+    // Load local storage fallback profiles
+    const localClients = JSON.parse(localStorage.getItem("c4_client_profiles") || "{}");
+
+    // Merge both: Local profiles take precedence so newly added clients never vanish on refresh
+    const mergedClients = { ...cloudClients, ...localClients };
+
+    // Keep local storage synchronized
+    localStorage.setItem("c4_client_profiles", JSON.stringify(mergedClients));
+
+    return mergedClients;
   },
 
   async saveClientProfile(clientName, profile) {
