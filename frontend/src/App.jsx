@@ -6,6 +6,7 @@ import OtherExpensesModule from "./OtherExpensesModule";
 import BankModule from "./BankModule";
 import SettingsModule from "./SettingsModule";
 import LoginModal from "./LoginModal";
+import { api } from "./api";
 
 import {
   LayoutDashboard,
@@ -77,6 +78,21 @@ export default function App() {
       return "Pansuria Confectionery & Food";
     }
   });
+  // --- SYNC CLIENTS FROM GOOGLE CLOUD FIRESTORE ON APP LOAD ---
+  useEffect(() => {
+    async function loadCloudClients() {
+      try {
+        const cloudClients = await api.getClients();
+        if (cloudClients && Object.keys(cloudClients).length > 0) {
+          setProfiles(cloudClients);
+          localStorage.setItem("c4_client_profiles", JSON.stringify(cloudClients));
+        }
+      } catch (err) {
+        console.error("Error fetching clients from cloud:", err);
+      }
+    }
+    loadCloudClients();
+  }, []);
 
   useEffect(() => {
     localStorage.setItem("c4_active_client", activeClient);
