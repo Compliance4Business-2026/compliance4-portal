@@ -688,7 +688,7 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
         await api.saveBill(activeClient, "pushed", pushedRecord).catch(() => null);
         await api.deleteBill(activeClient, "approved", bill.id).catch(() => null);
 
-        notify(`Invoice #${bill.supplier_invoice_no || bill.invoice_number} synced with Tally Prime & recorded!`, "success");
+        notify(`Invoice #${bill.supplier_invoice_no || bill.invoice_number} synced with Tally Prime & recorded in cloud!`, "success");
       } else {
         throw new Error(data.error || "Tally transmission failed");
       }
@@ -738,80 +738,120 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
     notify("Exported Approved Invoices to Excel CSV!", "success");
   };
 
+  // 100% TALLY-COMPLIANT PURCHASE XML BUILDER
+  const buildSingleXmlVoucher = (b) => {
+    const rawDate = b.voucher_date || b.invoice_date || "2026-09-29";
+    const tallyDate = String(rawDate).replace(/[^0-9]/g, "").padEnd(8, "0").slice(0, 8);
+    const invoiceNo = b.supplier_invoice_no || b.invoice_number || "INV";
+    const party = (b.vendor_name || "Sundry Creditor").replace(/&/g, "&amp;");
+    const total = parseFloat(b.grand_total) || 0;
+    const taxable = parseFloat(b.taxable_amount) || 0;
+    const cgst = parseFloat(b.cgst) || 0;
+    const sgst = parseFloat(b.sgst) || 0;
+    const igst = parseFloat(b.igst) || 0;
+    const expenseLedger = (b.accounting_ledgers?.[0]?.ledger_name || dynamicExpenseLedgers[0] || "Purchases").replace(/&/g, "&amp;");
+    const cgstLedger = (b.cgst_ledger || "Input CGST").replace(/&/g, "&amp;");
+    const sgstLedger = (b.sgst_ledger || "Input SGST").replace(/&/g, "&amp;");
+    const igstLedger = (b.igst_ledger || "Input IGST").replace(/&/g, "&amp;");
+
+    return `
+      <TALLYMESSAGE xmlns:UDF="TallyUDF">
+        <VOUCHER VCHTYPE="Purchase" ACTION="Create" OBJVIEW="Accounting Voucher View">
+          <DATE>${tallyDate}</DATE>
+          <EFFECTIVEDATE>${tallyDate}</EFFECTIVEDATE>
+          <VOUCHERTYPENAME>Purchase</VOUCHERTYPENAME>
+          <VOUCHERNUMBER>${invoiceNo}</VOUCHERNUMBER>
+          <REFERENCE>${invoiceNo}</REFERENCE>
+          <PARTYLEDGERNAME>${party}</PARTYLEDGERNAME>
+          <NARRATION>Purchase Invoice #${invoiceNo} imported via Compliance4</NARRATION>
+          <ISINVOICE>No</ISINVOICE>
+
+          <!-- CREDIT: Supplier / Party Ledger -->
+          <ALLLEDGERENTRIES.LIST>
+            <LEDGERNAME>${party}</LEDGERNAME>
+            <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
+            <LEDGERFROMITEM>No</LEDGERFROMITEM>
+            <REMOVEZEROENTRIES>No</REMOVEZEROENTRIES>
+            <ISPARTYLEDGER>Yes</ISPARTYLEDGER>
+            <AMOUNT>${total.toFixed(2)}</AMOUNT>
+          </ALLLEDGERENTRIES.LIST>
+
+          <!-- DEBIT: Expense Ledger -->
+          <ALLLEDGERENTRIES.LIST>
+            <LEDGERNAME>${expenseLedger}</LEDGERNAME>
+            <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
+            <LEDGERFROMITEM>No</LEDGERFROMITEM>
+            <REMOVEZEROENTRIES>No</REMOVEZEROENTRIES>
+            <ISPARTYLEDGER>No</ISPARTYLEDGER>
+            <AMOUNT>-${taxable.toFixed(2)}</AMOUNT>
+          </ALLLEDGERENTRIES.LIST>
+
+          ${cgst > 0 ? `
+          <!-- DEBIT: CGST -->
+          <ALLLEDGERENTRIES.LIST>
+            <LEDGERNAME>${cgstLedger}</LEDGERNAME>
+            <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
+            <LEDGERFROMITEM>No</LEDGERFROMITEM>
+            <REMOVEZEROENTRIES>No</REMOVEZEROENTRIES>
+            <ISPARTYLEDGER>No</ISPARTYLEDGER>
+            <AMOUNT>-${cgst.toFixed(2)}</AMOUNT>
+          </ALLLEDGERENTRIES.LIST>` : ""}
+
+          ${sgst > 0 ? `
+          <!-- DEBIT: SGST -->
+          <ALLLEDGERENTRIES.LIST>
+            <LEDGERNAME>${sgstLedger}</LEDGERNAME>
+            <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
+            <LEDGERFROMITEM>No</LEDGERFROMITEM>
+            <REMOVEZEROENTRIES>No</REMOVEZEROENTRIES>
+            <ISPARTYLEDGER>No</ISPARTYLEDGER>
+            <AMOUNT>-${sgst.toFixed(2)}</AMOUNT>
+          </ALLLEDGERENTRIES.LIST>` : ""}
+
+          ${igst > 0 ? `
+          <!-- DEBIT: IGST -->
+          <ALLLEDGERENTRIES.LIST>
+            <LEDGERNAME>${igstLedger}</LEDGERNAME>
+            <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
+            <LEDGERFROMITEM>No</LEDGERFROMITEM>
+            <REMOVEZEROENTRIES>No</REMOVEZEROENTRIES>
+            <ISPARTYLEDGER>No</ISPARTYLEDGER>
+            <AMOUNT>-${igst.toFixed(2)}</AMOUNT>
+          </ALLLEDGERENTRIES.LIST>` : ""}
+        </VOUCHER>
+      </TALLYMESSAGE>`;
+  };
+
   const handleDownloadXML = () => {
     if (approvedBills.length === 0) {
       notify("No approved invoices to export.", "error");
       return;
     }
 
-    let xmlVouchers = approvedBills.map(b => {
-      const vDate = (b.voucher_date || b.invoice_date || "").replace(/-/g, "");
-      const invoiceNo = b.supplier_invoice_no || b.invoice_number || "INV";
-      const party = b.vendor_name || "Sundry Creditor";
-      const total = parseFloat(b.grand_total) || 0;
-      const taxable = parseFloat(b.taxable_amount) || 0;
-      const cgst = parseFloat(b.cgst) || 0;
-      const sgst = parseFloat(b.sgst) || 0;
-      const igst = parseFloat(b.igst) || 0;
-      const expenseLedger = b.accounting_ledgers?.[0]?.ledger_name || dynamicExpenseLedgers[0] || "Purchases";
-
-      return `
-    <VOUCHER VCHTYPE="Purchase" ACTION="Create">
-      <DATE>${vDate}</DATE>
-      <VOUCHERTYPENAME>Purchase</VOUCHERTYPENAME>
-      <REFERENCE>${invoiceNo}</REFERENCE>
-      <PARTYLEDGERNAME>${party}</PARTYLEDGERNAME>
-      <NARRATION>Purchase Invoice #${invoiceNo} imported via Compliance4</NARRATION>
-      <ALLLEDGERENTRIES.LIST>
-        <LEDGERNAME>${party}</LEDGERNAME>
-        <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
-        <AMOUNT>${total.toFixed(2)}</AMOUNT>
-      </ALLLEDGERENTRIES.LIST>
-      <ALLLEDGERENTRIES.LIST>
-        <LEDGERNAME>${expenseLedger}</LEDGERNAME>
-        <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
-        <AMOUNT>-${taxable.toFixed(2)}</AMOUNT>
-      </ALLLEDGERENTRIES.LIST>
-      ${cgst > 0 ? `
-      <ALLLEDGERENTRIES.LIST>
-        <LEDGERNAME>${b.cgst_ledger || "Input CGST"}</LEDGERNAME>
-        <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
-        <AMOUNT>-${cgst.toFixed(2)}</AMOUNT>
-      </ALLLEDGERENTRIES.LIST>` : ""}
-      ${sgst > 0 ? `
-      <ALLLEDGERENTRIES.LIST>
-        <LEDGERNAME>${b.sgst_ledger || "Input SGST"}</LEDGERNAME>
-        <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
-        <AMOUNT>-${sgst.toFixed(2)}</AMOUNT>
-      </ALLLEDGERENTRIES.LIST>` : ""}
-      ${igst > 0 ? `
-      <ALLLEDGERENTRIES.LIST>
-        <LEDGERNAME>${b.igst_ledger || "Input IGST"}</LEDGERNAME>
-        <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
-        <AMOUNT>-${igst.toFixed(2)}</AMOUNT>
-      </ALLLEDGERENTRIES.LIST>` : ""}
-    </VOUCHER>`;
-    }).join("");
-
+    const xmlVouchers = approvedBills.map(b => buildSingleXmlVoucher(b)).join("\n");
     const fullXML = `<ENVELOPE>
-  <HEADER><TALLYREQUEST>Import Data</TALLYREQUEST></HEADER>
+  <HEADER>
+    <TALLYREQUEST>Import Data</TALLYREQUEST>
+  </HEADER>
   <BODY>
     <IMPORTDATA>
       <REQUESTDESC>
         <REPORTNAME>Vouchers</REPORTNAME>
-        <STATICVARIABLES><SVCURRENTCOMPANY>${activeClient}</SVCURRENTCOMPANY></STATICVARIABLES>
+        <STATICVARIABLES>
+          <SVCURRENTCOMPANY>${activeClient}</SVCURRENTCOMPANY>
+        </STATICVARIABLES>
       </REQUESTDESC>
       <REQUESTDATA>
-        <TALLYMESSAGE xmlns:UDF="TallyUDF">${xmlVouchers}</TALLYMESSAGE>
+${xmlVouchers}
       </REQUESTDATA>
     </IMPORTDATA>
   </BODY>
 </ENVELOPE>`;
 
-    const blob = new Blob([fullXML], { type: "text/xml" });
+    const blob = new Blob([fullXML], { type: "text/xml;charset=utf-8" });
     const link = document.createElement("a");
     link.href = URL.createObjectURL(blob);
-    link.download = `Tally_Import_Vouchers_${activeClient.replace(/\s+/g, "_")}.xml`;
+    link.download = `Tally_Import_Purchases_${activeClient.replace(/\s+/g, "_")}.xml`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
