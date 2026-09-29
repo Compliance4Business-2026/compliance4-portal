@@ -548,7 +548,67 @@ def delete_bank_transaction(client_name: str, status: str, txn_id: str):
     db.collection("banking").document(client_name.strip()).collection(status).document(str(txn_id)).delete()
     return {"status": "deleted"}
 
-# --- 5.6 Bulk Seeder (Browser localStorage to Firestore) ---
+# --- 5.6 Sales & POS Module Persistence ---
+@app.get("/api/clients/{client_name}/sales")
+def get_sales_records(client_name: str, status: str = "approved"):
+    """Fetch sales invoices and daily POS records by status (draft / approved / pushed)."""
+    docs = db.collection("sales").document(client_name.strip()).collection(status).stream()
+    return [doc.to_dict() for doc in docs]
+
+@app.post("/api/clients/{client_name}/sales")
+def save_sales_record(client_name: str, status: str = "approved", payload: Dict[str, Any] = Body(...)):
+    """Save or update sales records (supports single record or {records: [...]})."""
+    records = payload.get("records")
+    if records is not None and isinstance(records, list):
+        batch = db.batch()
+        for rec in records:
+            rec_id = str(rec.get("id") or f"sale_{int(time.time() * 1000)}")
+            ref = db.collection("sales").document(client_name.strip()).collection(status).document(rec_id)
+            batch.set(ref, rec)
+        batch.commit()
+        return {"status": "success", "count": len(records)}
+
+    rec_id = str(payload.get("id") or f"sale_{int(time.time() * 1000)}")
+    db.collection("sales").document(client_name.strip()).collection(status).document(rec_id).set(payload)
+    return {"status": "success", "id": rec_id}
+
+@app.delete("/api/clients/{client_name}/sales/{status}/{record_id}")
+def delete_sales_record(client_name: str, status: str, record_id: str):
+    """Delete a single sales record."""
+    db.collection("sales").document(client_name.strip()).collection(status).document(str(record_id)).delete()
+    return {"status": "deleted"}
+
+# --- 5.7 Other Expenses Module Persistence ---
+@app.get("/api/clients/{client_name}/expenses")
+def get_expense_records(client_name: str, status: str = "approved"):
+    """Fetch other expense vouchers by status (draft / approved / pushed)."""
+    docs = db.collection("other_expenses").document(client_name.strip()).collection(status).stream()
+    return [doc.to_dict() for doc in docs]
+
+@app.post("/api/clients/{client_name}/expenses")
+def save_expense_record(client_name: str, status: str = "approved", payload: Dict[str, Any] = Body(...)):
+    """Save or update expense records (supports single voucher or {expenses: [...]})."""
+    expenses = payload.get("expenses")
+    if expenses is not None and isinstance(expenses, list):
+        batch = db.batch()
+        for exp in expenses:
+            exp_id = str(exp.get("id") or f"exp_{int(time.time() * 1000)}")
+            ref = db.collection("other_expenses").document(client_name.strip()).collection(status).document(exp_id)
+            batch.set(ref, exp)
+        batch.commit()
+        return {"status": "success", "count": len(expenses)}
+
+    exp_id = str(payload.get("id") or f"exp_{int(time.time() * 1000)}")
+    db.collection("other_expenses").document(client_name.strip()).collection(status).document(exp_id).set(payload)
+    return {"status": "success", "id": exp_id}
+
+@app.delete("/api/clients/{client_name}/expenses/{status}/{expense_id}")
+def delete_expense_record(client_name: str, status: str, expense_id: str):
+    """Delete a single expense voucher."""
+    db.collection("other_expenses").document(client_name.strip()).collection(status).document(str(expense_id)).delete()
+    return {"status": "deleted"}
+
+# --- 5.8 Bulk Seeder (Browser localStorage to Firestore) ---
 @app.post("/api/system/seed-from-backup")
 def seed_from_backup(payload: Dict[str, Any] = Body(...)):
     """Receives your full exported browser backup and writes it directly to Firestore."""
