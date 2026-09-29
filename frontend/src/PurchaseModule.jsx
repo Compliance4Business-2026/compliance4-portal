@@ -27,6 +27,7 @@ import {
   Sparkles,
   Search
 } from "lucide-react";
+import { api } from "./api";
 
 const API_BASE_URL = 
   import.meta.env.VITE_BACKEND_URL || 
@@ -260,13 +261,58 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
     }
   });
 
-  const clientCoa = useMemo(() => {
+  const [clientCoa, setClientCoa] = useState(() => {
     try {
       const saved = localStorage.getItem(`c4_coa_${activeClient}`);
       return saved ? JSON.parse(saved) : [];
     } catch {
       return [];
     }
+  });
+
+  // --- FETCH BILLS & COA FROM FIRESTORE ON LOAD / CLIENT SWITCH ---
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadCloudPurchaseData() {
+      try {
+        const [cloudNeedsReview, cloudApproved, cloudPushed, coaData] = await Promise.all([
+          api.getBills(activeClient, "needs_review").catch(() => null),
+          api.getBills(activeClient, "approved").catch(() => null),
+          api.getBills(activeClient, "pushed").catch(() => null),
+          api.getClientCoa(activeClient).catch(() => null)
+        ]);
+
+        if (!isMounted) return;
+
+        if (Array.isArray(cloudNeedsReview)) {
+          setPendingBills(cloudNeedsReview);
+          localStorage.setItem(`c4_pending_bills_${activeClient}`, JSON.stringify(cloudNeedsReview));
+        }
+        if (Array.isArray(cloudApproved)) {
+          setApprovedBills(cloudApproved);
+          localStorage.setItem(`c4_approved_bills_${activeClient}`, JSON.stringify(cloudApproved));
+        }
+        if (Array.isArray(cloudPushed)) {
+          setPushedBills(cloudPushed);
+          localStorage.setItem(`c4_pushed_bills_${activeClient}`, JSON.stringify(cloudPushed));
+        }
+        if (Array.isArray(coaData) && coaData.length > 0) {
+          setClientCoa(coaData);
+          localStorage.setItem(`c4_coa_${activeClient}`, JSON.stringify(coaData));
+        }
+      } catch (err) {
+        console.warn("Using offline bill storage:", err);
+      }
+    }
+
+    if (activeClient) {
+      loadCloudPurchaseData();
+    }
+
+    return () => {
+      isMounted = false;
+    };
   }, [activeClient]);
 
   const dynamicExpenseLedgers = useMemo(() => {
@@ -463,44 +509,38 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
         persistentPreview = "";
       }
 
-      const formData = new FormData();
-      formData.append("file", file);
-      formData.append("company_name", activeClient);
-
       try {
-        const res = await fetch(`${API_BASE_URL}/api/invoices/upload`, {
-          method: "POST",
-          body: formData,
+        const extracted = await api.extractInvoice(file, activeClient);
+        extracted.id = extracted.id || `inv_${Date.now()}_${i}`;
+        extracted.file_preview_url = persistentPreview;
+
+        if (extracted.items && extracted.items.length > 0) {
+          extracted.accounting_ledgers = extracted.items.map(it => {
+            const cleanKey = (it.item_name || it.description || "").trim().toLowerCase();
+            const memorized = itemRules[cleanKey];
+            return {
+              description: it.description || it.item_name || "Supplies",
+              ledger_name: memorized || defaultLedger,
+              amount: it.amount || 0,
+              isAutoMatched: Boolean(memorized)
+            };
+          });
+        }
+
+        const invNo = extracted.supplier_invoice_no || extracted.invoice_number;
+        const duplicate = checkDuplicateInvoice(invNo, extracted.vendor_name);
+        if (duplicate) {
+          extracted.duplicateWarning = `Already present in ${duplicate.stage}`;
+          duplicateWarningsCount++;
+        }
+
+        // Persist extracted bill into Firestore under 'needs_review'
+        await api.saveBill(activeClient, "needs_review", extracted).catch(err => {
+          console.warn("Failed saving bill to Firestore during upload:", err);
         });
 
-        if (res.ok) {
-          const extracted = await res.json();
-          extracted.id = extracted.id || `inv_${Date.now()}_${i}`;
-          extracted.file_preview_url = persistentPreview;
-
-          if (extracted.items && extracted.items.length > 0) {
-            extracted.accounting_ledgers = extracted.items.map(it => {
-              const cleanKey = (it.item_name || it.description || "").trim().toLowerCase();
-              const memorized = itemRules[cleanKey];
-              return {
-                description: it.description || it.item_name || "Supplies",
-                ledger_name: memorized || defaultLedger,
-                amount: it.amount || 0,
-                isAutoMatched: Boolean(memorized)
-              };
-            });
-          }
-
-          const invNo = extracted.supplier_invoice_no || extracted.invoice_number;
-          const duplicate = checkDuplicateInvoice(invNo, extracted.vendor_name);
-          if (duplicate) {
-            extracted.duplicateWarning = `Already present in ${duplicate.stage}`;
-            duplicateWarningsCount++;
-          }
-
-          newExtractedBills.push(extracted);
-          successCount++;
-        }
+        newExtractedBills.push(extracted);
+        successCount++;
       } catch (err) {
         console.error(`Failed to process ${file.name}:`, err);
       }
@@ -511,7 +551,7 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
       if (duplicateWarningsCount > 0) {
         notify(`Parsed ${successCount} bills (${duplicateWarningsCount} duplicate warnings detected)!`, "info");
       } else {
-        notify(`Successfully extracted ${successCount} out of ${files.length} bills!`, "success");
+        notify(`Successfully extracted ${successCount} out of ${files.length} bills & synced to Firestore!`, "success");
       }
       setPurchaseSubTab("needs_review");
     } else {
@@ -581,7 +621,7 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
     }
   };
 
-  const handleApproveInvoice = () => {
+  const handleApproveInvoice = async () => {
     setShowAllocationModal(false);
     const approvedVoucher = { ...voucherData, isApproved: true };
 
@@ -589,7 +629,16 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
     setPendingBills(remainingPending);
     setApprovedBills(prev => [approvedVoucher, ...prev.filter(b => b.id !== approvedVoucher.id)]);
 
-    notify(`Invoice #${approvedVoucher.supplier_invoice_no} approved!`, "success");
+    try {
+      // 1. Save in 'approved' stage in Firestore
+      await api.saveBill(activeClient, "approved", approvedVoucher);
+      // 2. Remove from 'needs_review' stage in Firestore
+      await api.deleteBill(activeClient, "needs_review", activeReviewBill.id);
+      notify(`Invoice #${approvedVoucher.supplier_invoice_no} approved & synced to Firestore!`, "success");
+    } catch (err) {
+      console.error(err);
+      notify(`Approved locally, Firestore error: ${err.message}`, "info");
+    }
 
     if (remainingPending.length > 0) {
       openReviewWorkspace(remainingPending[0]);
@@ -599,12 +648,19 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
     }
   };
 
-  const handleDeleteCurrentReviewBill = () => {
-    const remainingPending = pendingBills.filter(b => b.id !== activeReviewBill.id);
+  const handleDeleteCurrentReviewBill = async () => {
+    const billToDeleteId = activeReviewBill.id;
+    const remainingPending = pendingBills.filter(b => b.id !== billToDeleteId);
     setPendingBills(remainingPending);
-    setApprovedBills(prev => prev.filter(b => b.id !== activeReviewBill.id));
+    setApprovedBills(prev => prev.filter(b => b.id !== billToDeleteId));
 
-    notify("Invoice deleted.", "info");
+    try {
+      await api.deleteBill(activeClient, "needs_review", billToDeleteId);
+      notify("Invoice deleted from Firestore.", "info");
+    } catch (err) {
+      console.error(err);
+      notify("Deleted locally.", "info");
+    }
 
     if (remainingPending.length > 0) {
       openReviewWorkspace(remainingPending[0]);
@@ -623,9 +679,16 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
 
       const data = await res.json();
       if (data.status === "success" || data.status === "dispatched") {
-        notify(`Invoice #${bill.supplier_invoice_no || bill.invoice_number} synced with Tally Prime!`, "success");
+        const pushedRecord = { ...bill, pushed_at: new Date().toLocaleString() };
+
         setApprovedBills(prev => prev.filter(b => b.id !== bill.id));
-        setPushedBills(prev => [{ ...bill, pushed_at: new Date().toLocaleString() }, ...prev]);
+        setPushedBills(prev => [pushedRecord, ...prev]);
+
+        // Update Firestore stages
+        await api.saveBill(activeClient, "pushed", pushedRecord).catch(() => null);
+        await api.deleteBill(activeClient, "approved", bill.id).catch(() => null);
+
+        notify(`Invoice #${bill.supplier_invoice_no || bill.invoice_number} synced with Tally Prime & recorded!`, "success");
       } else {
         throw new Error(data.error || "Tally transmission failed");
       }
@@ -1688,8 +1751,9 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
                             <Edit2 className="w-3.5 h-3.5" /> Edit
                           </button>
                           <button
-                            onClick={() => {
+                            onClick={async () => {
                               setApprovedBills(prev => prev.filter(x => x.id !== b.id));
+                              await api.deleteBill(activeClient, "approved", b.id).catch(() => null);
                               notify("Invoice removed from Approved tab.", "info");
                             }}
                             title="Remove invoice"
