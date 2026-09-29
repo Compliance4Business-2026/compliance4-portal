@@ -339,65 +339,125 @@ export default function OtherExpensesModule({ activeClient = "Pansuria Confectio
   };
 
   const buildSingleXmlVoucher = (exp) => {
-    const tallyDate = String(exp.voucherDate || exp.date || "20260901").replace(/[^0-9]/g, "");
+    // Tally format YYYYMMDD
+    const rawDate = exp.voucherDate || exp.date || "2026-09-29";
+    const tallyDate = String(rawDate).replace(/[^0-9]/g, "").padEnd(8, "0").slice(0, 8);
+    
     const taxableVal = (parseFloat(exp.taxableAmount || exp.amount || 0)).toFixed(2);
     const grandVal = (parseFloat(exp.grandTotal || exp.amount || 0)).toFixed(2);
     const cgstVal = (parseFloat(exp.cgst || 0)).toFixed(2);
     const sgstVal = (parseFloat(exp.sgst || 0)).toFixed(2);
     const igstVal = (parseFloat(exp.igst || 0)).toFixed(2);
 
+    const vchNumber = String(exp.id || `EXP-${Date.now()}`).slice(-10);
+    const partyName = (exp.payeeName || "Direct Party").replace(/&/g, "&amp;");
+    const expLedger = (exp.expenseLedger || "Office Expenses").replace(/&/g, "&amp;");
+    const crLedger = (exp.creditLedger || "Cash").replace(/&/g, "&amp;");
+    const narration = (exp.narration || `Expense for ${expLedger} - ${partyName}`).replace(/&/g, "&amp;");
+
     return `
-    <VOUCHER VCHTYPE="Journal" ACTION="Create">
-      <DATE>${tallyDate}</DATE>
-      <VOUCHERTYPENAME>Journal</VOUCHERTYPENAME>
-      <REFERENCE>${exp.id || "EXP"}</REFERENCE>
-      <NARRATION>${(exp.narration || `Expense for ${exp.expenseLedger}`).replace(/&/g, "&amp;")} - Party: ${(exp.payeeName || "").replace(/&/g, "&amp;")}</NARRATION>
-      <ALLLEDGERENTRIES.LIST>
-        <LEDGERNAME>${exp.expenseLedger || "Office Expenses"}</LEDGERNAME>
-        <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
-        <AMOUNT>-${taxableVal}</AMOUNT>
-      </ALLLEDGERENTRIES.LIST>
-      ${parseFloat(cgstVal) > 0 ? `
-      <ALLLEDGERENTRIES.LIST>
-        <LEDGERNAME>Input CGST</LEDGERNAME>
-        <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
-        <AMOUNT>-${cgstVal}</AMOUNT>
-      </ALLLEDGERENTRIES.LIST>` : ""}
-      ${parseFloat(sgstVal) > 0 ? `
-      <ALLLEDGERENTRIES.LIST>
-        <LEDGERNAME>Input SGST</LEDGERNAME>
-        <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
-        <AMOUNT>-${sgstVal}</AMOUNT>
-      </ALLLEDGERENTRIES.LIST>` : ""}
-      ${parseFloat(igstVal) > 0 ? `
-      <ALLLEDGERENTRIES.LIST>
-        <LEDGERNAME>Input IGST</LEDGERNAME>
-        <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
-        <AMOUNT>-${igstVal}</AMOUNT>
-      </ALLLEDGERENTRIES.LIST>` : ""}
-      <ALLLEDGERENTRIES.LIST>
-        <LEDGERNAME>${exp.creditLedger || "Cash"}</LEDGERNAME>
-        <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
-        <AMOUNT>${grandVal}</AMOUNT>
-      </ALLLEDGERENTRIES.LIST>
-    </VOUCHER>`;
+      <TALLYMESSAGE xmlns:UDF="TallyUDF">
+        <VOUCHER VCHTYPE="Journal" ACTION="Create" OBJVIEW="Accounting Voucher View">
+          <DATE>${tallyDate}</DATE>
+          <EFFECTIVEDATE>${tallyDate}</EFFECTIVEDATE>
+          <VOUCHERTYPENAME>Journal</VOUCHERTYPENAME>
+          <VOUCHERNUMBER>${vchNumber}</VOUCHERNUMBER>
+          <REFERENCE>${vchNumber}</REFERENCE>
+          <NARRATION>${narration}</NARRATION>
+          <ISINVOICE>No</ISINVOICE>
+
+          <!-- DEBIT: Expense Ledger -->
+          <ALLLEDGERENTRIES.LIST>
+            <LEDGERNAME>${expLedger}</LEDGERNAME>
+            <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
+            <LEDGERFROMITEM>No</LEDGERFROMITEM>
+            <REMOVEZEROENTRIES>No</REMOVEZEROENTRIES>
+            <ISPARTYLEDGER>No</ISPARTYLEDGER>
+            <AMOUNT>-${taxableVal}</AMOUNT>
+          </ALLLEDGERENTRIES.LIST>
+
+          ${parseFloat(cgstVal) > 0 ? `
+          <!-- DEBIT: Input CGST -->
+          <ALLLEDGERENTRIES.LIST>
+            <LEDGERNAME>Input CGST</LEDGERNAME>
+            <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
+            <LEDGERFROMITEM>No</LEDGERFROMITEM>
+            <REMOVEZEROENTRIES>No</REMOVEZEROENTRIES>
+            <ISPARTYLEDGER>No</ISPARTYLEDGER>
+            <AMOUNT>-${cgstVal}</AMOUNT>
+          </ALLLEDGERENTRIES.LIST>` : ""}
+
+          ${parseFloat(sgstVal) > 0 ? `
+          <!-- DEBIT: Input SGST -->
+          <ALLLEDGERENTRIES.LIST>
+            <LEDGERNAME>Input SGST</LEDGERNAME>
+            <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
+            <LEDGERFROMITEM>No</LEDGERFROMITEM>
+            <REMOVEZEROENTRIES>No</REMOVEZEROENTRIES>
+            <ISPARTYLEDGER>No</ISPARTYLEDGER>
+            <AMOUNT>-${sgstVal}</AMOUNT>
+          </ALLLEDGERENTRIES.LIST>` : ""}
+
+          ${parseFloat(igstVal) > 0 ? `
+          <!-- DEBIT: Input IGST -->
+          <ALLLEDGERENTRIES.LIST>
+            <LEDGERNAME>Input IGST</LEDGERNAME>
+            <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
+            <LEDGERFROMITEM>No</LEDGERFROMITEM>
+            <REMOVEZEROENTRIES>No</REMOVEZEROENTRIES>
+            <ISPARTYLEDGER>No</ISPARTYLEDGER>
+            <AMOUNT>-${igstVal}</AMOUNT>
+          </ALLLEDGERENTRIES.LIST>` : ""}
+
+          <!-- CREDIT: Payment / Vendor Ledger -->
+          <ALLLEDGERENTRIES.LIST>
+            <LEDGERNAME>${crLedger}</LEDGERNAME>
+            <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
+            <LEDGERFROMITEM>No</LEDGERFROMITEM>
+            <REMOVEZEROENTRIES>No</REMOVEZEROENTRIES>
+            <ISPARTYLEDGER>Yes</ISPARTYLEDGER>
+            <AMOUNT>${grandVal}</AMOUNT>
+          </ALLLEDGERENTRIES.LIST>
+        </VOUCHER>
+      </TALLYMESSAGE>`;
   };
 
-  const handlePushToTally = async (exp) => {
-    const xmlPayload = `<ENVELOPE>
-  <HEADER><TALLYREQUEST>Import Data</TALLYREQUEST></HEADER>
+  const handleDownloadXML = () => {
+    const list = [...expenses, ...pushedExpenses];
+    if (list.length === 0) {
+      notify("No expense vouchers to export.", "error");
+      return;
+    }
+
+    const xmlVouchers = list.map(e => buildSingleXmlVoucher(e)).join("\n");
+    const fullXML = `<ENVELOPE>
+  <HEADER>
+    <TALLYREQUEST>Import Data</TALLYREQUEST>
+  </HEADER>
   <BODY>
     <IMPORTDATA>
       <REQUESTDESC>
         <REPORTNAME>Vouchers</REPORTNAME>
-        <STATICVARIABLES><SVCURRENTCOMPANY>${activeClient}</SVCURRENTCOMPANY></STATICVARIABLES>
+        <STATICVARIABLES>
+          <SVCURRENTCOMPANY>${activeClient}</SVCURRENTCOMPANY>
+        </STATICVARIABLES>
       </REQUESTDESC>
       <REQUESTDATA>
-        <TALLYMESSAGE xmlns:UDF="TallyUDF">${buildSingleXmlVoucher(exp)}</TALLYMESSAGE>
+${xmlVouchers}
       </REQUESTDATA>
     </IMPORTDATA>
   </BODY>
 </ENVELOPE>`;
+
+    const blob = new Blob([fullXML], { type: "text/xml;charset=utf-8" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = `Tally_Import_Expenses_${activeClient.replace(/\s+/g, "_")}.xml`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    notify("Downloaded Tally-compliant XML import file!", "success");
+  };
 
     try {
       await fetch("http://localhost:9000", {
