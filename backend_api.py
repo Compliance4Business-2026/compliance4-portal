@@ -523,7 +523,32 @@ def delete_bill(client_name: str, stage: str, bill_id: str):
     db.collection("purchases").document(client_name.strip()).collection(stage).document(str(bill_id)).delete()
     return {"status": "deleted"}
 
-# --- 5.5 Bulk Seeder (Browser localStorage to Firestore) ---
+# --- 5.5 Banking & Reconciliation Persistence ---
+@app.get("/api/clients/{client_name}/bank-txns")
+def get_bank_transactions(client_name: str, status: str = "pending"):
+    """Fetch bank transactions by status (pending / reconciled / pushed)."""
+    docs = db.collection("banking").document(client_name.strip()).collection(status).stream()
+    return [doc.to_dict() for doc in docs]
+
+@app.post("/api/clients/{client_name}/bank-txns")
+def save_bank_transactions(client_name: str, status: str = "pending", payload: Dict[str, Any] = Body(...)):
+    """Save or batch update bank transactions."""
+    txns = payload.get("transactions", [])
+    batch = db.batch()
+    for txn in txns:
+        txn_id = str(txn.get("id") or f"bank_{int(time.time() * 1000)}")
+        ref = db.collection("banking").document(client_name.strip()).collection(status).document(txn_id)
+        batch.set(ref, txn)
+    batch.commit()
+    return {"status": "success", "count": len(txns)}
+
+@app.delete("/api/clients/{client_name}/bank-txns/{status}/{txn_id}")
+def delete_bank_transaction(client_name: str, status: str, txn_id: str):
+    """Delete a single bank transaction."""
+    db.collection("banking").document(client_name.strip()).collection(status).document(str(txn_id)).delete()
+    return {"status": "deleted"}
+
+# --- 5.6 Bulk Seeder (Browser localStorage to Firestore) ---
 @app.post("/api/system/seed-from-backup")
 def seed_from_backup(payload: Dict[str, Any] = Body(...)):
     """Receives your full exported browser backup and writes it directly to Firestore."""
