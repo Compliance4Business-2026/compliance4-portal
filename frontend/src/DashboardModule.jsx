@@ -13,7 +13,9 @@ import { api } from "./api";
 
 export default function DashboardModule({ activeClient = "Pansuria Confectionery & Food" }) {
   const [cloudSummary, setCloudSummary] = useState(null);
-  const [selectedPeriod, setSelectedPeriod] = useState("FY2026-27");
+  const [selectedPeriod, setSelectedPeriod] = useState("Current Month");
+  const [customStartDate, setCustomStartDate] = useState("2026-09-01");
+  const [customEndDate, setCustomEndDate] = useState("2026-09-30");
 
   // --- FETCH DASHBOARD SUMMARY FROM FIRESTORE ON LOAD / CLIENT SWITCH ---
   useEffect(() => {
@@ -145,13 +147,16 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
   const isDateInPeriod = (rawDate) => {
     if (selectedPeriod === "All") return true;
     const d = parseToDate(rawDate);
-    if (!d) return true; // Include if date unparseable to avoid data dropping
+    if (!d) return true; // Include if date unparseable
 
     const yr = d.getFullYear();
     const mo = d.getMonth() + 1; // 1-12
 
+    if (selectedPeriod === "Current Month") {
+      // September 2026 (Current system month)
+      return yr === 2026 && mo === 9;
+    }
     if (selectedPeriod === "FY2026-27") {
-      // April 1, 2026 to March 31, 2027
       return (yr === 2026 && mo >= 4) || (yr === 2027 && mo <= 3);
     }
     if (selectedPeriod === "FY2025-26") {
@@ -169,17 +174,24 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
     if (selectedPeriod === "Q4") {
       return yr === 2027 && mo >= 1 && mo <= 3;
     }
+    if (selectedPeriod === "Custom") {
+      if (!customStartDate || !customEndDate) return true;
+      const targetTime = d.setHours(0,0,0,0);
+      const startTime = new Date(customStartDate).setHours(0,0,0,0);
+      const endTime = new Date(customEndDate).setHours(23,59,59,999);
+      return targetTime >= startTime && targetTime <= endTime;
+    }
     return true;
   };
 
   // Filtered datasets based on selected period
-  const filteredNormalSales = useMemo(() => normalSales.filter(inv => isDateInPeriod(inv.invoiceDate || inv.date)), [normalSales, selectedPeriod]);
-  const filteredPosJournals = useMemo(() => posJournals.filter(jv => isDateInPeriod(jv.voucherDate)), [posJournals, selectedPeriod]);
-  const filteredPurchases = useMemo(() => allPurchases.filter(b => isDateInPeriod(b.billDate || b.date || b.voucherDate)), [allPurchases, selectedPeriod]);
-  const filteredOverheads = useMemo(() => allOverheads.filter(e => isDateInPeriod(e.voucherDate || e.date)), [allOverheads, selectedPeriod]);
-  const filteredBankTransactions = useMemo(() => [...bankTransactions, ...bankPushed].filter(t => isDateInPeriod(t.date)), [bankTransactions, bankPushed, selectedPeriod]);
+  const filteredNormalSales = useMemo(() => normalSales.filter(inv => isDateInPeriod(inv.invoiceDate || inv.date)), [normalSales, selectedPeriod, customStartDate, customEndDate]);
+  const filteredPosJournals = useMemo(() => posJournals.filter(jv => isDateInPeriod(jv.voucherDate)), [posJournals, selectedPeriod, customStartDate, customEndDate]);
+  const filteredPurchases = useMemo(() => allPurchases.filter(b => isDateInPeriod(b.billDate || b.date || b.voucherDate)), [allPurchases, selectedPeriod, customStartDate, customEndDate]);
+  const filteredOverheads = useMemo(() => allOverheads.filter(e => isDateInPeriod(e.voucherDate || e.date)), [allOverheads, selectedPeriod, customStartDate, customEndDate]);
+  const filteredBankTransactions = useMemo(() => [...bankTransactions, ...bankPushed].filter(t => isDateInPeriod(t.date)), [bankTransactions, bankPushed, selectedPeriod, customStartDate, customEndDate]);
 
-  // 1. REFINED P&L LEDGER NATURE RESOLVER (SYNCHRONIZED WITH SETTINGS MODULE)
+  // 1. REFINED P&L LEDGER NATURE RESOLVER
   const getLedgerPlNature = (ledgerName, coaList) => {
     if (!ledgerName) return "COGS";
     const clean = ledgerName.trim().toLowerCase();
@@ -515,14 +527,14 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
       <div className="max-w-7xl mx-auto w-full flex flex-col gap-4">
         
         {/* REPORT DOWNLOAD ACTION BAR & PERIOD SELECTOR */}
-        <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex items-center justify-between shrink-0">
+        <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex items-center justify-between shrink-0 flex-wrap gap-3">
           <div>
             <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider">Financial Statements & Reports</h4>
             <p className="text-[11px] text-slate-500">Direct one-click client download center for P&L, AR, and AP reports</p>
           </div>
 
-          <div className="flex items-center gap-3">
-            {/* PERIOD SELECTOR FILTER */}
+          <div className="flex items-center gap-3 flex-wrap">
+            {/* PERIOD SELECTOR FILTER (DEFAULT TO CURRENT MONTH + CUSTOM OPTION) */}
             <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 shadow-2xs">
               <Calendar className="w-3.5 h-3.5 text-slate-500 shrink-0" />
               <select
@@ -530,15 +542,36 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
                 onChange={(e) => setSelectedPeriod(e.target.value)}
                 className="text-xs font-bold text-slate-800 bg-transparent focus:outline-none cursor-pointer"
               >
-                <option value="FY2026-27">Financial Year 2026-27</option>
-                <option value="FY2025-26">Financial Year 2025-26</option>
+                <option value="Current Month">Current Full Month (Sep 2026)</option>
+                <option value="FY2026-27">Financial Year 2026–27</option>
+                <option value="FY2025-26">Financial Year 2025–26</option>
                 <option value="Q1">Q1 (Apr - Jun 2026)</option>
                 <option value="Q2">Q2 (Jul - Sep 2026)</option>
                 <option value="Q3">Q3 (Oct - Dec 2026)</option>
                 <option value="Q4">Q4 (Jan - Mar 2027)</option>
+                <option value="Custom">Custom Date Range...</option>
                 <option value="All">All-Time / Lifetime</option>
               </select>
             </div>
+
+            {/* CONDITIONAL CUSTOM DATE PICKERS */}
+            {selectedPeriod === "Custom" && (
+              <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1 text-xs">
+                <input
+                  type="date"
+                  value={customStartDate}
+                  onChange={(e) => setCustomStartDate(e.target.value)}
+                  className="bg-transparent font-mono text-[11px] focus:outline-none"
+                />
+                <span className="text-slate-400">to</span>
+                <input
+                  type="date"
+                  value={customEndDate}
+                  onChange={(e) => setCustomEndDate(e.target.value)}
+                  className="bg-transparent font-mono text-[11px] focus:outline-none"
+                />
+              </div>
+            )}
 
             <button
               onClick={handleDownloadDynamicPL}
@@ -648,7 +681,7 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
             <div className="flex items-center gap-2">
               <Scale className="w-4 h-4 text-slate-700" />
               <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
-                Statement of Profit and Loss ({selectedPeriod})
+                Statement of Profit and Loss ({selectedPeriod === "Custom" ? `${customStartDate} to ${customEndDate}` : selectedPeriod})
               </h3>
             </div>
             <span className="text-[11px] text-slate-400 font-medium">
