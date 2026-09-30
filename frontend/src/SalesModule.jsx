@@ -816,7 +816,7 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
                        !invoiceHeader.placeOfSupply.startsWith("24");
 
   const computedItems = lines.map((item) => {
-    const qty = parseFloat(item.qty) || 1;
+    const qty = item.uom === "Service / NA" ? 1 : (parseFloat(item.qty) || 1);
     const rate = parseFloat(item.rate) || 0;
     const gross = qty * rate;
     const discPct = parseFloat(item.discountPercent) || 0;
@@ -834,10 +834,10 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
     }
 
     const total = taxable + cgst + sgst + igst;
-    return { ...item, gross, discAmt, taxable, cgst, sgst, igst, total };
+    return { ...item, qty, gross, discAmt, taxable, cgst, sgst, igst, total };
   });
 
-  const totalQuantity = computedItems.reduce((acc, it) => acc + (parseFloat(it.qty) || 0), 0);
+  const totalQuantity = computedItems.reduce((acc, it) => acc + (it.uom === "Service / NA" ? 0 : (parseFloat(it.qty) || 0)), 0);
   const totalTaxable = computedItems.reduce((acc, it) => acc + it.taxable, 0);
   const totalCgst = computedItems.reduce((acc, it) => acc + it.cgst, 0);
   const totalSgst = computedItems.reduce((acc, it) => acc + it.sgst, 0);
@@ -2705,12 +2705,12 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
         </div>
       )}
 
-      {/* MODAL 2: ADD NEW PRODUCT / SERVICE TO CATALOG */}
+      {/* MODAL 2: ADD NEW PRODUCT TO CATALOG (WITH BULK EXCEL UPLOADER) */}
       {showAddItemModal && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full p-6 space-y-4">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <h3 className="text-sm font-bold text-slate-900">Add New Product / Service to Catalog</h3>
+              <h3 className="text-sm font-bold text-slate-900">Add New Product to Catalog</h3>
               <button onClick={() => setShowAddItemModal(false)} className="text-slate-400 hover:text-slate-600">
                 <X className="w-5 h-5" />
               </button>
@@ -2739,10 +2739,10 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
 
             <div className="space-y-3 text-xs">
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">Product / Service Name</label>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Product / Item Name</label>
                 <input
                   type="text"
-                  placeholder="e.g. Professional Fees For Accounting"
+                  placeholder="e.g. Red Velvet Pastry"
                   value={newItem.itemName}
                   onChange={(e) => setNewItem({ ...newItem, itemName: e.target.value })}
                   className="w-full text-xs font-semibold border border-slate-300 rounded p-2"
@@ -2907,8 +2907,8 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
               <table className="w-full text-left text-[11px] border border-slate-200">
                 <thead className="bg-slate-50 border-b font-bold uppercase text-[9px]">
                   <tr>
-                    <th className="p-1.5 border-r">Item / Service</th>
-                    <th className="p-1.5 border-r text-center">HSN / SAC</th>
+                    <th className="p-1.5 border-r">Item</th>
+                    <th className="p-1.5 border-r text-center">HSN</th>
                     <th className="p-1.5 border-r text-right">Qty</th>
                     <th className="p-1.5 border-r text-center">UOM</th>
                     <th className="p-1.5 border-r text-right">Rate</th>
