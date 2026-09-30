@@ -303,9 +303,9 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
     setTimeout(() => setNotification(null), 4000);
   };
 
-  // --- BULK EXCEL ITEM UPLOADER FOR INVOICE ---
-  const invoiceExcelInputRef = useRef(null);
-  const handleBulkInvoiceItemUpload = async (e) => {
+  // --- BULK CATALOG ITEM UPLOADER (SAVED TO MASTER CATALOG) ---
+  const catalogExcelInputRef = useRef(null);
+  const handleBulkCatalogItemUpload = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
 
@@ -328,12 +328,10 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
           const nameIdx = headers.findIndex((h) => h.includes("item") || h.includes("name") || h.includes("product"));
           const hsnIdx = headers.findIndex((h) => h.includes("hsn") || h.includes("sac"));
           const uomIdx = headers.findIndex((h) => h.includes("uom") || h.includes("unit"));
-          const qtyIdx = headers.findIndex((h) => h.includes("qty") || h.includes("quantity"));
-          const rateIdx = headers.findIndex((h) => h.includes("rate") || h.includes("price") || h.includes("amount"));
-          const discIdx = headers.findIndex((h) => h.includes("disc") || h.includes("discount"));
+          const rateIdx = headers.findIndex((h) => h.includes("rate") || h.includes("price") || h.includes("excl"));
           const taxIdx = headers.findIndex((h) => h.includes("tax") || h.includes("gst"));
 
-          const importedLines = [];
+          const importedCatalogItems = [];
           for (let i = 1; i < rows.length; i++) {
             const r = rows[i];
             const itemName = nameIdx !== -1 ? String(r[nameIdx] || "").trim() : String(r[0] || "").trim();
@@ -341,34 +339,32 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
 
             const hsnCode = hsnIdx !== -1 ? String(r[hsnIdx] || "").trim() : (r[1] ? String(r[1]).trim() : "");
             const uom = uomIdx !== -1 ? String(r[uomIdx] || "Boxes").trim() : "Boxes";
-            const qty = qtyIdx !== -1 ? parseFloat(r[qtyIdx]) || 1 : 1;
-            const rate = rateIdx !== -1 ? parseFloat(String(r[rateIdx]).replace(/[^0-9.-]/g, "")) || 0 : 0;
-            const discountPercent = discIdx !== -1 ? parseFloat(r[discIdx]) || 0 : (invoiceHeader.discountPercent || 0);
+            const priceExcl = rateIdx !== -1 ? parseFloat(String(r[rateIdx]).replace(/[^0-9.-]/g, "")) || 0 : 0;
             const taxRate = taxIdx !== -1 ? parseFloat(r[taxIdx]) || 5 : 5;
 
-            importedLines.push({
-              id: Date.now() + i,
+            importedCatalogItems.push({
+              id: `item_bulk_${Date.now()}_${i}`,
               itemName,
               hsnCode,
               uom: UOM_OPTIONS.includes(uom) ? uom : "Boxes",
-              qty,
-              rate,
-              discountPercent,
-              taxRate
+              taxRate,
+              priceExcl,
+              priceIncl: priceExcl + (priceExcl * taxRate) / 100
             });
           }
 
-          if (importedLines.length > 0) {
-            setLines(prev => (prev.length === 1 && !prev[0].itemName ? importedLines : [...prev, ...importedLines]));
-            notify(`Successfully imported ${importedLines.length} items from Excel!`, "success");
+          if (importedCatalogItems.length > 0) {
+            setItemCatalog(prev => [...importedCatalogItems, ...prev]);
+            setShowAddItemModal(false);
+            notify(`Successfully imported and saved ${importedCatalogItems.length} items to Master Catalog!`, "success");
           } else {
-            notify("Could not detect item rows. Ensure columns have headers like Name, Qty, Rate.", "error");
+            notify("Could not parse items. Ensure columns include Item Name and Rate.", "error");
           }
         } catch (err) {
           console.error(err);
           notify("Failed to parse Excel file.", "error");
         } finally {
-          if (invoiceExcelInputRef.current) invoiceExcelInputRef.current.value = "";
+          if (catalogExcelInputRef.current) catalogExcelInputRef.current.value = "";
         }
       };
 
@@ -1703,31 +1699,13 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
                         Total Quantity: {totalQuantity}
                       </span>
                     </div>
-                    
-                    <div className="flex items-center gap-3">
-                      {/* BULK UPLOAD EXCEL BUTTON */}
-                      <input
-                        type="file"
-                        ref={invoiceExcelInputRef}
-                        onChange={handleBulkInvoiceItemUpload}
-                        accept=".csv, .xlsx, .xls"
-                        className="hidden"
-                      />
-                      <button
-                        onClick={() => invoiceExcelInputRef.current?.click()}
-                        className="inline-flex items-center gap-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 text-xs font-bold px-3 py-1.5 rounded-lg transition shadow-xs"
-                        title="Upload Excel with 100+ items (Columns: Name, HSN, Uom, Qty, Rate)"
-                      >
-                        <Upload className="w-3.5 h-3.5" /> Upload Item Excel
-                      </button>
 
-                      <button
-                        onClick={handleAddLine}
-                        className="inline-flex items-center gap-1 text-xs font-bold text-slate-900 hover:text-slate-700 bg-slate-100 px-3 py-1.5 rounded-lg"
-                      >
-                        <Plus className="w-3.5 h-3.5" /> Add Product Row
-                      </button>
-                    </div>
+                    <button
+                      onClick={handleAddLine}
+                      className="inline-flex items-center gap-1 text-xs font-bold text-slate-900 hover:text-slate-700 bg-slate-100 px-3 py-1.5 rounded-lg"
+                    >
+                      <Plus className="w-3.5 h-3.5" /> Add Product Row
+                    </button>
                   </div>
 
                   <div className="border border-slate-200 rounded-xl overflow-hidden shadow-sm">
@@ -2727,7 +2705,7 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
         </div>
       )}
 
-      {/* MODAL 2: ADD NEW PRODUCT TO CATALOG */}
+      {/* MODAL 2: ADD NEW PRODUCT TO CATALOG (WITH BULK EXCEL UPLOADER) */}
       {showAddItemModal && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full p-6 space-y-4">
@@ -2735,6 +2713,27 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
               <h3 className="text-sm font-bold text-slate-900">Add New Product to Catalog</h3>
               <button onClick={() => setShowAddItemModal(false)} className="text-slate-400 hover:text-slate-600">
                 <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* BULK UPLOAD EXCEL SECTION INSIDE MODAL */}
+            <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center justify-between gap-4">
+              <div>
+                <p className="text-xs font-bold text-emerald-900">Have 100+ items?</p>
+                <p className="text-[10px] text-emerald-700">Upload Excel/CSV to add all items at once to your catalog.</p>
+              </div>
+              <input
+                type="file"
+                ref={catalogExcelInputRef}
+                onChange={handleBulkCatalogItemUpload}
+                accept=".csv, .xlsx, .xls"
+                className="hidden"
+              />
+              <button
+                onClick={() => catalogExcelInputRef.current?.click()}
+                className="inline-flex items-center gap-1.5 bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold px-3 py-2 rounded-lg transition shadow-xs shrink-0"
+              >
+                <Upload className="w-3.5 h-3.5" /> Upload Items Excel
               </button>
             </div>
 
