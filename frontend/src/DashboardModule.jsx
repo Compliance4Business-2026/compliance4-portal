@@ -6,12 +6,14 @@ import {
   ArrowDownRight, 
   Scale, 
   Activity,
-  Download
+  Download,
+  Calendar
 } from "lucide-react";
 import { api } from "./api";
 
 export default function DashboardModule({ activeClient = "Pansuria Confectionery & Food" }) {
   const [cloudSummary, setCloudSummary] = useState(null);
+  const [selectedPeriod, setSelectedPeriod] = useState("FY2026-27");
 
   // --- FETCH DASHBOARD SUMMARY FROM FIRESTORE ON LOAD / CLIENT SWITCH ---
   useEffect(() => {
@@ -139,6 +141,44 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
     return isNaN(d.getTime()) ? null : d;
   };
 
+  // Date range filter helper based on selectedPeriod
+  const isDateInPeriod = (rawDate) => {
+    if (selectedPeriod === "All") return true;
+    const d = parseToDate(rawDate);
+    if (!d) return true; // Include if date unparseable to avoid data dropping
+
+    const yr = d.getFullYear();
+    const mo = d.getMonth() + 1; // 1-12
+
+    if (selectedPeriod === "FY2026-27") {
+      // April 1, 2026 to March 31, 2027
+      return (yr === 2026 && mo >= 4) || (yr === 2027 && mo <= 3);
+    }
+    if (selectedPeriod === "FY2025-26") {
+      return (yr === 2025 && mo >= 4) || (yr === 2026 && mo <= 3);
+    }
+    if (selectedPeriod === "Q1") {
+      return yr === 2026 && mo >= 4 && mo <= 6;
+    }
+    if (selectedPeriod === "Q2") {
+      return yr === 2026 && mo >= 7 && mo <= 9;
+    }
+    if (selectedPeriod === "Q3") {
+      return yr === 2026 && mo >= 10 && mo <= 12;
+    }
+    if (selectedPeriod === "Q4") {
+      return yr === 2027 && mo >= 1 && mo <= 3;
+    }
+    return true;
+  };
+
+  // Filtered datasets based on selected period
+  const filteredNormalSales = useMemo(() => normalSales.filter(inv => isDateInPeriod(inv.invoiceDate || inv.date)), [normalSales, selectedPeriod]);
+  const filteredPosJournals = useMemo(() => posJournals.filter(jv => isDateInPeriod(jv.voucherDate)), [posJournals, selectedPeriod]);
+  const filteredPurchases = useMemo(() => allPurchases.filter(b => isDateInPeriod(b.billDate || b.date || b.voucherDate)), [allPurchases, selectedPeriod]);
+  const filteredOverheads = useMemo(() => allOverheads.filter(e => isDateInPeriod(e.voucherDate || e.date)), [allOverheads, selectedPeriod]);
+  const filteredBankTransactions = useMemo(() => [...bankTransactions, ...bankPushed].filter(t => isDateInPeriod(t.date)), [bankTransactions, bankPushed, selectedPeriod]);
+
   // 1. REFINED P&L LEDGER NATURE RESOLVER (SYNCHRONIZED WITH SETTINGS MODULE)
   const getLedgerPlNature = (ledgerName, coaList) => {
     if (!ledgerName) return "COGS";
@@ -151,7 +191,6 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
       if (matched.cogsClassification === "Revenue") return "Revenue";
       if (matched.cogsClassification === "Other Income") return "Other Income";
 
-      // Fallback based on category
       const cat = (matched.category || "").toLowerCase();
       if (cat.includes("sales") || cat.includes("revenue") || cat.includes("turnover")) return "Revenue";
       if (cat.includes("other income") || cat.includes("interest")) return "Other Income";
@@ -159,7 +198,6 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
       return "Indirect";
     }
 
-    // Default heuristic if ledger not found in COA
     if (clean.includes("sales") || clean.startsWith("sale")) return "Revenue";
     if (clean.includes("interest") || clean.includes("other income")) return "Other Income";
     const isIndirect = 
@@ -195,52 +233,44 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
 
   // 2. SCHEDULE BREAKDOWN
   const plBreakdown = useMemo(() => {
-    let directCogs = cloudSummary ? cloudSummary.totalPurchases : 0;
+    let directCogs = 0;
     let otherIncomeTotal = 0;
     const indirectCategories = {};
 
-    if (!cloudSummary) {
-      // A. Purchase Register Line-Item Inspection
-      allPurchases.forEach((bill) => {
-        const lines = bill.accounting_ledgers || bill.items || [];
-        if (lines.length > 0) {
-          lines.forEach((line) => {
-            const lName = line.ledger_name || line.ledger || "";
-            const amt = parseFloat(line.amount) || 0;
-            const nature = getLedgerPlNature(lName, clientCoa);
+    filteredPurchases.forEach((bill) => {
+      const lines = bill.accounting_ledgers || bill.items || [];
+      if (lines.length > 0) {
+        lines.forEach((line) => {
+          const lName = line.ledger_name || line.ledger || "";
+          const amt = parseFloat(line.amount) || 0;
+          const nature = getLedgerPlNature(lName, clientCoa);
 
-            if (nature === "COGS") {
-              directCogs += amt;
-            } else if (nature === "Indirect") {
-              const cat = getCategoryForLedger(lName, clientCoa);
-              indirectCategories[cat] = (indirectCategories[cat] || 0) + amt;
-            }
-          });
-        } else {
-          const bAmt = parseFloat(bill.taxableAmount) || 0;
-          directCogs += bAmt;
-        }
-      });
-    }
+          if (nature === "COGS") {
+            directCogs += amt;
+          } else if (nature === "Indirect") {
+            const cat = getCategoryForLedger(lName, clientCoa);
+            indirectCategories[cat] = (indirectCategories[cat] || 0) + amt;
+          }
+        });
+      } else {
+        const bAmt = parseFloat(bill.taxableAmount) || 0;
+        directCogs += bAmt;
+      }
+    });
 
-    // B. Other Expenses Register Vouchers
-    allOverheads.forEach((exp) => {
+    filteredOverheads.forEach((exp) => {
       const nature = getLedgerPlNature(exp.expenseLedger, clientCoa);
       const amt = parseFloat(exp.taxableAmount || exp.amount) || 0;
 
       if (nature === "Other Income") {
         otherIncomeTotal += amt;
-      } else if (nature === "COGS" && !cloudSummary) {
+      } else if (nature === "COGS") {
         directCogs += amt;
-      } else if (!cloudSummary) {
+      } else {
         const cat = exp.group || "Administrative & General Expenses";
         indirectCategories[cat] = (indirectCategories[cat] || 0) + amt;
       }
     });
-
-    if (cloudSummary) {
-      indirectCategories["Administrative & General Expenses"] = cloudSummary.totalExpenses;
-    }
 
     const totalIndirect = Object.values(indirectCategories).reduce((acc, v) => acc + v, 0);
 
@@ -250,37 +280,35 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
       totalIndirect,
       otherIncomeTotal
     };
-  }, [allPurchases, allOverheads, clientCoa, cloudSummary]);
+  }, [filteredPurchases, filteredOverheads, clientCoa]);
 
   // 3. TOP 4 KPI CALCULATIONS
   const kpiData = useMemo(() => {
-    const normalRev = normalSales.reduce((acc, inv) => acc + (parseFloat(inv.taxableAmount) || 0), 0);
-    const posRev = posJournals.reduce((acc, jv) => acc + (parseFloat(jv.totalTaxable) || 0), 0);
-    const localRevenue = normalRev + posRev;
-    const totalRevenue = localRevenue > 0 ? localRevenue : (cloudSummary ? cloudSummary.totalSales : 0);
+    const normalRev = filteredNormalSales.reduce((acc, inv) => acc + (parseFloat(inv.taxableAmount) || 0), 0);
+    const posRev = filteredPosJournals.reduce((acc, jv) => acc + (parseFloat(jv.totalTaxable) || 0), 0);
+    const totalRevenue = normalRev + posRev;
 
-    const normalGross = normalSales.reduce((acc, inv) => acc + (parseFloat(inv.grandTotal) || 0), 0);
-    const posGross = posJournals.reduce((acc, jv) => acc + (parseFloat(jv.totalDebits) || 0), 0);
+    const normalGross = filteredNormalSales.reduce((acc, inv) => acc + (parseFloat(inv.grandTotal) || 0), 0);
+    const posGross = filteredPosJournals.reduce((acc, jv) => acc + (parseFloat(jv.totalDebits) || 0), 0);
     const totalGross = normalGross + posGross;
 
     const totalCost = plBreakdown.directCogs + plBreakdown.totalIndirect;
-    const localNetProfit = totalRevenue + plBreakdown.otherIncomeTotal - totalCost;
-    const netProfit = cloudSummary && localRevenue === 0 ? (cloudSummary.totalSales - (cloudSummary.totalPurchases + cloudSummary.totalExpenses)) : localNetProfit;
+    const netProfit = totalRevenue + plBreakdown.otherIncomeTotal - totalCost;
     const netMargin = totalRevenue > 0 ? (netProfit / totalRevenue) * 100 : 0;
 
-    const totalVendorBills = allPurchases.reduce((acc, b) => acc + (parseFloat(b.grandTotal || b.taxableAmount) || 0), 0);
-    const totalPayableOverheads = allOverheads.reduce((acc, e) => acc + (parseFloat(e.grandTotal || e.amount) || 0), 0);
-    const bankVendorPayments = [...bankTransactions, ...bankPushed]
+    const totalVendorBills = filteredPurchases.reduce((acc, b) => acc + (parseFloat(b.grandTotal || b.taxableAmount) || 0), 0);
+    const totalPayableOverheads = filteredOverheads.reduce((acc, e) => acc + (parseFloat(e.grandTotal || e.amount) || 0), 0);
+    const bankVendorPayments = filteredBankTransactions
       .filter((t) => t.type === "Payment" && (t.allocatedLedger || "").toLowerCase().includes("creditor"))
       .reduce((acc, t) => acc + (parseFloat(t.amount) || 0), 0);
     const accountsPayable = Math.max(totalVendorBills + totalPayableOverheads - bankVendorPayments, 0);
 
-    const totalDebtorInvoices = normalSales.reduce((acc, inv) => acc + (parseFloat(inv.grandTotal) || 0), 0);
-    const bankDebtorReceipts = [...bankTransactions, ...bankPushed]
+    const totalDebtorInvoices = filteredNormalSales.reduce((acc, inv) => acc + (parseFloat(inv.grandTotal) || 0), 0);
+    const bankDebtorReceipts = filteredBankTransactions
       .filter((t) => t.type === "Receipt" && (t.allocatedLedger || "").toLowerCase().includes("debtor"))
       .reduce((acc, t) => acc + (parseFloat(t.amount) || 0), 0);
 
-    const aggregatorReceivables = posJournals.reduce((acc, jv) => {
+    const aggregatorReceivables = filteredPosJournals.reduce((acc, jv) => {
       const zDel = parseFloat(jv.dr?.zomatoDelivery) || 0;
       const sDel = parseFloat(jv.dr?.swiggyDelivery) || 0;
       return acc + zDel + sDel;
@@ -294,9 +322,9 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
       netMargin,
       accountsPayable,
       accountsReceivable,
-      salesCount: normalSales.length + posJournals.length
+      salesCount: filteredNormalSales.length + filteredPosJournals.length
     };
-  }, [normalSales, posJournals, allPurchases, allOverheads, bankTransactions, bankPushed, plBreakdown, cloudSummary]);
+  }, [filteredNormalSales, filteredPosJournals, filteredPurchases, filteredOverheads, filteredBankTransactions, plBreakdown]);
 
   // --- DOWNLOAD HANDLERS FOR P&L, AR, AND AP ---
   const handleDownloadDynamicPL = async () => {
@@ -304,13 +332,12 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
       const coa = await api.getClientCoa(activeClient).catch(() => clientCoa);
       const revenueLedgers = coa.filter(l => l.statementType === "P&L" && (l.category?.toLowerCase().includes("revenue") || l.category?.toLowerCase().includes("sales")));
       const cogsLedgers = coa.filter(l => l.statementType === "P&L" && l.cogsClassification === "COGS");
-      const expenseLedgers = coa.filter(l => l.statementType === "P&L" && !revenueLedgers.includes(l) && !cogsLedgers.includes(l));
 
       const grossProfit = kpiData.totalRevenue - plBreakdown.directCogs;
       const netProfit = kpiData.netProfit;
 
       const rows = [
-        `"${activeClient} - Profit & Loss Statement"`,
+        `"${activeClient} - Profit & Loss Statement (${selectedPeriod})"`,
         `"Generated On","${new Date().toLocaleDateString("en-IN")}"`,
         ``,
         `"PARTICULARS","CATEGORY","AMOUNT (₹)"`,
@@ -344,7 +371,7 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
       const blob = new Blob([rows.join("\n")], { type: "text/csv;charset=utf-8;" });
       const link = document.createElement("a");
       link.href = URL.createObjectURL(blob);
-      link.download = `Profit_Loss_${activeClient.replace(/\s+/g, "_")}.csv`;
+      link.download = `Profit_Loss_${activeClient.replace(/\s+/g, "_")}_${selectedPeriod}.csv`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
@@ -356,7 +383,7 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
 
   const handleDownloadARAPReport = (type = "AR") => {
     const isAR = type === "AR";
-    const title = isAR ? "ACCOUNTS RECEIVABLE (AR) REPORT" : "ACCOUNTS PAYABLE (AP) REPORT";
+    const title = isAR ? `ACCOUNTS RECEIVABLE (AR) REPORT (${selectedPeriod})` : `ACCOUNTS PAYABLE (AP) REPORT (${selectedPeriod})`;
     const amountVal = isAR ? kpiData.accountsReceivable : kpiData.accountsPayable;
 
     const headers = ["Party / Ledger Name", "Reference", "Status", "Amount Due (₹)"];
@@ -372,7 +399,7 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
     const blob = new Blob([rows.join("\n")], { type: "text/csv;charset=utf-8;" });
     const link = document.createElement("a");
     link.href = URL.createObjectURL(blob);
-    link.download = `${type}_Report_${activeClient.replace(/\s+/g, "_")}.csv`;
+    link.download = `${type}_Report_${activeClient.replace(/\s+/g, "_")}_${selectedPeriod}.csv`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -487,13 +514,32 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
     <div className="flex-1 flex flex-col h-full bg-[#F8FAFC] overflow-y-auto p-6 font-sans">
       <div className="max-w-7xl mx-auto w-full flex flex-col gap-4">
         
-        {/* REPORT DOWNLOAD ACTION BAR */}
+        {/* REPORT DOWNLOAD ACTION BAR & PERIOD SELECTOR */}
         <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex items-center justify-between shrink-0">
           <div>
             <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider">Financial Statements & Reports</h4>
             <p className="text-[11px] text-slate-500">Direct one-click client download center for P&L, AR, and AP reports</p>
           </div>
-          <div className="flex items-center gap-2">
+
+          <div className="flex items-center gap-3">
+            {/* PERIOD SELECTOR FILTER */}
+            <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 shadow-2xs">
+              <Calendar className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+              <select
+                value={selectedPeriod}
+                onChange={(e) => setSelectedPeriod(e.target.value)}
+                className="text-xs font-bold text-slate-800 bg-transparent focus:outline-none cursor-pointer"
+              >
+                <option value="FY2026-27">Financial Year 2026-27</option>
+                <option value="FY2025-26">Financial Year 2025-26</option>
+                <option value="Q1">Q1 (Apr - Jun 2026)</option>
+                <option value="Q2">Q2 (Jul - Sep 2026)</option>
+                <option value="Q3">Q3 (Oct - Dec 2026)</option>
+                <option value="Q4">Q4 (Jan - Mar 2027)</option>
+                <option value="All">All-Time / Lifetime</option>
+              </select>
+            </div>
+
             <button
               onClick={handleDownloadDynamicPL}
               className="flex items-center gap-1.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold px-3.5 py-2 rounded-lg transition shadow-xs"
@@ -602,7 +648,7 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
             <div className="flex items-center gap-2">
               <Scale className="w-4 h-4 text-slate-700" />
               <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
-                Statement of Profit and Loss (Current Period)
+                Statement of Profit and Loss ({selectedPeriod})
               </h3>
             </div>
             <span className="text-[11px] text-slate-400 font-medium">
@@ -645,7 +691,6 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
                 </td>
               </tr>
 
-              {/* OTHER INCOME (IF ANY) */}
               {plBreakdown.otherIncomeTotal > 0 && (
                 <tr className="hover:bg-slate-50/50 bg-emerald-50/30">
                   <td className="py-2 px-6 font-semibold text-emerald-800">Add: Other / Non-Operating Income</td>
@@ -751,11 +796,11 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
               }`}>
                 {last6MonthsData.reduce((acc, m) => acc + m.netProfit, 0) >= 0 ? "+" : ""}
                 ₹{last6MonthsData.reduce((acc, m) => acc + m.netProfit, 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}
-            </span>
+              </span>
+            </div>
+            {renderLineChart(last6MonthsData, "netProfit", "#6366f1", "#6366f1")}
           </div>
-          {renderLineChart(last6MonthsData, "netProfit", "#6366f1", "#6366f1")}
         </div>
-      </div>
 
       </div>
     </div>
