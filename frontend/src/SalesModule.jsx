@@ -303,6 +303,81 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
     setTimeout(() => setNotification(null), 4000);
   };
 
+  // --- BULK EXCEL ITEM UPLOADER FOR INVOICE ---
+  const invoiceExcelInputRef = useRef(null);
+  const handleBulkInvoiceItemUpload = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    try {
+      const XLSX = await loadSheetJS();
+      const reader = new FileReader();
+
+      reader.onload = (event) => {
+        try {
+          const data = new Uint8Array(event.target.result);
+          const workbook = XLSX.read(data, { type: "array" });
+          const rows = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { header: 1, defval: "" });
+
+          if (!rows || rows.length < 2) {
+            notify("Uploaded file has no rows.", "error");
+            return;
+          }
+
+          const headers = (rows[0] || []).map((h) => String(h || "").trim().toLowerCase());
+          const nameIdx = headers.findIndex((h) => h.includes("item") || h.includes("name") || h.includes("product"));
+          const hsnIdx = headers.findIndex((h) => h.includes("hsn") || h.includes("sac"));
+          const uomIdx = headers.findIndex((h) => h.includes("uom") || h.includes("unit"));
+          const qtyIdx = headers.findIndex((h) => h.includes("qty") || h.includes("quantity"));
+          const rateIdx = headers.findIndex((h) => h.includes("rate") || h.includes("price") || h.includes("amount"));
+          const discIdx = headers.findIndex((h) => h.includes("disc") || h.includes("discount"));
+          const taxIdx = headers.findIndex((h) => h.includes("tax") || h.includes("gst"));
+
+          const importedLines = [];
+          for (let i = 1; i < rows.length; i++) {
+            const r = rows[i];
+            const itemName = nameIdx !== -1 ? String(r[nameIdx] || "").trim() : String(r[0] || "").trim();
+            if (!itemName) continue;
+
+            const hsnCode = hsnIdx !== -1 ? String(r[hsnIdx] || "").trim() : (r[1] ? String(r[1]).trim() : "");
+            const uom = uomIdx !== -1 ? String(r[uomIdx] || "Boxes").trim() : "Boxes";
+            const qty = qtyIdx !== -1 ? parseFloat(r[qtyIdx]) || 1 : 1;
+            const rate = rateIdx !== -1 ? parseFloat(String(r[rateIdx]).replace(/[^0-9.-]/g, "")) || 0 : 0;
+            const discountPercent = discIdx !== -1 ? parseFloat(r[discIdx]) || 0 : (invoiceHeader.discountPercent || 0);
+            const taxRate = taxIdx !== -1 ? parseFloat(r[taxIdx]) || 5 : 5;
+
+            importedLines.push({
+              id: Date.now() + i,
+              itemName,
+              hsnCode,
+              uom: UOM_OPTIONS.includes(uom) ? uom : "Boxes",
+              qty,
+              rate,
+              discountPercent,
+              taxRate
+            });
+          }
+
+          if (importedLines.length > 0) {
+            setLines(prev => (prev.length === 1 && !prev[0].itemName ? importedLines : [...prev, ...importedLines]));
+            notify(`Successfully imported ${importedLines.length} items from Excel!`, "success");
+          } else {
+            notify("Could not detect item rows. Ensure columns have headers like Name, Qty, Rate.", "error");
+          }
+        } catch (err) {
+          console.error(err);
+          notify("Failed to parse Excel file.", "error");
+        } finally {
+          if (invoiceExcelInputRef.current) invoiceExcelInputRef.current.value = "";
+        }
+      };
+
+      reader.readAsArrayBuffer(file);
+    } catch {
+      notify("Failed to load spreadsheet engine.", "error");
+    }
+  };
+
   // =========================================================================
   // POS CONSOLIDATED SALES
   // =========================================================================
@@ -1104,6 +1179,12 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
             <div>ORIGINAL FOR RECIPIENT</div>
           </div>
 
+          ${invoice.invoiceType === "Export Invoice" ? `
+            <div style="background: #fffbeb; border-bottom: 1.5px solid #2b6cb0; padding: 4px 10px; font-size: 8.5px; font-weight: 900; color: #92400e; text-align: center; text-transform: uppercase;">
+              Supply Meant for Export Under Bond or Letter of Undertaking without Payment of Integrated Tax (IGST) ${invoice.lutNumber ? `(LUT No: ${invoice.lutNumber})` : ""}
+            </div>
+          ` : ""}
+
           <div class="two-col border-b">
             <div class="col-half border-r" style="padding: 6px 10px; font-size: 9.5px; line-height: 1.35;">
               <div style="font-weight: 900; font-size: 9px; text-transform: uppercase; color: #4a5568; margin-bottom: 3px;">Details of Buyer | Billed to :</div>
@@ -1403,6 +1484,13 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
                   )}
                 </div>
 
+                {/* MANDATORY EXPORT DECLARATION BANNER */}
+                {invoiceType === "Export Invoice" && (
+                  <div className="p-3 bg-amber-50 border border-amber-300 rounded-xl text-center text-amber-900 text-xs font-extrabold uppercase tracking-wide">
+                    Supply Meant for Export Under Bond or Letter of Undertaking without Payment of Integrated Tax (IGST) {lutNumber ? `(LUT No: ${lutNumber})` : ""}
+                  </div>
+                )}
+
                 <div className="grid grid-cols-4 gap-4">
                   <div>
                     <label className="block text-xs font-bold text-slate-700 mb-1">Invoice Number</label>
@@ -1615,12 +1703,31 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
                         Total Quantity: {totalQuantity}
                       </span>
                     </div>
-                    <button
-                      onClick={handleAddLine}
-                      className="inline-flex items-center gap-1 text-xs font-bold text-slate-900 hover:text-slate-700"
-                    >
-                      <Plus className="w-3.5 h-3.5" /> Add Product Row
-                    </button>
+                    
+                    <div className="flex items-center gap-3">
+                      {/* BULK UPLOAD EXCEL BUTTON */}
+                      <input
+                        type="file"
+                        ref={invoiceExcelInputRef}
+                        onChange={handleBulkInvoiceItemUpload}
+                        accept=".csv, .xlsx, .xls"
+                        className="hidden"
+                      />
+                      <button
+                        onClick={() => invoiceExcelInputRef.current?.click()}
+                        className="inline-flex items-center gap-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 text-xs font-bold px-3 py-1.5 rounded-lg transition shadow-xs"
+                        title="Upload Excel with 100+ items (Columns: Name, HSN, Uom, Qty, Rate)"
+                      >
+                        <Upload className="w-3.5 h-3.5" /> Upload Item Excel
+                      </button>
+
+                      <button
+                        onClick={handleAddLine}
+                        className="inline-flex items-center gap-1 text-xs font-bold text-slate-900 hover:text-slate-700 bg-slate-100 px-3 py-1.5 rounded-lg"
+                      >
+                        <Plus className="w-3.5 h-3.5" /> Add Product Row
+                      </button>
+                    </div>
                   </div>
 
                   <div className="border border-slate-200 rounded-xl overflow-hidden shadow-sm">
@@ -1832,7 +1939,7 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
             </div>
           )}
 
-          {/* INVOICE REGISTER TABLE (RESTORED WITH EXCEL, XML & PUSH TO TALLY) */}
+          {/* INVOICE REGISTER TABLE */}
           {salesSubTab === "invoices" && (
             <div className="flex-1 p-8 overflow-y-auto">
               {savedInvoices.length === 0 ? (
@@ -1874,7 +1981,6 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
                           <td className="py-3 px-4 text-right font-mono text-slate-800">₹{Number(inv.taxableAmount || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
                           <td className="py-3 px-4 text-right font-mono font-bold text-emerald-700">₹{Number(inv.grandTotal || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
                           
-                          {/* STATUS BADGE */}
                           <td className="py-3 px-4 text-center whitespace-nowrap">
                             {inv.pushedToTally ? (
                               <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
@@ -1887,7 +1993,6 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
                             )}
                           </td>
 
-                          {/* ACTIONS SUITE */}
                           <td className="py-3 px-4 text-center whitespace-nowrap">
                             <div className="inline-flex items-center gap-1.5">
                               <button
@@ -1898,7 +2003,6 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
                                 <Printer className="w-3.5 h-3.5" /> Print / PDF
                               </button>
 
-                              {/* PUSH TO TALLY */}
                               <button
                                 onClick={() => handlePushInvoiceToTally(inv)}
                                 className="inline-flex items-center gap-1 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-[11px] px-2.5 py-1.5 rounded transition shadow-2xs"
@@ -1907,7 +2011,6 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
                                 <Send className="w-3 h-3" /> Push
                               </button>
 
-                              {/* DOWNLOAD XML */}
                               <button
                                 onClick={() => handleDownloadInvoiceXml(inv)}
                                 className="inline-flex items-center gap-1 bg-slate-800 hover:bg-slate-900 text-white font-semibold text-[11px] px-2.5 py-1.5 rounded transition shadow-2xs"
@@ -2759,6 +2862,12 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
               <div className="text-center font-black text-sm tracking-wider uppercase border-b pb-2 text-blue-900">
                 {selectedInvoiceForPrint.invoiceType}
               </div>
+
+              {selectedInvoiceForPrint.invoiceType === "Export Invoice" && (
+                <div className="p-2 bg-amber-50 border border-amber-300 rounded text-center text-amber-900 text-[10px] font-extrabold uppercase">
+                  Supply Meant for Export Under Bond or Letter of Undertaking without Payment of Integrated Tax (IGST) {selectedInvoiceForPrint.lutNumber ? `(LUT No: ${selectedInvoiceForPrint.lutNumber})` : ""}
+                </div>
+              )}
 
               <div className="flex justify-between items-start border-b pb-3">
                 <div>
