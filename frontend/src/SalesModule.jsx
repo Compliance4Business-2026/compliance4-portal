@@ -59,7 +59,7 @@ const GST_RATE_OPTIONS = [
   { label: "Non-GST (0%)", value: 0.0 }
 ];
 
-const UOM_OPTIONS = ["PCs", "KG", "GM", "Boxes", "Packs", "LTR", "MTR", "DZN", "SET"];
+const UOM_OPTIONS = ["Service / NA", "PCs", "KG", "GM", "Boxes", "Packs", "LTR", "MTR", "DZN", "SET"];
 
 function numberToWords(num) {
   const a = ["", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten", "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen", "Seventeen", "Eighteen", "Nineteen"];
@@ -287,7 +287,7 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
   });
 
   const [lines, setLines] = useState([
-    { id: 1, itemName: "", hsnCode: "", uom: "Boxes", qty: "", rate: "", discountPercent: 0, taxRate: 5 }
+    { id: 1, itemName: "", hsnCode: "", uom: "Service / NA", qty: 1, rate: "", discountPercent: 0, taxRate: 18 }
   ]);
 
   const [newCust, setNewCust] = useState({
@@ -295,7 +295,7 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
   });
 
   const [newItem, setNewItem] = useState({
-    itemName: "", hsnCode: "", uom: "Boxes", taxRate: 5, priceExcl: "", priceIncl: ""
+    itemName: "", hsnCode: "", uom: "Service / NA", taxRate: 18, priceExcl: "", priceIncl: ""
   });
 
   const notify = (msg, type = "info") => {
@@ -338,15 +338,15 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
             if (!itemName) continue;
 
             const hsnCode = hsnIdx !== -1 ? String(r[hsnIdx] || "").trim() : (r[1] ? String(r[1]).trim() : "");
-            const uom = uomIdx !== -1 ? String(r[uomIdx] || "Boxes").trim() : "Boxes";
+            const uom = uomIdx !== -1 ? String(r[uomIdx] || "Service / NA").trim() : "Service / NA";
             const priceExcl = rateIdx !== -1 ? parseFloat(String(r[rateIdx]).replace(/[^0-9.-]/g, "")) || 0 : 0;
-            const taxRate = taxIdx !== -1 ? parseFloat(r[taxIdx]) || 5 : 5;
+            const taxRate = taxIdx !== -1 ? parseFloat(r[taxIdx]) || 18 : 18;
 
             importedCatalogItems.push({
               id: `item_bulk_${Date.now()}_${i}`,
               itemName,
               hsnCode,
-              uom: UOM_OPTIONS.includes(uom) ? uom : "Boxes",
+              uom: UOM_OPTIONS.includes(uom) ? uom : "Service / NA",
               taxRate,
               priceExcl,
               priceIncl: priceExcl + (priceExcl * taxRate) / 100
@@ -809,14 +809,14 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
       }
     ]);
     notify(`Item "${created.itemName}" saved to Catalog!`, "success");
-    setNewItem({ itemName: "", hsnCode: "", uom: "Boxes", taxRate: 5, priceExcl: "", priceIncl: "" });
+    setNewItem({ itemName: "", hsnCode: "", uom: "Service / NA", taxRate: 18, priceExcl: "", priceIncl: "" });
   };
 
   const isInterstate = !invoiceHeader.placeOfSupply.toLowerCase().includes("gujarat") &&
                        !invoiceHeader.placeOfSupply.startsWith("24");
 
   const computedItems = lines.map((item) => {
-    const qty = parseFloat(item.qty) || 0;
+    const qty = parseFloat(item.qty) || 1;
     const rate = parseFloat(item.rate) || 0;
     const gross = qty * rate;
     const discPct = parseFloat(item.discountPercent) || 0;
@@ -851,8 +851,8 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
     setLines(prev => [
       ...prev,
       {
-        id: Date.now(), itemName: "", hsnCode: "", uom: "Boxes", qty: "", rate: "",
-        discountPercent: invoiceHeader.discountPercent || 0, taxRate: 5
+        id: Date.now(), itemName: "", hsnCode: "", uom: "Service / NA", qty: 1, rate: "",
+        discountPercent: invoiceHeader.discountPercent || 0, taxRate: 18
       }
     ]);
   };
@@ -939,7 +939,7 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
       placeOfSupply: "Gujarat (24)", billingAddress: "", customerPhone: "", customerEmail: "",
       discountPercent: 0, consigneeName: "", consigneeAddress: "", consigneeGstin: ""
     });
-    setLines([{ id: Date.now(), itemName: "", hsnCode: "", uom: "Boxes", qty: "", rate: "", discountPercent: 0, taxRate: 5 }]);
+    setLines([{ id: Date.now(), itemName: "", hsnCode: "", uom: "Service / NA", qty: 1, rate: "", discountPercent: 0, taxRate: 18 }]);
     setHasConsignee(false);
     setSalesSubTab("invoices");
   };
@@ -1125,7 +1125,7 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
       <head>
         <title>${headerTitle} - ${invoice.invoiceNumber}</title>
         <style>
-          @page { size: A4 portrait; margin: 6mm; }
+          @page { size: A4 portrait; margin: 5mm; }
           * { box-sizing: border-box; font-family: Arial, "Helvetica Neue", Helvetica, sans-serif; color: #000; }
           html, body { margin: 0; padding: 0; width: 100%; height: 100%; background: #fff; }
           .a4-container { width: 100%; height: 100%; display: flex; flex-direction: column; border: 1.5px solid #2b6cb0; }
@@ -1140,73 +1140,72 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
           .col-half { width: 50%; }
           .table-wrapper { flex: 1; display: flex; flex-direction: column; }
           table.items-table { width: 100%; border-collapse: collapse; flex: 1; }
-          table.items-table th { background-color: #f7fafc; border-bottom: 1.5px solid #2b6cb0; border-right: 1px solid #2b6cb0; padding: 5px 4px; font-size: 9.5px; font-weight: bold; color: #1a202c; }
-          table.items-table td { border-right: 1px solid #2b6cb0; padding: 4px 6px; font-size: 10px; vertical-align: top; }
+          table.items-table th { background-color: #f7fafc; border-bottom: 1.5px solid #2b6cb0; border-right: 1px solid #2b6cb0; padding: 4px 4px; font-size: 9px; font-weight: bold; color: #1a202c; }
+          table.items-table td { border-right: 1px solid #2b6cb0; padding: 4px 5px; font-size: 9.5px; vertical-align: top; }
           table.items-table th:last-child, table.items-table td:last-child { border-right: none; }
           .fill-remaining-space { height: 100%; }
         </style>
       </head>
       <body>
         <div class="a4-container">
-          <div class="two-col border-b" style="padding: 10px 14px; align-items: center; justify-content: space-between;">
-            <div style="display: flex; align-items: center; gap: 12px;">
+          <div class="two-col border-b" style="padding: 8px 12px; align-items: center; justify-content: space-between;">
+            <div style="display: flex; align-items: center; gap: 10px;">
               ${invoice.vendorProfile?.logoUrl ? `
-                <img src="${invoice.vendorProfile.logoUrl}" style="max-height: 48px; max-width: 80px; object-fit: contain; border-radius: 4px;" alt="Logo" />
+                <img src="${invoice.vendorProfile.logoUrl}" style="max-height: 42px; max-width: 75px; object-fit: contain; border-radius: 4px;" alt="Logo" />
               ` : `
-                <div style="width: 44px; height: 44px; background: #2b6cb0; color: #fff; font-weight: 900; font-size: 20px; display: flex; align-items: center; justify-content: center; border-radius: 4px;">C4</div>
+                <div style="width: 40px; height: 40px; background: #2b6cb0; color: #fff; font-weight: 900; font-size: 18px; display: flex; align-items: center; justify-content: center; border-radius: 4px;">CA</div>
               `}
               <div>
-                <div style="font-size: 16px; font-weight: 900; color: #1a202c; text-transform: uppercase;">${invoice.vendorProfile?.companyName || "Panasuria Confectionery"}</div>
-                <div style="font-size: 9.5px; color: #4a5568; margin-top: 1px;">${invoice.vendorProfile?.address || ""}</div>
-                <div style="font-size: 9.5px; margin-top: 2px;"><strong>GSTIN:</strong> ${invoice.vendorProfile?.gstin || ""}</div>
+                <div style="font-size: 15px; font-weight: 900; color: #1a202c; text-transform: uppercase;">${invoice.vendorProfile?.companyName || "M/S SANJAY JOGIYA & CO."}</div>
+                <div style="font-size: 9px; color: #4a5568; margin-top: 1px;">${invoice.vendorProfile?.address || ""}</div>
+                <div style="font-size: 9px; margin-top: 1px;"><strong>GSTIN:</strong> ${invoice.vendorProfile?.gstin || ""}</div>
               </div>
             </div>
-            <div style="text-align: right; font-size: 9.5px; line-height: 1.4;">
-              <div><strong>Name :</strong> ${invoice.vendorProfile?.companyName || "Panasuria Confectionery"}</div>
+            <div style="text-align: right; font-size: 9px; line-height: 1.35;">
+              <div><strong>Name :</strong> ${invoice.vendorProfile?.companyName || ""}</div>
               <div><strong>Phone :</strong> ${invoice.vendorProfile?.phone || ""}</div>
               <div><strong>Email :</strong> ${invoice.vendorProfile?.email || ""}</div>
               <div><strong>PAN :</strong> ${invoice.vendorProfile?.pan || "AABCP1234F"}</div>
             </div>
           </div>
 
-          <div class="two-col border-b" style="background: #f7fafc; padding: 4px 10px; font-size: 9px; font-weight: bold; justify-content: space-between;">
+          <div class="two-col border-b" style="background: #f7fafc; padding: 3px 10px; font-size: 8.5px; font-weight: bold; justify-content: space-between;">
             <div>GSTIN : ${invoice.vendorProfile?.gstin || ""} ${invoice.lutNumber ? `| LUT NO : ${invoice.lutNumber}` : ""}</div>
             <div style="color: #2b6cb0; font-weight: 900;">${headerTitle}</div>
             <div>ORIGINAL FOR RECIPIENT</div>
           </div>
 
           ${invoice.invoiceType === "Export Invoice" ? `
-            <div style="background: #fffbeb; border-bottom: 1.5px solid #2b6cb0; padding: 4px 10px; font-size: 8.5px; font-weight: 900; color: #92400e; text-align: center; text-transform: uppercase;">
+            <div style="background: #fffbeb; border-bottom: 1.5px solid #2b6cb0; padding: 3px 10px; font-size: 8px; font-weight: 900; color: #92400e; text-align: center; text-transform: uppercase;">
               Supply Meant for Export Under Bond or Letter of Undertaking without Payment of Integrated Tax (IGST) ${invoice.lutNumber ? `(LUT No: ${invoice.lutNumber})` : ""}
             </div>
           ` : ""}
 
           <div class="two-col border-b">
-            <div class="col-half border-r" style="padding: 6px 10px; font-size: 9.5px; line-height: 1.35;">
-              <div style="font-weight: 900; font-size: 9px; text-transform: uppercase; color: #4a5568; margin-bottom: 3px;">Details of Buyer | Billed to :</div>
-              <div style="display: flex;"><span style="width: 70px; font-weight: bold;">Name</span>: <span style="font-weight: 900; text-transform: uppercase;">${invoice.customerName}</span></div>
-              <div style="display: flex;"><span style="width: 70px; font-weight: bold;">Address</span>: <span>${invoice.billingAddress || "-"}</span></div>
-              <div style="display: flex;"><span style="width: 70px; font-weight: bold;">Country</span>: <span>${invoice.customerCountry || "India"}</span></div>
-              <div style="display: flex;"><span style="width: 70px; font-weight: bold;">Phone</span>: <span>${invoice.customerPhone || "-"}</span></div>
-              ${invoice.customerGstin ? `<div style="display: flex;"><span style="width: 70px; font-weight: bold;">GSTIN</span>: <span style="font-weight: bold;">${invoice.customerGstin}</span></div>` : ""}
-              <div style="display: flex;"><span style="width: 70px; font-weight: bold;">Place of Supply</span>: <span>${invoice.placeOfSupply}</span></div>
+            <div class="col-half border-r" style="padding: 5px 8px; font-size: 9px; line-height: 1.3;">
+              <div style="font-weight: 900; font-size: 8.5px; text-transform: uppercase; color: #4a5568; margin-bottom: 2px;">Details of Buyer | Billed to :</div>
+              <div style="display: flex;"><span style="width: 65px; font-weight: bold;">Name</span>: <span style="font-weight: 900; text-transform: uppercase;">${invoice.customerName}</span></div>
+              <div style="display: flex;"><span style="width: 65px; font-weight: bold;">Address</span>: <span>${invoice.billingAddress || "-"}</span></div>
+              <div style="display: flex;"><span style="width: 65px; font-weight: bold;">Country</span>: <span>${invoice.customerCountry || "India"}</span></div>
+              <div style="display: flex;"><span style="width: 65px; font-weight: bold;">Phone</span>: <span>${invoice.customerPhone || "-"}</span></div>
+              ${invoice.customerGstin ? `<div style="display: flex;"><span style="width: 65px; font-weight: bold;">GSTIN</span>: <span style="font-weight: bold;">${invoice.customerGstin}</span></div>` : ""}
+              <div style="display: flex;"><span style="width: 65px; font-weight: bold;">Place of Supply</span>: <span>${invoice.placeOfSupply}</span></div>
             </div>
 
             <div class="col-half" style="display: flex; flex-direction: column;">
-              <div class="two-col border-b" style="background: #f7fafc; padding: 4px 8px; font-size: 9.5px;">
+              <div class="two-col border-b" style="background: #f7fafc; padding: 3px 8px; font-size: 9px;">
                 <div style="width: 50%;"><strong>Invoice No.</strong> : <span style="font-weight: 900;">${invoice.invoiceNumber}</span></div>
                 <div style="width: 50%;"><strong>Invoice Date</strong> : <span>${invoice.invoiceDate}</span></div>
               </div>
               ${invoice.poNumber ? `
-                <div style="padding: 3px 8px; font-size: 9.5px; border-bottom: 1px solid #2b6cb0; background: #fff;">
-                  <strong>Purchase Order (PO) No.</strong> : <span style="font-weight: bold;">${invoice.poNumber}</span>
+                <div style="padding: 2px 8px; font-size: 9px; border-bottom: 1px solid #2b6cb0; background: #fff;">
+                  <strong>PO No.</strong> : <span style="font-weight: bold;">${invoice.poNumber}</span>
                 </div>
               ` : ""}
-              <div style="padding: 6px 10px; font-size: 9.5px; line-height: 1.35; flex: 1;">
-                <div style="font-weight: 900; font-size: 9px; text-transform: uppercase; color: #4a5568; margin-bottom: 3px;">Details of Consignee | Shipped to :</div>
-                <div style="display: flex;"><span style="width: 65px; font-weight: bold;">Name</span>: <span>${invoice.hasConsignee ? invoice.consigneeName : invoice.customerName}</span></div>
-                <div style="display: flex;"><span style="width: 65px; font-weight: bold;">Address</span>: <span>${invoice.hasConsignee ? invoice.consigneeAddress : invoice.billingAddress}</span></div>
-                ${invoice.consigneeGstin ? `<div style="display: flex;"><span style="width: 65px; font-weight: bold;">GSTIN</span>: <span>${invoice.consigneeGstin}</span></div>` : ""}
+              <div style="padding: 5px 8px; font-size: 9px; line-height: 1.3; flex: 1;">
+                <div style="font-weight: 900; font-size: 8.5px; text-transform: uppercase; color: #4a5568; margin-bottom: 2px;">Details of Consignee | Shipped to :</div>
+                <div style="display: flex;"><span style="width: 60px; font-weight: bold;">Name</span>: <span>${invoice.hasConsignee ? invoice.consigneeName : invoice.customerName}</span></div>
+                <div style="display: flex;"><span style="width: 60px; font-weight: bold;">Address</span>: <span>${invoice.hasConsignee ? invoice.consigneeAddress : invoice.billingAddress}</span></div>
               </div>
             </div>
           </div>
@@ -1215,15 +1214,15 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
             <table class="items-table">
               <thead>
                 <tr>
-                  <th style="width: 30px;">Sr.<br/>No.</th>
+                  <th style="width: 28px;">Sr.<br/>No.</th>
                   <th style="text-align: left;">Name of Product / Service</th>
-                  <th style="width: 65px;">HSN / SAC</th>
-                  <th style="width: 45px; text-align: right;">Qty</th>
+                  <th style="width: 60px;">HSN / SAC</th>
+                  <th style="width: 40px; text-align: right;">Qty</th>
                   <th style="width: 45px;">UOM</th>
-                  <th style="width: 65px; text-align: right;">Rate (₹)</th>
-                  <th style="width: 45px; text-align: right;">Disc %</th>
-                  <th style="width: 75px; text-align: right;">Taxable (₹)</th>
-                  <th style="width: 85px; text-align: right;">Total (₹)</th>
+                  <th style="width: 60px; text-align: right;">Rate (₹)</th>
+                  <th style="width: 40px; text-align: right;">Disc %</th>
+                  <th style="width: 70px; text-align: right;">Taxable (₹)</th>
+                  <th style="width: 75px; text-align: right;">Total (₹)</th>
                 </tr>
               </thead>
               <tbody>
@@ -1232,8 +1231,8 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
                     <td class="text-center" style="color: #666;">${idx + 1}</td>
                     <td class="font-bold">${it.itemName}</td>
                     <td class="text-center">${it.hsnCode || "-"}</td>
-                    <td class="text-right font-bold">${it.qty || 0}</td>
-                    <td class="text-center">${it.uom || "PCs"}</td>
+                    <td class="text-right font-bold">${it.uom === "Service / NA" ? "-" : (it.qty || 1)}</td>
+                    <td class="text-center">${it.uom === "Service / NA" ? "-" : (it.uom || "-")}</td>
                     <td class="text-right">${Number(it.rate || 0).toFixed(2)}</td>
                     <td class="text-right">${it.discountPercent || 0}%</td>
                     <td class="text-right">${Number(it.taxable || 0).toFixed(2)}</td>
@@ -1246,38 +1245,38 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
               </tbody>
               <tfoot>
                 <tr class="border-t font-black" style="background: #f7fafc;">
-                  <td colspan="3" class="text-right font-bold" style="padding: 4px 6px;">Total</td>
-                  <td class="text-right font-black" style="padding: 4px 6px;">${invoice.totalQuantity || 0}</td>
+                  <td colspan="3" class="text-right font-bold" style="padding: 3px 5px;">Total</td>
+                  <td class="text-right font-black" style="padding: 3px 5px;">${invoice.totalQuantity || 0}</td>
                   <td></td>
-                  <td colspan="3" class="text-right font-bold" style="padding: 4px 6px;">Taxable Total:</td>
-                  <td class="text-right font-black" style="padding: 4px 6px;">₹${Number(invoice.taxableAmount || 0).toFixed(2)}</td>
+                  <td colspan="3" class="text-right font-bold" style="padding: 3px 5px;">Taxable Total:</td>
+                  <td class="text-right font-black" style="padding: 3px 5px;">₹${Number(invoice.taxableAmount || 0).toFixed(2)}</td>
                 </tr>
               </tfoot>
             </table>
           </div>
 
           <div class="two-col border-t border-b">
-            <div class="col-half border-r" style="padding: 6px 10px; display: flex; flex-direction: column; justify-content: space-between;">
+            <div class="col-half border-r" style="padding: 5px 8px; display: flex; flex-direction: column; justify-content: space-between;">
               <div>
-                <div style="font-size: 8.5px; font-weight: 900; color: #4a5568; text-transform: uppercase;">Total in words :</div>
-                <div style="font-size: 10px; font-weight: 900; margin-top: 3px; line-height: 1.35;">${numberToWords(invoice.grandTotal)}</div>
+                <div style="font-size: 8px; font-weight: 900; color: #4a5568; text-transform: uppercase;">Total in words :</div>
+                <div style="font-size: 9.5px; font-weight: 900; margin-top: 2px; line-height: 1.3;">${numberToWords(invoice.grandTotal)}</div>
               </div>
-              <div style="margin-top: 8px;">
-                <div style="background: #ebf8ff; border: 1px solid #bee3f8; padding: 4px 8px; font-size: 8.5px; font-weight: 900; color: #2b6cb0; text-align: center; margin-bottom: 4px;">
+              <div style="margin-top: 6px;">
+                <div style="background: #ebf8ff; border: 1px solid #bee3f8; padding: 3px 6px; font-size: 8px; font-weight: 900; color: #2b6cb0; text-align: center; margin-bottom: 3px;">
                   Bank Details
                 </div>
-                <div style="font-size: 9.5px; line-height: 1.35;">
+                <div style="font-size: 9px; line-height: 1.3;">
                   <div><strong>Name</strong> : ${invoice.vendorProfile?.bankName || "HDFC Bank"}</div>
                   <div><strong>Branch</strong> : ${invoice.vendorProfile?.branch || ""}</div>
                   <div><strong>Acc. Name</strong> : ${invoice.vendorProfile?.companyName || ""}</div>
-                  <div><strong>Acc. Number</strong> : <strong style="font-size: 10.5px;">${invoice.vendorProfile?.accountNo || ""}</strong></div>
+                  <div><strong>Acc. Number</strong> : <strong style="font-size: 10px;">${invoice.vendorProfile?.accountNo || ""}</strong></div>
                   <div><strong>IFSC Code</strong> : <strong>${invoice.vendorProfile?.ifscCode || ""}</strong></div>
                 </div>
               </div>
             </div>
 
-            <div class="col-half" style="padding: 6px 10px;">
-              <table style="width: 100%; font-size: 10px; border-collapse: collapse; line-height: 1.5;">
+            <div class="col-half" style="padding: 5px 8px;">
+              <table style="width: 100%; font-size: 9.5px; border-collapse: collapse; line-height: 1.4;">
                 <tr>
                   <td>Total Taxable Value :</td>
                   <td class="text-right font-bold">₹${Number(invoice.taxableAmount || 0).toFixed(2)}</td>
@@ -1305,25 +1304,25 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
                   <td class="text-right font-bold">${Number(invoice.roundOff || 0) >= 0 ? "+" : ""}${Number(invoice.roundOff || 0).toFixed(2)}</td>
                 </tr>
                 <tr style="border-top: 1.5px solid #2b6cb0; background: #ebf8ff;">
-                  <td style="font-size: 12px; font-weight: 900; padding: 4px 0;">Total Amount (₹) :</td>
-                  <td class="text-right font-black" style="font-size: 13.5px; padding: 4px 0;">₹${Number(invoice.grandTotal || 0).toFixed(2)}</td>
+                  <td style="font-size: 11px; font-weight: 900; padding: 3px 0;">Total Amount (₹) :</td>
+                  <td class="text-right font-black" style="font-size: 12.5px; padding: 3px 0;">₹${Number(invoice.grandTotal || 0).toFixed(2)}</td>
                 </tr>
                 <tr>
-                  <td colspan="2" class="text-right" style="font-size: 8px; color: #718096;">(E & O.E.)</td>
+                  <td colspan="2" class="text-right" style="font-size: 7.5px; color: #718096;">(E & O.E.)</td>
                 </tr>
               </table>
             </div>
           </div>
 
-          <div class="two-col" style="min-height: 85px;">
-            <div class="col-half border-r" style="padding: 6px 10px; font-size: 8.5px; color: #4a5568;">
-              <div style="font-weight: 900; text-transform: uppercase; color: #2d3748; margin-bottom: 3px;">Terms and Conditions :</div>
-              <div style="white-space: pre-line; line-height: 1.35;">${invoice.vendorProfile?.terms || ""}</div>
+          <div class="two-col" style="min-height: 75px;">
+            <div class="col-half border-r" style="padding: 5px 8px; font-size: 8px; color: #4a5568;">
+              <div style="font-weight: 900; text-transform: uppercase; color: #2d3748; margin-bottom: 2px;">Terms and Conditions :</div>
+              <div style="white-space: pre-line; line-height: 1.3;">${invoice.vendorProfile?.terms || ""}</div>
             </div>
-            <div class="col-half" style="padding: 6px 10px; text-align: center; display: flex; flex-direction: column; justify-content: space-between;">
-              <div style="font-size: 8px; color: #718096;">Certified that the particulars given above are true and correct.</div>
-              <div style="font-size: 10px; font-weight: bold; margin-top: 2px;">For ${invoice.vendorProfile?.companyName || "Panasuria Confectionery"}</div>
-              <div style="margin-top: 35px; font-size: 9px; font-weight: 900; text-transform: uppercase; border-top: 1px solid #cbd5e0; padding-top: 2px;">
+            <div class="col-half" style="padding: 5px 8px; text-align: center; display: flex; flex-direction: column; justify-content: space-between;">
+              <div style="font-size: 7.5px; color: #718096;">Certified that the particulars given above are true and correct.</div>
+              <div style="font-size: 9px; font-weight: bold; margin-top: 1px;">For ${invoice.vendorProfile?.companyName || "M/S SANJAY JOGIYA & CO."}</div>
+              <div style="margin-top: 28px; font-size: 8.5px; font-weight: 900; text-transform: uppercase; border-top: 1px solid #cbd5e0; padding-top: 2px;">
                 Authorised Signatory
               </div>
             </div>
@@ -1712,9 +1711,9 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
                     <table className="w-full text-left text-xs">
                       <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-semibold uppercase text-[10px]">
                         <tr>
-                          <th className="py-2.5 px-3">Item Description</th>
-                          <th className="py-2.5 px-2 w-20">HSN</th>
-                          <th className="py-2.5 px-2 w-20">UOM</th>
+                          <th className="py-2.5 px-3">Item / Service Description</th>
+                          <th className="py-2.5 px-2 w-20">HSN/SAC</th>
+                          <th className="py-2.5 px-2 w-28">UOM (Service / NA if none)</th>
                           <th className="py-2.5 px-2 text-right w-16">Qty</th>
                           <th className="py-2.5 px-2 text-right w-24">Rate (Excl.)</th>
                           <th className="py-2.5 px-2 text-right w-20">Disc %</th>
@@ -1731,7 +1730,7 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
                               <input
                                 list={`items-list-${it.id}`}
                                 value={it.itemName}
-                                placeholder="Start typing item..."
+                                placeholder="Start typing service/item..."
                                 onChange={(e) => handleLineItemSelect(it.id, e.target.value)}
                                 className="w-full text-xs font-semibold p-1.5 border border-slate-200 rounded focus:border-slate-900"
                               />
@@ -1766,9 +1765,10 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
                             <td className="p-1">
                               <input
                                 type="number"
-                                value={it.qty}
+                                value={it.uom === "Service / NA" ? 1 : it.qty}
+                                disabled={it.uom === "Service / NA"}
                                 onChange={(e) => handleLineChange(it.id, "qty", e.target.value)}
-                                className="w-full text-xs text-right font-mono p-1 border border-slate-200 rounded"
+                                className="w-full text-xs text-right font-mono p-1 border border-slate-200 rounded disabled:bg-slate-100 disabled:text-slate-400"
                               />
                             </td>
 
@@ -2705,12 +2705,12 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
         </div>
       )}
 
-      {/* MODAL 2: ADD NEW PRODUCT TO CATALOG (WITH BULK EXCEL UPLOADER) */}
+      {/* MODAL 2: ADD NEW PRODUCT / SERVICE TO CATALOG */}
       {showAddItemModal && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full p-6 space-y-4">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <h3 className="text-sm font-bold text-slate-900">Add New Product to Catalog</h3>
+              <h3 className="text-sm font-bold text-slate-900">Add New Product / Service to Catalog</h3>
               <button onClick={() => setShowAddItemModal(false)} className="text-slate-400 hover:text-slate-600">
                 <X className="w-5 h-5" />
               </button>
@@ -2739,10 +2739,10 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
 
             <div className="space-y-3 text-xs">
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">Product / Item Name</label>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Product / Service Name</label>
                 <input
                   type="text"
-                  placeholder="e.g. Red Velvet Pastry"
+                  placeholder="e.g. Professional Fees For Accounting"
                   value={newItem.itemName}
                   onChange={(e) => setNewItem({ ...newItem, itemName: e.target.value })}
                   className="w-full text-xs font-semibold border border-slate-300 rounded p-2"
@@ -2907,8 +2907,8 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
               <table className="w-full text-left text-[11px] border border-slate-200">
                 <thead className="bg-slate-50 border-b font-bold uppercase text-[9px]">
                   <tr>
-                    <th className="p-1.5 border-r">Item</th>
-                    <th className="p-1.5 border-r text-center">HSN</th>
+                    <th className="p-1.5 border-r">Item / Service</th>
+                    <th className="p-1.5 border-r text-center">HSN / SAC</th>
                     <th className="p-1.5 border-r text-right">Qty</th>
                     <th className="p-1.5 border-r text-center">UOM</th>
                     <th className="p-1.5 border-r text-right">Rate</th>
@@ -2921,8 +2921,8 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
                     <tr key={idx}>
                       <td className="p-1.5 border-r font-semibold">{it.itemName}</td>
                       <td className="p-1.5 border-r text-center font-mono">{it.hsnCode}</td>
-                      <td className="p-1.5 border-r text-right font-mono font-bold">{it.qty}</td>
-                      <td className="p-1.5 border-r text-center">{it.uom}</td>
+                      <td className="p-1.5 border-r text-right font-mono font-bold">{it.uom === "Service / NA" ? "-" : it.qty}</td>
+                      <td className="p-1.5 border-r text-center">{it.uom === "Service / NA" ? "-" : it.uom}</td>
                       <td className="p-1.5 border-r text-right font-mono">₹{it.rate}</td>
                       <td className="p-1.5 border-r text-right font-mono">{it.discountPercent}%</td>
                       <td className="p-1.5 text-right font-mono font-bold">₹{it.total?.toFixed(2)}</td>
