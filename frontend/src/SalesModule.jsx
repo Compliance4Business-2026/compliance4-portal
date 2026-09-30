@@ -1125,7 +1125,7 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
       <head>
         <title>${headerTitle} - ${invoice.invoiceNumber}</title>
         <style>
-          @page { size: A4 portrait; margin: 5mm; }
+          @page { size: A4 portrait; margin: 4mm; }
           * { box-sizing: border-box; font-family: Arial, "Helvetica Neue", Helvetica, sans-serif; color: #000; }
           html, body { margin: 0; padding: 0; width: 100%; height: 100%; background: #fff; }
           .a4-container { width: 100%; height: 100%; display: flex; flex-direction: column; border: 1.5px solid #2b6cb0; }
@@ -1140,8 +1140,8 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
           .col-half { width: 50%; }
           .table-wrapper { flex: 1; display: flex; flex-direction: column; }
           table.items-table { width: 100%; border-collapse: collapse; flex: 1; }
-          table.items-table th { background-color: #f7fafc; border-bottom: 1.5px solid #2b6cb0; border-right: 1px solid #2b6cb0; padding: 4px 4px; font-size: 9px; font-weight: bold; color: #1a202c; }
-          table.items-table td { border-right: 1px solid #2b6cb0; padding: 4px 5px; font-size: 9.5px; vertical-align: top; }
+          table.items-table th { background-color: #f7fafc; border-bottom: 1.5px solid #2b6cb0; border-right: 1.5px solid #2b6cb0; padding: 5px 6px; font-size: 9px; font-weight: bold; color: #1a202c; }
+          table.items-table td { border-right: 1.5px solid #2b6cb0; padding: 5px 6px; font-size: 9.5px; vertical-align: top; }
           table.items-table th:last-child, table.items-table td:last-child { border-right: none; }
           .fill-remaining-space { height: 100%; }
         </style>
@@ -1153,15 +1153,15 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
               ${invoice.vendorProfile?.logoUrl ? `
                 <img src="${invoice.vendorProfile.logoUrl}" style="max-height: 42px; max-width: 75px; object-fit: contain; border-radius: 4px;" alt="Logo" />
               ` : `
-                <div style="width: 40px; height: 40px; background: #2b6cb0; color: #fff; font-weight: 900; font-size: 18px; display: flex; align-items: center; justify-content: center; border-radius: 4px;">CA</div>
+                <div style="width: 40px; height: 40px; background: #2b6cb0; color: #fff; font-weight: 900; font-size: 16px; display: flex; align-items: center; justify-content: center; border-radius: 4px;">CA</div>
               `}
               <div>
-                <div style="font-size: 15px; font-weight: 900; color: #1a202c; text-transform: uppercase;">${invoice.vendorProfile?.companyName || "M/S SANJAY JOGIYA & CO."}</div>
-                <div style="font-size: 9px; color: #4a5568; margin-top: 1px;">${invoice.vendorProfile?.address || ""}</div>
-                <div style="font-size: 9px; margin-top: 1px;"><strong>GSTIN:</strong> ${invoice.vendorProfile?.gstin || ""}</div>
+                <div style="font-size: 14px; font-weight: 900; color: #1a202c; text-transform: uppercase;">${invoice.vendorProfile?.companyName || "M/S SANJAY JOGIYA & CO."}</div>
+                <div style="font-size: 8.5px; color: #4a5568; margin-top: 1px;">${invoice.vendorProfile?.address || ""}</div>
+                <div style="font-size: 8.5px; margin-top: 1px;"><strong>GSTIN:</strong> ${invoice.vendorProfile?.gstin || ""}</div>
               </div>
             </div>
-            <div style="text-align: right; font-size: 9px; line-height: 1.35;">
+            <div style="text-align: right; font-size: 8.5px; line-height: 1.35;">
               <div><strong>Name :</strong> ${invoice.vendorProfile?.companyName || ""}</div>
               <div><strong>Phone :</strong> ${invoice.vendorProfile?.phone || ""}</div>
               <div><strong>Email :</strong> ${invoice.vendorProfile?.email || ""}</div>
@@ -1182,14 +1182,14 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
           ` : ""}
 
           <div class="two-col border-b">
-            <div class="col-half border-r" style="padding: 5px 8px; font-size: 9px; line-height: 1.3;">
+            <div class="col-half border-r" style="padding: 6px 10px; font-size: 9px; line-height: 1.35;">
               <div style="font-weight: 900; font-size: 8.5px; text-transform: uppercase; color: #4a5568; margin-bottom: 2px;">Details of Buyer | Billed to :</div>
-              <div style="display: flex;"><span style="width: 65px; font-weight: bold;">Name</span>: <span style="font-weight: 900; text-transform: uppercase;">${invoice.customerName}</span></div>
-              <div style="display: flex;"><span style="width: 65px; font-weight: bold;">Address</span>: <span>${invoice.billingAddress || "-"}</span></div>
-              <div style="display: flex;"><span style="width: 65px; font-weight: bold;">Country</span>: <span>${invoice.customerCountry || "India"}</span></div>
-              <div style="display: flex;"><span style="width: 65px; font-weight: bold;">Phone</span>: <span>${invoice.customerPhone || "-"}</span></div>
-              ${invoice.customerGstin ? `<div style="display: flex;"><span style="width: 65px; font-weight: bold;">GSTIN</span>: <span style="font-weight: bold;">${invoice.customerGstin}</span></div>` : ""}
-              <div style="display: flex;"><span style="width: 65px; font-weight: bold;">Place of Supply</span>: <span>${invoice.placeOfSupply}</span></div>
+              <div style="display: flex;"><span style="width: 70px; font-weight: bold;">Name</span>: <span style="font-weight: 900; text-transform: uppercase;">${invoice.customerName}</span></div>
+              <div style="display: flex;"><span style="width: 70px; font-weight: bold;">Address</span>: <span>${invoice.billingAddress || "-"}</span></div>
+              <div style="display: flex;"><span style="width: 70px; font-weight: bold;">Country</span>: <span>${invoice.customerCountry || "India"}</span></div>
+              <div style="display: flex;"><span style="width: 70px; font-weight: bold;">Phone</span>: <span>${invoice.customerPhone || "-"}</span></div>
+              ${invoice.customerGstin ? `<div style="display: flex;"><span style="width: 70px; font-weight: bold;">GSTIN</span>: <span style="font-weight: bold;">${invoice.customerGstin}</span></div>` : ""}
+              <div style="display: flex;"><span style="width: 70px; font-weight: bold;">Place of Supply</span>: <span>${invoice.placeOfSupply}</span></div>
             </div>
 
             <div class="col-half" style="display: flex; flex-direction: column;">
@@ -1198,14 +1198,14 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
                 <div style="width: 50%;"><strong>Invoice Date</strong> : <span>${invoice.invoiceDate}</span></div>
               </div>
               ${invoice.poNumber ? `
-                <div style="padding: 2px 8px; font-size: 9px; border-bottom: 1px solid #2b6cb0; background: #fff;">
+                <div style="padding: 2px 8px; font-size: 9px; border-bottom: 1.5px solid #2b6cb0; background: #fff;">
                   <strong>PO No.</strong> : <span style="font-weight: bold;">${invoice.poNumber}</span>
                 </div>
               ` : ""}
-              <div style="padding: 5px 8px; font-size: 9px; line-height: 1.3; flex: 1;">
+              <div style="padding: 6px 10px; font-size: 9px; line-height: 1.35; flex: 1;">
                 <div style="font-weight: 900; font-size: 8.5px; text-transform: uppercase; color: #4a5568; margin-bottom: 2px;">Details of Consignee | Shipped to :</div>
-                <div style="display: flex;"><span style="width: 60px; font-weight: bold;">Name</span>: <span>${invoice.hasConsignee ? invoice.consigneeName : invoice.customerName}</span></div>
-                <div style="display: flex;"><span style="width: 60px; font-weight: bold;">Address</span>: <span>${invoice.hasConsignee ? invoice.consigneeAddress : invoice.billingAddress}</span></div>
+                <div style="display: flex;"><span style="width: 65px; font-weight: bold;">Name</span>: <span>${invoice.hasConsignee ? invoice.consigneeName : invoice.customerName}</span></div>
+                <div style="display: flex;"><span style="width: 65px; font-weight: bold;">Address</span>: <span>${invoice.hasConsignee ? invoice.consigneeAddress : invoice.billingAddress}</span></div>
               </div>
             </div>
           </div>
@@ -1214,15 +1214,15 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
             <table class="items-table">
               <thead>
                 <tr>
-                  <th style="width: 28px;">Sr.<br/>No.</th>
+                  <th style="width: 32px; text-align: center;">Sr.<br/>No.</th>
                   <th style="text-align: left;">Name of Product / Service</th>
-                  <th style="width: 60px;">HSN / SAC</th>
-                  <th style="width: 40px; text-align: right;">Qty</th>
-                  <th style="width: 45px;">UOM</th>
-                  <th style="width: 60px; text-align: right;">Rate (₹)</th>
-                  <th style="width: 40px; text-align: right;">Disc %</th>
-                  <th style="width: 70px; text-align: right;">Taxable (₹)</th>
-                  <th style="width: 75px; text-align: right;">Total (₹)</th>
+                  <th style="width: 75px; text-align: center;">HSN / SAC</th>
+                  <th style="width: 45px; text-align: right;">Qty</th>
+                  <th style="width: 50px; text-align: center;">UOM</th>
+                  <th style="width: 75px; text-align: right;">Rate (₹)</th>
+                  <th style="width: 50px; text-align: right;">Disc %</th>
+                  <th style="width: 80px; text-align: right;">Taxable (₹)</th>
+                  <th style="width: 90px; text-align: right;">Total (₹)</th>
                 </tr>
               </thead>
               <tbody>
@@ -1245,27 +1245,27 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
               </tbody>
               <tfoot>
                 <tr class="border-t font-black" style="background: #f7fafc;">
-                  <td colspan="3" class="text-right font-bold" style="padding: 3px 5px;">Total</td>
-                  <td class="text-right font-black" style="padding: 3px 5px;">${invoice.totalQuantity || 0}</td>
+                  <td colspan="3" class="text-right font-bold" style="padding: 4px 6px;">Total</td>
+                  <td class="text-right font-black" style="padding: 4px 6px;">${invoice.totalQuantity || 0}</td>
                   <td></td>
-                  <td colspan="3" class="text-right font-bold" style="padding: 3px 5px;">Taxable Total:</td>
-                  <td class="text-right font-black" style="padding: 3px 5px;">₹${Number(invoice.taxableAmount || 0).toFixed(2)}</td>
+                  <td colspan="3" class="text-right font-bold" style="padding: 4px 6px;">Taxable Total:</td>
+                  <td class="text-right font-black" style="padding: 4px 6px;">₹${Number(invoice.taxableAmount || 0).toFixed(2)}</td>
                 </tr>
               </tfoot>
             </table>
           </div>
 
           <div class="two-col border-t border-b">
-            <div class="col-half border-r" style="padding: 5px 8px; display: flex; flex-direction: column; justify-content: space-between;">
+            <div class="col-half border-r" style="padding: 6px 10px; display: flex; flex-direction: column; justify-content: space-between;">
               <div>
                 <div style="font-size: 8px; font-weight: 900; color: #4a5568; text-transform: uppercase;">Total in words :</div>
-                <div style="font-size: 9.5px; font-weight: 900; margin-top: 2px; line-height: 1.3;">${numberToWords(invoice.grandTotal)}</div>
+                <div style="font-size: 9.5px; font-weight: 900; margin-top: 2px; line-height: 1.35;">${numberToWords(invoice.grandTotal)}</div>
               </div>
               <div style="margin-top: 6px;">
                 <div style="background: #ebf8ff; border: 1px solid #bee3f8; padding: 3px 6px; font-size: 8px; font-weight: 900; color: #2b6cb0; text-align: center; margin-bottom: 3px;">
                   Bank Details
                 </div>
-                <div style="font-size: 9px; line-height: 1.3;">
+                <div style="font-size: 9px; line-height: 1.35;">
                   <div><strong>Name</strong> : ${invoice.vendorProfile?.bankName || "HDFC Bank"}</div>
                   <div><strong>Branch</strong> : ${invoice.vendorProfile?.branch || ""}</div>
                   <div><strong>Acc. Name</strong> : ${invoice.vendorProfile?.companyName || ""}</div>
@@ -1275,8 +1275,8 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
               </div>
             </div>
 
-            <div class="col-half" style="padding: 5px 8px;">
-              <table style="width: 100%; font-size: 9.5px; border-collapse: collapse; line-height: 1.4;">
+            <div class="col-half" style="padding: 6px 10px;">
+              <table style="width: 100%; font-size: 9.5px; border-collapse: collapse; line-height: 1.45;">
                 <tr>
                   <td>Total Taxable Value :</td>
                   <td class="text-right font-bold">₹${Number(invoice.taxableAmount || 0).toFixed(2)}</td>
@@ -1315,14 +1315,14 @@ export default function SalesModule({ activeClient = "Panasuria Confectionery" }
           </div>
 
           <div class="two-col" style="min-height: 75px;">
-            <div class="col-half border-r" style="padding: 5px 8px; font-size: 8px; color: #4a5568;">
+            <div class="col-half border-r" style="padding: 6px 10px; font-size: 8px; color: #4a5568;">
               <div style="font-weight: 900; text-transform: uppercase; color: #2d3748; margin-bottom: 2px;">Terms and Conditions :</div>
-              <div style="white-space: pre-line; line-height: 1.3;">${invoice.vendorProfile?.terms || ""}</div>
+              <div style="white-space: pre-line; line-height: 1.35;">${invoice.vendorProfile?.terms || ""}</div>
             </div>
-            <div class="col-half" style="padding: 5px 8px; text-align: center; display: flex; flex-direction: column; justify-content: space-between;">
+            <div class="col-half" style="padding: 6px 10px; text-align: center; display: flex; flex-direction: column; justify-content: space-between;">
               <div style="font-size: 7.5px; color: #718096;">Certified that the particulars given above are true and correct.</div>
               <div style="font-size: 9px; font-weight: bold; margin-top: 1px;">For ${invoice.vendorProfile?.companyName || "M/S SANJAY JOGIYA & CO."}</div>
-              <div style="margin-top: 28px; font-size: 8.5px; font-weight: 900; text-transform: uppercase; border-top: 1px solid #cbd5e0; padding-top: 2px;">
+              <div style="margin-top: 26px; font-size: 8.5px; font-weight: 900; text-transform: uppercase; border-top: 1px solid #cbd5e0; padding-top: 2px;">
                 Authorised Signatory
               </div>
             </div>
