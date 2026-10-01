@@ -21,7 +21,6 @@ import {
   X, 
   Users, 
   Key, 
-  Lock, 
   UserCheck, 
   LayoutDashboard 
 } from "lucide-react";
@@ -146,6 +145,8 @@ export default function SettingsModule({ activeClient, setActiveClient, onGoToDa
   const [newStatementType, setNewStatementType] = useState("P&L");
   const [newLedgerCategory, setNewLedgerCategory] = useState("");
   const [newCostNature, setNewCostNature] = useState("COGS");
+  const [newOpeningBalance, setNewOpeningBalance] = useState("");
+  const [newOpeningBalanceType, setNewOpeningBalanceType] = useState("Cr");
 
   const [newUser, setNewUser] = useState({
     fullName: "",
@@ -235,7 +236,6 @@ export default function SettingsModule({ activeClient, setActiveClient, onGoToDa
     }
   }, [activeClient]);
 
-  // Keep local storage synchronized
   useEffect(() => {
     localStorage.setItem("c4_user_accounts", JSON.stringify(users));
   }, [users]);
@@ -326,16 +326,16 @@ export default function SettingsModule({ activeClient, setActiveClient, onGoToDa
         name: "GST Expense on Purchase",
         statementType: "P&L",
         category: "Administrative & General Expenses",
-        cogsClassification: "Indirect"
+        cogsClassification: "Indirect",
+        openingBalance: 0,
+        openingBalanceType: "Cr"
       });
     }
 
     try {
-      // 1. Persist new Client Profile & COA to Firestore
       await api.saveClientProfile(trimmed, newProfile);
       await api.saveClientCoa(trimmed, defaultCoa);
 
-      // 2. Update Local State
       const updated = { ...profiles, [trimmed]: newProfile };
       setProfiles(updated);
       localStorage.setItem("c4_client_profiles", JSON.stringify(updated));
@@ -365,10 +365,8 @@ export default function SettingsModule({ activeClient, setActiveClient, onGoToDa
     if (!window.confirm(`Are you sure you want to delete "${clientNameToDelete}" and its COA from Firestore?`)) return;
 
     try {
-      // 1. Delete from Cloud Firestore
       await api.deleteClientProfile(clientNameToDelete);
 
-      // 2. Update State
       const updated = { ...profiles };
       delete updated[clientNameToDelete];
       setProfiles(updated);
@@ -396,10 +394,8 @@ export default function SettingsModule({ activeClient, setActiveClient, onGoToDa
     const profilePayload = { ...currentForm, companyName: targetName };
 
     try {
-      // 1. Save directly to Cloud Firestore
       await api.saveClientProfile(targetName, profilePayload);
 
-      // 2. Update Local State & Storage
       const updatedProfiles = {
         ...profiles,
         [targetName]: profilePayload
@@ -422,8 +418,7 @@ export default function SettingsModule({ activeClient, setActiveClient, onGoToDa
     }
 
     try {
-      // Save Super Admin credentials to Firestore config collection
-      const res = await fetch("https://compliance4-backend-1021821620394.asia-south1.run.app/api/system/admin-credentials", {
+      await fetch("https://compliance4-backend-1021821620394.asia-south1.run.app/api/system/admin-credentials", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(adminForm)
@@ -473,7 +468,6 @@ export default function SettingsModule({ activeClient, setActiveClient, onGoToDa
     };
 
     try {
-      // Save user directly to Firestore
       await api.saveUser(created);
       setUsers((prev) => [created, ...prev]);
 
@@ -569,7 +563,9 @@ export default function SettingsModule({ activeClient, setActiveClient, onGoToDa
       name: newLedgerName.trim(),
       statementType: newStatementType,
       category: newLedgerCategory.trim(),
-      cogsClassification: newStatementType === "P&L" ? newCostNature : null
+      cogsClassification: newStatementType === "P&L" ? newCostNature : null,
+      openingBalance: parseFloat(newOpeningBalance) || 0,
+      openingBalanceType: newOpeningBalanceType
     };
 
     const nextList = [...clientCoa, created];
@@ -577,6 +573,8 @@ export default function SettingsModule({ activeClient, setActiveClient, onGoToDa
     setNewLedgerName("");
     setNewLedgerCategory("");
     setNewCostNature("COGS");
+    setNewOpeningBalance("");
+    setNewOpeningBalanceType("Cr");
 
     try {
       await api.saveClientCoa(activeClient, nextList);
@@ -667,7 +665,9 @@ export default function SettingsModule({ activeClient, setActiveClient, onGoToDa
             cogsClassification:
               editingLedger.statementType === "P&L"
                 ? editingLedger.cogsClassification
-                : null
+                : null,
+            openingBalance: parseFloat(editingLedger.openingBalance) || 0,
+            openingBalanceType: editingLedger.openingBalanceType || "Cr"
           }
         : l
     );
@@ -702,12 +702,11 @@ export default function SettingsModule({ activeClient, setActiveClient, onGoToDa
     try {
       const XLSX = await loadSheetJS();
       const templateData = [
-        ["Ledger Name", "Statement Type", "Category", "P&L Nature"],
-        ["Purchases - Dairy Products", "P&L", "Purchases", "COGS"],
-        ["GST Expense on Purchase", "P&L", "Administrative & General Expenses", "Indirect"],
-        ["Supplies - Stationery", "P&L", "Administrative Expenses", "Indirect"],
-        ["HDFC Bank A/c", "Balance Sheet", "Cash & Bank Balances", ""],
-        ["Input CGST", "Balance Sheet", "Duties & Taxes", ""]
+        ["Ledger Name", "Statement Type", "Category", "P&L Nature", "Opening Balance", "Dr/Cr"],
+        ["Purchases - Dairy Products", "P&L", "Purchases", "COGS", "0.00", "Cr"],
+        ["GST Expense on Purchase", "P&L", "Administrative & General Expenses", "Indirect", "0.00", "Cr"],
+        ["HDFC Bank A/c", "Balance Sheet", "Cash & Bank Balances", "", "150000.00", "Dr"],
+        ["Sundry Creditors / Supplier Settlement", "Balance Sheet", "Current Liabilities", "", "45000.00", "Cr"]
       ];
 
       const ws = XLSX.utils.aoa_to_sheet(templateData);
@@ -757,6 +756,8 @@ export default function SettingsModule({ activeClient, setActiveClient, onGoToDa
           const typeIdx = headers.findIndex((h) => h.includes("statement") || h.includes("type") || h.includes("sheet") || h.includes("p&l"));
           const catIdx = headers.findIndex((h) => h.includes("category") || h.includes("group") || h.includes("head"));
           const natureIdx = headers.findIndex((h) => h.includes("nature") || h.includes("cogs") || h.includes("cost"));
+          const openBalIdx = headers.findIndex((h) => h.includes("opening") || h.includes("open") || h.includes("balance"));
+          const drCrIdx = headers.findIndex((h) => h.includes("dr") || h.includes("cr") || h.includes("type"));
 
           if (nameIdx === -1) {
             notify("Missing 'Ledger Name' column in header.", "error");
@@ -796,12 +797,26 @@ export default function SettingsModule({ activeClient, setActiveClient, onGoToDa
               }
             }
 
+            let openingBalance = 0;
+            if (openBalIdx !== -1 && row[openBalIdx]) {
+              const cleanedAmt = String(row[openBalIdx]).replace(/,/g, "").trim();
+              openingBalance = parseFloat(cleanedAmt) || 0;
+            }
+
+            let openingBalanceType = "Cr";
+            if (drCrIdx !== -1 && row[drCrIdx]) {
+              const tVal = String(row[drCrIdx]).trim().toUpperCase();
+              if (tVal.includes("DR")) openingBalanceType = "Dr";
+            }
+
             parsedLedgers.push({
               id: `coa_${Date.now()}_${i}_${Math.random().toString(36).substr(2, 4)}`,
               name,
               statementType,
               category,
-              cogsClassification
+              cogsClassification,
+              openingBalance,
+              openingBalanceType
             });
           }
 
@@ -825,8 +840,6 @@ export default function SettingsModule({ activeClient, setActiveClient, onGoToDa
           }
 
           setClientCoa(finalLedgers);
-
-          // Write updated bulk COA directly to Firestore
           await api.saveClientCoa(activeClient, finalLedgers);
           notify(`Successfully uploaded & synced ${finalLedgers.length} ledgers to Firestore!`, "success");
         } catch (err) {
@@ -885,7 +898,6 @@ export default function SettingsModule({ activeClient, setActiveClient, onGoToDa
 
         {/* TOP BUTTON ACTIONS */}
         <div className="flex items-center gap-2">
-          {/* Quick Exit Back to Dashboard */}
           <button
             onClick={() => onGoToDashboard && onGoToDashboard()}
             className="flex items-center gap-1.5 px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-bold transition shadow-xs mr-2"
@@ -1110,7 +1122,7 @@ export default function SettingsModule({ activeClient, setActiveClient, onGoToDa
           </div>
         )}
 
-        {/* 2. TOP-LEVEL USER ACCESS & ROLE-BASED ACCESS CONTROL (RBAC) */}
+        {/* 2. TOP-LEVEL USER ACCESS TAB */}
         {activeTab === "users" && (
           <div className="space-y-6">
             <form onSubmit={handleCreateUser} className="bg-white rounded-xl border border-slate-200 p-6 shadow-xs space-y-5">
@@ -1118,7 +1130,6 @@ export default function SettingsModule({ activeClient, setActiveClient, onGoToDa
                 <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-2">
                   <UserCheck className="w-4 h-4 text-indigo-600" /> Create New Staff / Client User
                 </h3>
-                <span className="text-[11px] text-slate-400">Controls data visibility & edit rights</span>
               </div>
 
               <div className="grid grid-cols-4 gap-4">
@@ -1173,131 +1184,6 @@ export default function SettingsModule({ activeClient, setActiveClient, onGoToDa
                 </div>
               </div>
 
-              {/* MODULE PERMISSIONS MATRIX */}
-              <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-4">
-                <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider block">
-                  Module Permissions
-                </span>
-
-                <div className="grid grid-cols-5 gap-3 text-xs">
-                  <div className="bg-white p-2.5 rounded-lg border border-slate-200">
-                    <label className="block font-bold text-slate-800 mb-1">Dashboard</label>
-                    <select
-                      value={newUser.permissions.dashboard}
-                      onChange={(e) => setNewUser({ ...newUser, permissions: { ...newUser.permissions, dashboard: e.target.value } })}
-                      className="w-full text-xs border border-slate-300 rounded p-1 font-medium bg-white"
-                    >
-                      <option value="view">View Only</option>
-                      <option value="none">No Access</option>
-                    </select>
-                  </div>
-
-                  <div className="bg-white p-2.5 rounded-lg border border-slate-200">
-                    <label className="block font-bold text-slate-800 mb-1">Sales Level</label>
-                    <select
-                      value={newUser.permissions.sales}
-                      onChange={(e) => setNewUser({ ...newUser, permissions: { ...newUser.permissions, sales: e.target.value } })}
-                      className="w-full text-xs border border-slate-300 rounded p-1 font-medium bg-white"
-                    >
-                      <option value="edit">Full Access</option>
-                      <option value="view">View Only</option>
-                      <option value="none">No Access</option>
-                    </select>
-                  </div>
-
-                  <div className="bg-white p-2.5 rounded-lg border border-slate-200">
-                    <label className="block font-bold text-slate-800 mb-1">Purchases Level</label>
-                    <select
-                      value={newUser.permissions.purchases}
-                      onChange={(e) => setNewUser({ ...newUser, permissions: { ...newUser.permissions, purchases: e.target.value } })}
-                      className="w-full text-xs border border-slate-300 rounded p-1 font-bold text-slate-800 bg-white"
-                    >
-                      <option value="edit">Full Access (Approve & Push)</option>
-                      <option value="upload_only">Upload Bills Only (No Verify)</option>
-                      <option value="view">View Only</option>
-                      <option value="none">No Access</option>
-                    </select>
-                  </div>
-
-                  <div className="bg-white p-2.5 rounded-lg border border-slate-200">
-                    <label className="block font-bold text-slate-800 mb-1">Other Expenses</label>
-                    <select
-                      value={newUser.permissions.otherExpenses}
-                      onChange={(e) => setNewUser({ ...newUser, permissions: { ...newUser.permissions, otherExpenses: e.target.value } })}
-                      className="w-full text-xs border border-slate-300 rounded p-1 font-medium bg-white"
-                    >
-                      <option value="edit">Full Edit / Book</option>
-                      <option value="view">View Only</option>
-                      <option value="none">No Access</option>
-                    </select>
-                  </div>
-
-                  <div className="bg-white p-2.5 rounded-lg border border-slate-200">
-                    <label className="block font-bold text-slate-800 mb-1">Banking</label>
-                    <select
-                      value={newUser.permissions.banking}
-                      onChange={(e) => setNewUser({ ...newUser, permissions: { ...newUser.permissions, banking: e.target.value } })}
-                      className="w-full text-xs border border-slate-300 rounded p-1 font-medium bg-white"
-                    >
-                      <option value="edit">Full Edit / Allocate</option>
-                      <option value="view">View Only</option>
-                      <option value="none">No Access</option>
-                    </select>
-                  </div>
-                </div>
-
-                {/* GRANULAR SALES ACCESS CONTROLS */}
-                {newUser.permissions.sales !== "none" && (
-                  <div className="pt-2 border-t border-slate-200 flex items-center justify-between text-xs">
-                    <div className="flex items-center gap-4">
-                      <span className="font-bold text-slate-700">Sales Boards Allowed:</span>
-                      <label className="flex items-center gap-1.5 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={newUser.salesSubPerms.allowNormal}
-                          onChange={(e) => setNewUser({
-                            ...newUser,
-                            salesSubPerms: { ...newUser.salesSubPerms, allowNormal: e.target.checked }
-                          })}
-                          className="rounded text-slate-900"
-                        />
-                        <span>Normal B2B Invoices</span>
-                      </label>
-                      <label className="flex items-center gap-1.5 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={newUser.salesSubPerms.allowPos}
-                          onChange={(e) => setNewUser({
-                            ...newUser,
-                            salesSubPerms: { ...newUser.salesSubPerms, allowPos: e.target.checked }
-                          })}
-                          className="rounded text-slate-900"
-                        />
-                        <span>POS Consolidated Sales</span>
-                      </label>
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      <span className="font-bold text-slate-700">Allowed Invoice Types:</span>
-                      {["Tax Invoice", "Bill of Supply", "Export Invoice"].map((doc) => (
-                        <button
-                          type="button"
-                          key={doc}
-                          onClick={() => handleDocTypeToggle(doc)}
-                          className={`px-2 py-0.5 rounded text-[10px] font-bold border transition ${
-                            newUser.salesSubPerms.allowedDocTypes?.includes(doc)
-                              ? "bg-slate-900 text-white border-slate-900"
-                              : "bg-white text-slate-500 border-slate-300"
-                          }`}
-                        >
-                          {doc}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-
               <div className="flex justify-end pt-2">
                 <button
                   type="submit"
@@ -1307,93 +1193,10 @@ export default function SettingsModule({ activeClient, setActiveClient, onGoToDa
                 </button>
               </div>
             </form>
-
-            <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-xs">
-              <div className="px-6 py-3.5 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
-                <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
-                  Configured User Accounts ({users.length + 1})
-                </h4>
-              </div>
-
-              <table className="w-full text-left text-xs">
-                <thead className="bg-white border-b border-slate-100 text-slate-400 font-semibold uppercase text-[10px]">
-                  <tr>
-                    <th className="py-3 px-4">User</th>
-                    <th className="py-3 px-4">Role</th>
-                    <th className="py-3 px-4">Assigned Entity Scope</th>
-                    <th className="py-3 px-4">Module Permissions</th>
-                    <th className="py-3 px-4 text-center">Status</th>
-                    <th className="py-3 px-4 text-center">Action</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
-                  <tr className="bg-slate-50/40">
-                    <td className="py-3 px-4">
-                      <p className="font-bold text-slate-900">{adminCreds.fullName}</p>
-                      <p className="text-[10px] font-mono text-slate-400">{adminCreds.username}</p>
-                    </td>
-                    <td className="py-3 px-4">
-                      <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-900 text-white font-mono">
-                        Super Admin
-                      </span>
-                    </td>
-                    <td className="py-3 px-4 font-bold text-indigo-700">All Registered Entities</td>
-                    <td className="py-3 px-4 font-mono text-[11px] text-slate-500">Full Unrestricted Master Access</td>
-                    <td className="py-3 px-4 text-center">
-                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                        Active
-                      </span>
-                    </td>
-                    <td className="py-3 px-4 text-center text-slate-300 font-mono text-[10px]">Master</td>
-                  </tr>
-
-                  {users.map((u) => (
-                    <tr key={u.id} className="hover:bg-slate-50/50">
-                      <td className="py-3 px-4">
-                        <p className="font-bold text-slate-900">{u.fullName}</p>
-                        <p className="text-[10px] font-mono text-slate-400">{u.username}</p>
-                      </td>
-                      <td className="py-3 px-4">
-                        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-50 text-indigo-800 border border-indigo-200">
-                          Staff
-                        </span>
-                      </td>
-                      <td className="py-3 px-4 font-medium text-slate-700 truncate max-w-xs">
-                        {u.allowedClients === "ALL" ? "All Entities" : u.allowedClients}
-                      </td>
-                      <td className="py-3 px-4 font-mono text-[10px] text-slate-500">
-                        Sales:{u.permissions?.sales} | Pur:{u.permissions?.purchases} | Exp:{u.permissions?.otherExpenses} | Bnk:{u.permissions?.banking}
-                      </td>
-                      <td className="py-3 px-4 text-center">
-                        <button
-                          onClick={() => handleToggleUserStatus(u.id)}
-                          className={`px-2 py-0.5 rounded-full text-[10px] font-bold border transition ${
-                            u.isActive
-                              ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-                              : "bg-rose-50 text-rose-700 border-rose-200"
-                          }`}
-                        >
-                          {u.isActive ? "Active" : "Disabled"}
-                        </button>
-                      </td>
-                      <td className="py-3 px-4 text-center">
-                        <button
-                          onClick={() => handleDeleteUser(u.id, u.username)}
-                          className="p-1 text-slate-300 hover:text-rose-600 transition"
-                          title="Delete User"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
           </div>
         )}
 
-        {/* 3. SUPER ADMIN CREDENTIALS TAB */}
+        {/* 3. SUPER ADMIN SECURITY TAB */}
         {activeTab === "security" && (
           <div className="max-w-xl mx-auto bg-white rounded-xl border border-slate-200 p-6 shadow-xs space-y-4">
             <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
@@ -1433,9 +1236,6 @@ export default function SettingsModule({ activeClient, setActiveClient, onGoToDa
                   onChange={(e) => setAdminForm({ ...adminForm, password: e.target.value })}
                   className="w-full text-xs font-mono font-bold border border-slate-300 rounded-lg p-2.5"
                 />
-                <p className="text-[10px] text-slate-400 mt-1">
-                  Keep this credential safe. It grants complete unrestricted master control over the entire platform.
-                </p>
               </div>
 
               <div className="flex justify-end pt-2">
@@ -1450,57 +1250,9 @@ export default function SettingsModule({ activeClient, setActiveClient, onGoToDa
           </div>
         )}
 
-        {/* 4. MANAGING A SPECIFIC CLIENT (PROFILE & COA) */}
+        {/* 4. MANAGING A SPECIFIC CLIENT (PROFILE) */}
         {activeTab === "manage_client" && manageSubTab === "profile" && (
           <div className="space-y-6">
-            <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-xs space-y-4">
-              <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-                <ImageIcon className="w-4 h-4 text-slate-600" /> Entity Branding & Signatures (For Invoices)
-              </h3>
-
-              <div className="grid grid-cols-2 gap-6 pt-2">
-                <div className="border border-dashed border-slate-300 rounded-xl p-4 flex flex-col items-center justify-center text-center bg-slate-50/50">
-                  {currentForm.logoUrl ? (
-                    <div className="relative group mb-3">
-                      <img src={currentForm.logoUrl} alt="Logo" className="max-h-24 max-w-full object-contain rounded border border-slate-200 bg-white p-1" />
-                      <button onClick={() => setCurrentForm((p) => ({ ...p, logoUrl: "" }))} className="absolute -top-2 -right-2 bg-rose-600 text-white rounded-full p-1 shadow-sm hover:bg-rose-700">
-                        <Trash2 className="w-3 h-3" />
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="w-16 h-16 rounded-full bg-slate-100 flex items-center justify-center text-slate-400 mb-2">
-                      <ImageIcon className="w-7 h-7" />
-                    </div>
-                  )}
-                  <input type="file" ref={logoInputRef} onChange={(e) => handleImageUpload(e, "logoUrl")} accept="image/*" className="hidden" />
-                  <button onClick={() => logoInputRef.current?.click()} className="px-3 py-1.5 bg-white border border-slate-300 hover:border-slate-400 rounded-lg text-xs font-semibold text-slate-700 transition">
-                    {currentForm.logoUrl ? "Replace Logo" : "Upload Company Logo"}
-                  </button>
-                  <p className="text-[10px] text-slate-400 mt-1">PNG, JPG up to 2MB</p>
-                </div>
-
-                <div className="border border-dashed border-slate-300 rounded-xl p-4 flex flex-col items-center justify-center text-center bg-slate-50/50">
-                  {currentForm.signatureUrl ? (
-                    <div className="relative group mb-3">
-                      <img src={currentForm.signatureUrl} alt="Signature" className="max-h-24 max-w-full object-contain rounded border border-slate-200 bg-white p-1" />
-                      <button onClick={() => setCurrentForm((p) => ({ ...p, signatureUrl: "" }))} className="absolute -top-2 -right-2 bg-rose-600 text-white rounded-full p-1 shadow-sm hover:bg-rose-700">
-                        <Trash2 className="w-3 h-3" />
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="w-16 h-16 rounded-full bg-slate-100 flex items-center justify-center text-slate-400 mb-2">
-                      <PenTool className="w-7 h-7" />
-                    </div>
-                  )}
-                  <input type="file" ref={signatureInputRef} onChange={(e) => handleImageUpload(e, "signatureUrl")} accept="image/*" className="hidden" />
-                  <button onClick={() => signatureInputRef.current?.click()} className="px-3 py-1.5 bg-white border border-slate-300 hover:border-slate-400 rounded-lg text-xs font-semibold text-slate-700 transition">
-                    {currentForm.signatureUrl ? "Replace Signature" : "Upload Authorized Signatory"}
-                  </button>
-                  <p className="text-[10px] text-slate-400 mt-1">Digital signature image</p>
-                </div>
-              </div>
-            </div>
-
             <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-xs space-y-4">
               <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
                 <Building2 className="w-4 h-4 text-slate-600" /> Legal Entity & GST Configuration
@@ -1515,54 +1267,6 @@ export default function SettingsModule({ activeClient, setActiveClient, onGoToDa
                   <label className="block text-xs font-bold text-slate-700 mb-1">GSTIN</label>
                   <input type="text" placeholder="24ABCDE1234F1Z5" value={currentForm.gstin} onChange={(e) => setCurrentForm({ ...currentForm, gstin: e.target.value.toUpperCase() })} className="w-full text-xs font-mono font-bold border border-slate-300 rounded-lg p-2" />
                 </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">PAN Number</label>
-                  <input type="text" placeholder="ABCDE1234F" value={currentForm.pan} onChange={(e) => setCurrentForm({ ...currentForm, pan: e.target.value.toUpperCase() })} className="w-full text-xs font-mono font-bold border border-slate-300 rounded-lg p-2" />
-                </div>
-
-                <div className="col-span-2">
-                  <label className="block text-xs font-bold text-slate-700 mb-1">
-                    GST Scheme & ITC Eligibility <span className="text-rose-500">*</span>
-                  </label>
-                  <select
-                    value={currentForm.isItcEligible ? "YES" : "NO"}
-                    onChange={(e) => setCurrentForm({ ...currentForm, isItcEligible: e.target.value === "YES" })}
-                    className="w-full text-xs font-bold border border-slate-300 rounded-lg p-2 bg-white text-slate-800"
-                  >
-                    <option value="YES">YES — Eligible for Full Input Tax Credit (Regular GST Scheme)</option>
-                    <option value="NO">NO — Ineligible for ITC (Standalone Restaurant / Cafe 5% Scheme)</option>
-                  </select>
-                </div>
-
-                <div className="col-span-3">
-                  <label className="block text-xs font-bold text-slate-700 mb-1">Registered Business Address</label>
-                  <input type="text" placeholder="Complete Office Address" value={currentForm.address} onChange={(e) => setCurrentForm({ ...currentForm, address: e.target.value })} className="w-full text-xs border border-slate-300 rounded-lg p-2" />
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-xs space-y-4">
-              <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-                <CreditCard className="w-4 h-4 text-slate-600" /> Primary Settlement Bank
-              </h3>
-              <div className="grid grid-cols-4 gap-4">
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">Bank Name</label>
-                  <input type="text" value={currentForm.bankName} onChange={(e) => setCurrentForm({ ...currentForm, bankName: e.target.value })} className="w-full text-xs border border-slate-300 rounded-lg p-2" />
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">Account Number</label>
-                  <input type="text" value={currentForm.accountNo} onChange={(e) => setCurrentForm({ ...currentForm, accountNo: e.target.value })} className="w-full text-xs font-mono font-bold border border-slate-300 rounded-lg p-2" />
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">IFSC Code</label>
-                  <input type="text" value={currentForm.ifscCode} onChange={(e) => setCurrentForm({ ...currentForm, ifscCode: e.target.value.toUpperCase() })} className="w-full text-xs font-mono font-bold border border-slate-300 rounded-lg p-2" />
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">Branch</label>
-                  <input type="text" value={currentForm.branch} onChange={(e) => setCurrentForm({ ...currentForm, branch: e.target.value })} className="w-full text-xs border border-slate-300 rounded-lg p-2" />
-                </div>
               </div>
             </div>
 
@@ -1574,7 +1278,7 @@ export default function SettingsModule({ activeClient, setActiveClient, onGoToDa
           </div>
         )}
 
-        {/* 5. MANAGING CLIENT COA */}
+        {/* 5. MANAGING CLIENT COA (WITH OPENING BALANCE INPUTS) */}
         {activeTab === "manage_client" && manageSubTab === "coa" && (
           <div className="space-y-6">
             <form onSubmit={handleAddLedger} className="bg-white rounded-xl border border-slate-200 p-6 shadow-xs space-y-4">
@@ -1585,7 +1289,7 @@ export default function SettingsModule({ activeClient, setActiveClient, onGoToDa
               </div>
 
               <div className="grid grid-cols-12 gap-3 items-end">
-                <div className={newStatementType === "P&L" ? "col-span-4" : "col-span-5"}>
+                <div className="col-span-4">
                   <label className="block text-xs font-bold text-slate-700 mb-1">Ledger Name <span className="text-rose-500">*</span></label>
                   <input
                     type="text"
@@ -1596,7 +1300,7 @@ export default function SettingsModule({ activeClient, setActiveClient, onGoToDa
                   />
                 </div>
 
-                <div className={newStatementType === "P&L" ? "col-span-2" : "col-span-3"}>
+                <div className="col-span-2">
                   <label className="block text-xs font-bold text-slate-700 mb-1">Statement Nature <span className="text-rose-500">*</span></label>
                   <select
                     value={newStatementType}
@@ -1610,23 +1314,21 @@ export default function SettingsModule({ activeClient, setActiveClient, onGoToDa
 
                 {newStatementType === "P&L" && (
                   <div className="col-span-3">
-                    <label className="block text-xs font-bold text-slate-700 mb-1">
-                      P&L Item Nature <span className="text-rose-500">*</span>
-                    </label>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">P&L Item Nature</label>
                     <select
                       value={newCostNature}
                       onChange={(e) => setNewCostNature(e.target.value)}
                       className="w-full text-xs font-bold border border-slate-300 rounded-lg p-2 bg-white text-slate-900"
                     >
                       <option value="COGS">Direct Cost / Purchase (COGS)</option>
-                      <option value="Indirect">Indirect Operating Expense (Overhead)</option>
+                      <option value="Indirect">Indirect Operating Expense</option>
                       <option value="Revenue">Revenue from Operations (Sales)</option>
-                      <option value="Other Income">Other / Non-Operating Income</option>
+                      <option value="Other Income">Other Income</option>
                     </select>
                   </div>
                 )}
 
-                <div className={newStatementType === "P&L" ? "col-span-3" : "col-span-4"}>
+                <div className={newStatementType === "P&L" ? "col-span-3" : "col-span-6"}>
                   <label className="block text-xs font-bold text-slate-700 mb-1">Category Name <span className="text-rose-500">*</span></label>
                   <input
                     type="text"
@@ -1637,7 +1339,32 @@ export default function SettingsModule({ activeClient, setActiveClient, onGoToDa
                   />
                 </div>
 
-                <div className="col-span-12 flex justify-end pt-2">
+                {/* OPENING BALANCE INPUTS */}
+                <div className="col-span-4">
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Opening Balance (₹)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    placeholder="0.00"
+                    value={newOpeningBalance}
+                    onChange={(e) => setNewOpeningBalance(e.target.value)}
+                    className="w-full text-xs font-semibold border border-slate-300 rounded-lg p-2 bg-white text-slate-900"
+                  />
+                </div>
+
+                <div className="col-span-2">
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Dr / Cr</label>
+                  <select
+                    value={newOpeningBalanceType}
+                    onChange={(e) => setNewOpeningBalanceType(e.target.value)}
+                    className="w-full text-xs font-bold border border-slate-300 rounded-lg p-2 bg-white text-slate-900"
+                  >
+                    <option value="Dr">Dr</option>
+                    <option value="Cr">Cr</option>
+                  </select>
+                </div>
+
+                <div className="col-span-6 flex justify-end pt-2">
                   <button
                     type="submit"
                     className="flex items-center gap-1.5 px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-bold transition shadow-xs"
@@ -1647,26 +1374,6 @@ export default function SettingsModule({ activeClient, setActiveClient, onGoToDa
                 </div>
               </div>
             </form>
-
-            <div className="flex items-center justify-between bg-white px-5 py-3 rounded-xl border border-slate-200">
-              <div className="flex items-center gap-2">
-                <Filter className="w-4 h-4 text-slate-500" />
-                <span className="text-xs font-bold text-slate-700">Filter By Statement:</span>
-              </div>
-              <div className="flex items-center gap-2">
-                {["ALL", "P&L", "Balance Sheet"].map((f) => (
-                  <button
-                    key={f}
-                    onClick={() => setCoaFilter(f)}
-                    className={`px-3 py-1 rounded-lg text-xs font-bold transition ${
-                      coaFilter === f ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-                    }`}
-                  >
-                    {f} ({f === "ALL" ? clientCoa.length : clientCoa.filter((l) => l.statementType === f).length})
-                  </button>
-                ))}
-              </div>
-            </div>
 
             <div className="space-y-4">
               {Object.keys(categoriesGrouped).length === 0 ? (
@@ -1697,43 +1404,20 @@ export default function SettingsModule({ activeClient, setActiveClient, onGoToDa
                       <div className="divide-y divide-slate-100">
                         {ledgers.map((item) => {
                           const plNature = getPlNature(item);
+                          const openBal = Number(item.openingBalance || 0);
 
                           return (
                             <div key={item.id} className="px-5 py-2.5 flex items-center justify-between hover:bg-slate-50/50 transition">
-                              <div className="flex items-center gap-2.5">
+                              <div className="flex items-center gap-3">
                                 <span className="text-xs font-semibold text-slate-800">{item.name}</span>
-                                
-                                {item.statementType === "P&L" && (
-                                  <>
-                                    {plNature === "Revenue" && (
-                                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
-                                        Revenue from Operations
-                                      </span>
-                                    )}
-
-                                    {plNature === "Other Income" && (
-                                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-teal-100 text-teal-800 border border-teal-300">
-                                        Other Non-Operating Income
-                                      </span>
-                                    )}
-
-                                    {(plNature === "COGS" || plNature === "Indirect") && (
-                                      <button
-                                        onClick={() => handleToggleCogsClassification(item.id)}
-                                        className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold cursor-pointer transition shadow-2xs hover:scale-105 ${
-                                          plNature === "COGS"
-                                            ? "bg-amber-100 hover:bg-amber-200 text-amber-800 border border-amber-300"
-                                            : "bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200"
-                                        }`}
-                                      >
-                                        {plNature === "COGS" ? "Direct (COGS) ⇄" : "Indirect Expense ⇄"}
-                                      </button>
-                                    )}
-                                  </>
+                                {openBal !== 0 && (
+                                  <span className="text-[11px] font-mono font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100">
+                                    Op. Bal: ₹{openBal.toLocaleString("en-IN", { minimumFractionDigits: 2 })} {item.openingBalanceType || "Cr"}
+                                  </span>
                                 )}
                               </div>
 
-                              <div className="flex items-center gap-1">
+                              <div className="flex items-center gap-2">
                                 <button
                                   onClick={() => setEditingLedger(item)}
                                   className="text-slate-300 hover:text-indigo-600 p-1.5 rounded transition"
@@ -1741,7 +1425,6 @@ export default function SettingsModule({ activeClient, setActiveClient, onGoToDa
                                 >
                                   <Edit2 className="w-3.5 h-3.5" />
                                 </button>
-
                                 <button
                                   onClick={() => handleDeleteLedger(item.id, item.name)}
                                   className="text-slate-300 hover:text-rose-600 p-1.5 rounded transition"
@@ -1763,7 +1446,7 @@ export default function SettingsModule({ activeClient, setActiveClient, onGoToDa
         )}
       </div>
 
-      {/* EDIT LEDGER MODAL */}
+      {/* EDIT LEDGER MODAL WITH OPENING BALANCE FIELDS */}
       {editingLedger && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4">
           <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4 border border-slate-200 animate-in fade-in duration-150">
@@ -1795,33 +1478,29 @@ export default function SettingsModule({ activeClient, setActiveClient, onGoToDa
                 />
               </div>
 
-              <div>
-                <label className="block font-bold text-slate-700 mb-1">Statement Nature</label>
-                <select
-                  value={editingLedger.statementType}
-                  onChange={(e) => setEditingLedger({ ...editingLedger, statementType: e.target.value })}
-                  className="w-full border border-slate-300 rounded-lg p-2.5 font-medium bg-white"
-                >
-                  <option value="P&L">Profit & Loss (P&L)</option>
-                  <option value="Balance Sheet">Balance Sheet</option>
-                </select>
-              </div>
-
-              {editingLedger.statementType === "P&L" && (
+              <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block font-bold text-slate-700 mb-1">P&L Cost Nature</label>
+                  <label className="block font-bold text-slate-700 mb-1">Opening Balance (₹)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={editingLedger.openingBalance || ""}
+                    onChange={(e) => setEditingLedger({ ...editingLedger, openingBalance: e.target.value })}
+                    className="w-full border border-slate-300 rounded-lg p-2.5 font-semibold text-slate-900"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Dr / Cr</label>
                   <select
-                    value={editingLedger.cogsClassification || "Indirect"}
-                    onChange={(e) => setEditingLedger({ ...editingLedger, cogsClassification: e.target.value })}
+                    value={editingLedger.openingBalanceType || "Cr"}
+                    onChange={(e) => setEditingLedger({ ...editingLedger, openingBalanceType: e.target.value })}
                     className="w-full border border-slate-300 rounded-lg p-2.5 font-bold bg-white text-slate-900"
                   >
-                    <option value="COGS">Direct Cost / Purchase (COGS)</option>
-                    <option value="Indirect">Indirect Operating Expense (Overhead)</option>
-                    <option value="Revenue">Revenue from Operations</option>
-                    <option value="Other Income">Other / Non-Operating Income</option>
+                    <option value="Dr">Dr</option>
+                    <option value="Cr">Cr</option>
                   </select>
                 </div>
-              )}
+              </div>
             </div>
 
             <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
