@@ -437,6 +437,38 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
     notify(`Exported ${bankFilteredApproved.length} approved transactions to CSV!`, "success");
   };
 
+  // ROBUST DATE FORMATTER TO ENSURE DD/MM/YYYY
+  const formatDisplayDate = (rawDate) => {
+    if (!rawDate) return "";
+    const s = String(rawDate).trim();
+    // If it's already in DD/MM/YYYY or YYYY-MM-DD format
+    if (s.includes("/")) {
+      const parts = s.split(" ")[0].split("/");
+      if (parts.length === 3) {
+        return `${parts[0].padStart(2, "0")}/${parts[1].padStart(2, "0")}/${parts[2]}`;
+      }
+    }
+    if (s.includes("-")) {
+      const parts = s.split(" ")[0].split("-");
+      if (parts.length === 3) {
+        if (parts[0].length === 4) {
+          // YYYY-MM-DD -> DD/MM/YYYY
+          return `${parts[2].padStart(2, "0")}/${parts[1].padStart(2, "0")}/${parts[0]}`;
+        }
+        return `${parts[0].padStart(2, "0")}/${parts[1].padStart(2, "0")}/${parts[2]}`;
+      }
+    }
+    // Fallback Date object parser
+    const d = new Date(rawDate);
+    if (!isNaN(d.getTime())) {
+      const day = String(d.getDate()).padStart(2, "0");
+      const month = String(d.getMonth() + 1).padStart(2, "0");
+      const year = d.getFullYear();
+      return `${day}/${month}/${year}`;
+    }
+    return s.split(" ")[0];
+  };
+
   const handleFileUpload = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -450,7 +482,6 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
       reader.onload = async (event) => {
         try {
           const data = new Uint8Array(event.target.result);
-          // Parse workbook natively without forcing cellDates to prevent JS Date object conversion
           const workbook = XLSX.read(data, { type: "array", cellDates: false });
           const firstSheetName = workbook.SheetNames[0];
           const worksheet = workbook.Sheets[firstSheetName];
@@ -503,13 +534,14 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
           const parseCleanDate = (rawDate) => {
             if (!rawDate) return "";
             const s = String(rawDate).trim();
-            // Handle Excel serial date numbers
             if (!isNaN(s) && Number(s) > 20000 && Number(s) < 60000) {
               const excelDate = new Date(Math.round((Number(s) - 25569) * 86400 * 1000));
-              return excelDate.toISOString().split("T")[0];
+              const day = String(excelDate.getDate()).padStart(2, "0");
+              const month = String(excelDate.getMonth() + 1).padStart(2, "0");
+              const year = excelDate.getFullYear();
+              return `${day}/${month}/${year}`;
             }
-            // If it contains time string (e.g. 05-08-2026 00:00:00), strip time
-            return s.split(" ")[0];
+            return formatDisplayDate(s);
           };
 
           for (let i = headerIdx + 1; i < rawRows.length; i++) {
@@ -677,7 +709,7 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
     );
     if (bankPending.length === 0) return;
 
-    const toApprove = bankPending.map((t) => ({ ...t, bankLedger: t.bankLedger || selectedBankLedger, approvedAt: new Date().toLocaleString() }));
+    const toApprove = bankPending.map((t) => ({ ...t, bankLedger: tx.bankLedger || selectedBankLedger, approvedAt: new Date().toLocaleString() }));
     const remainingPending = transactions.filter(
       (t) => (t.bankLedger || selectedBankLedger) !== selectedBankLedger
     );
@@ -691,7 +723,7 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
       for (const t of bankPending) {
         await api.deleteBankTxn(activeClient, "pending", t.id).catch(() => null);
       }
-      notify(`Approved all ${toApprove.length} transactions for [${selectedBankLedger}] & synced!`, "success");
+      notify(`Approved all transactions for [${selectedBankLedger}] & synced!`, "success");
     } catch (err) {
       console.error(err);
       notify("Approved locally.", "info");
@@ -704,7 +736,7 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
     const otherFiltered = list.filter((t) => (t.bankLedger || selectedBankLedger) !== selectedBankLedger);
 
     if (bankFiltered.length === 0) return;
-    if (!window.confirm(`Discard all ${bankFiltered.length} transactions for [${selectedBankLedger}] in ${bankSubTab === "needs_review" ? "Needs Review" : "Approved"}?`)) return;
+    if (!window.confirm(`Discard all transactions for [${selectedBankLedger}] in ${bankSubTab === "needs_review" ? "Needs Review" : "Approved"}?`)) return;
 
     if (bankSubTab === "needs_review") {
       setTransactions(otherFiltered);
@@ -734,8 +766,11 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
 
   // 100% TALLY-COMPLIANT SINGLE VOUCHER XML GENERATOR
   const buildSingleXmlVoucher = (tx) => {
-    const rawDate = tx.date || "2026-09-29";
-    const tallyDate = String(rawDate).replace(/[^0-9]/g, "").padEnd(8, "0").slice(0, 8);
+    const rawDate = tx.date || "29/09/2026";
+    // Convert DD/MM/YYYY to YYYYMMDD for Tally
+    const dateParts = rawDate.split("/");
+    const tallyDate = dateParts.length === 3 ? `${dateParts[2]}${dateParts[1]}${dateParts[0]}` : "20260929";
+    
     const isReceipt = tx.type === "Receipt";
     const vchType = isReceipt ? "Receipt" : "Payment";
     const amountVal = Number(tx.amount || 0).toFixed(2);
@@ -935,11 +970,10 @@ ${xmlVoucher}
           const parts = String(rawDate).split(/[\/\-]/);
           let dateObj = null;
           if (parts.length === 3) {
-            if (parts[0].length === 4) {
-              dateObj = new Date(parts[0], parseInt(parts[1]) - 1, parts[2]);
+            if (parts[2].length === 4) {
+              dateObj = new Date(parts[2], parseInt(parts[1]) - 1, parts[0]);
             } else {
-              const yr = parts[2].length === 2 ? `20${parts[2]}` : parts[2];
-              dateObj = new Date(yr, parseInt(parts[1]) - 1, parts[0]);
+              dateObj = new Date(parts[0], parseInt(parts[1]) - 1, parts[2]);
             }
           } else {
             dateObj = new Date(rawDate);
