@@ -238,6 +238,20 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
     }
   });
 
+  // Store latest extracted ending balance from uploaded statement
+  const [latestStatementBalance, setLatestStatementBalance] = useState(() => {
+    try {
+      const saved = localStorage.getItem(`c4_bank_balance_${activeClient}`);
+      return saved ? parseFloat(saved) : 0;
+    } catch {
+      return 0;
+    }
+  });
+
+  useEffect(() => {
+    localStorage.setItem(`c4_bank_balance_${activeClient}`, latestStatementBalance);
+  }, [latestStatementBalance, activeClient]);
+
   // Extract Bank / Cash Ledgers from COA for the dropdown selector
   const availableBankLedgers = useMemo(() => {
     if (clientCoa && clientCoa.length > 0) {
@@ -266,8 +280,8 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
     }
   }, [availableBankLedgers]);
 
-  // LIVE BANK BALANCE CALCULATION FOR SELECTED BANK
-  const currentBankBalance = useMemo(() => {
+  // LIVE BANK BALANCE (EXACT CLOSING BALANCE FROM STATEMENT LAST DATE)
+  const currentBankBalance = latestStatementBalance !== 0 ? latestStatementBalance : useMemo(() => {
     let balance = 0;
     const allBankTxns = [...transactions, ...approvedTransactions, ...pushedTransactions].filter(
       (t) => (t.bankLedger || selectedBankLedger) === selectedBankLedger
@@ -282,7 +296,7 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
       }
     });
     return balance;
-  }, [transactions, approvedTransactions, pushedTransactions, selectedBankLedger]);
+  }, [transactions, approvedTransactions, pushedTransactions, selectedBankLedger, latestStatementBalance]);
 
   // --- FETCH BANK TRANSACTIONS & COA DIRECTLY FROM FIRESTORE ---
   useEffect(() => {
@@ -462,7 +476,7 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
             const rowStr = (rawRows[r] || []).join(" ").toLowerCase();
             if (
               rowStr.includes("date") &&
-              (rowStr.includes("narr") || rowStr.includes("desc") || rowStr.includes("particular") || rowStr.includes("withdraw") || rowStr.includes("deposit") || rowStr.includes("debit") || rowStr.includes("credit"))
+              (rowStr.includes("narr") || rowStr.includes("desc") || rowStr.includes("particular") || rowStr.includes("withdraw") || rowStr.includes("deposit") || rowStr.includes("balance"))
             ) {
               headerIdx = r;
               break;
@@ -475,11 +489,14 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
           const refIdx = headers.findIndex((h) => h.includes("ref") || h.includes("chq") || h.includes("cheque") || h.includes("utr"));
           const withIdx = headers.findIndex((h) => h.includes("withdraw") || h.includes("with") || h.includes("debit") || h.includes("dr"));
           const depIdx = headers.findIndex((h) => h.includes("deposit") || h.includes("dep") || h.includes("credit") || h.includes("cr"));
+          const balIdx = headers.findIndex((h) => h.includes("bal") || h.includes("balance"));
 
           const parsedRows = [];
+          let lastExtractedBalance = 0;
 
           const parseCleanAmount = (rawVal) => {
             if (rawVal === undefined || rawVal === null || rawVal === "") return 0;
+            if (typeof rawVal === "number") return rawVal;
             const cleaned = String(rawVal).replace(/,/g, "").replace(/[^0-9.-]/g, "");
             return parseFloat(cleaned) || 0;
           };
@@ -501,6 +518,11 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
 
             let withdrawal = withIdx !== -1 ? parseCleanAmount(cells[withIdx]) : 0;
             let deposit = depIdx !== -1 ? parseCleanAmount(cells[depIdx]) : 0;
+            const rowBalance = balIdx !== -1 ? parseCleanAmount(cells[balIdx]) : 0;
+
+            if (rowBalance !== 0) {
+              lastExtractedBalance = rowBalance;
+            }
 
             if (withdrawal === 0 && deposit === 0) continue;
 
@@ -522,6 +544,10 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
               allocatedLedger: matched || (type === "Receipt" ? "Sales: Direct UPI Collection" : "Tea & Refreshment Expenses"),
               isAutoMatched: Boolean(matched)
             });
+          }
+
+          if (lastExtractedBalance !== 0) {
+            setLatestStatementBalance(lastExtractedBalance);
           }
 
           if (parsedRows.length === 0) {
