@@ -450,11 +450,11 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
       reader.onload = async (event) => {
         try {
           const data = new Uint8Array(event.target.result);
-          const workbook = XLSX.read(data, { type: "array", cellDates: true });
+          // Parse workbook natively without forcing cellDates to prevent JS Date object conversion
+          const workbook = XLSX.read(data, { type: "array", cellDates: false });
           const firstSheetName = workbook.SheetNames[0];
           const worksheet = workbook.Sheets[firstSheetName];
           
-          // Force range to cover the absolute full extent of the sheet with zero row caps
           const range = worksheet['!ref'] ? XLSX.utils.decode_range(worksheet['!ref']) : null;
           if (range) {
             range.s.r = 0;
@@ -500,17 +500,24 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
             return isNaN(num) ? 0 : Math.abs(num);
           };
 
+          const parseCleanDate = (rawDate) => {
+            if (!rawDate) return "";
+            const s = String(rawDate).trim();
+            // Handle Excel serial date numbers
+            if (!isNaN(s) && Number(s) > 20000 && Number(s) < 60000) {
+              const excelDate = new Date(Math.round((Number(s) - 25569) * 86400 * 1000));
+              return excelDate.toISOString().split("T")[0];
+            }
+            // If it contains time string (e.g. 05-08-2026 00:00:00), strip time
+            return s.split(" ")[0];
+          };
+
           for (let i = headerIdx + 1; i < rawRows.length; i++) {
             const cells = rawRows[i] || [];
             if (!cells || cells.length === 0) continue;
 
-            let dateVal = dateIdx !== -1 && cells[dateIdx] ? String(cells[dateIdx]).trim() : "";
+            let dateVal = dateIdx !== -1 && cells[dateIdx] ? parseCleanDate(cells[dateIdx]) : "";
             if (!dateVal) continue;
-
-            if (!isNaN(dateVal) && Number(dateVal) > 20000 && Number(dateVal) < 60000) {
-              const excelDate = new Date(Math.round((Number(dateVal) - 25569) * 86400 * 1000));
-              dateVal = excelDate.toISOString().split("T")[0];
-            }
 
             const narrVal = narrIdx !== -1 && cells[narrIdx] !== undefined ? String(cells[narrIdx]).trim() : "Bank Transaction";
             const refVal = refIdx !== -1 && cells[refIdx] !== undefined ? String(cells[refIdx]).trim() : "-";
@@ -1161,7 +1168,7 @@ ${xmlVoucher}
         </div>
       </div>
 
-      {/* TABLE VIEW */}
+      {/* TABLE VIEW WITH EXACT COLUMN SEQUENCE REQUESTED */}
       <div className="flex-1 p-8 overflow-y-auto">
         {bankSubTab !== "pushed" && (
           <>
@@ -1180,26 +1187,29 @@ ${xmlVoucher}
                 <table className="w-full text-left text-xs">
                   <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 font-semibold uppercase text-[10px]">
                     <tr>
-                      <th className="py-3 px-4">Date</th>
-                      <th className="py-3 px-4">Bank Account</th>
-                      <th className="py-3 px-4">Type</th>
-                      <th className="py-3 px-4">Narration / Description</th>
+                      <th className="py-3 px-4 w-32">Date</th>
+                      <th className="py-3 px-4">Full Description</th>
+                      <th className="py-3 px-4 w-28">Receipt / Payment</th>
+                      <th className="py-3 px-4 text-right w-32">Amount (₹)</th>
                       <th className="py-3 px-4 w-72">Ledger Allocation</th>
-                      <th className="py-3 px-4 text-right">Amount (₹)</th>
-                      <th className="py-3 px-4 text-center">Action</th>
+                      <th className="py-3 px-4 text-center w-28">Action</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
                     {displayedList.map((tx) => (
                       <tr key={tx.id} className="hover:bg-slate-50/70 transition">
-                        <td className="py-3 px-4 whitespace-nowrap text-slate-500 font-mono">
+                        {/* 1) Date */}
+                        <td className="py-3 px-4 whitespace-nowrap text-slate-900 font-mono font-bold">
                           {tx.date}
                         </td>
 
-                        <td className="py-3 px-4 whitespace-nowrap font-mono text-slate-600 font-semibold">
-                          {tx.bankLedger || selectedBankLedger}
+                        {/* 2) Full Description (Uncropped) */}
+                        <td className="py-3 px-4 text-slate-900 font-medium">
+                          <div className="break-words whitespace-normal leading-relaxed">{tx.narration}</div>
+                          <div className="font-mono text-[10px] text-slate-400 mt-0.5">Ref: {tx.refNo}</div>
                         </td>
 
+                        {/* 3) Receipt / Payment */}
                         <td className="py-3 px-4 whitespace-nowrap">
                           {tx.type === "Receipt" ? (
                             <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
@@ -1212,12 +1222,12 @@ ${xmlVoucher}
                           )}
                         </td>
 
-                        <td className="py-3 px-4 max-w-md">
-                          <p className="font-semibold text-slate-900 leading-tight truncate">{tx.narration}</p>
-                          <p className="font-mono text-[10px] text-slate-400 mt-0.5">Ref: {tx.refNo}</p>
+                        {/* 4) Amount */}
+                        <td className="py-3 px-4 text-right whitespace-nowrap font-mono font-bold text-slate-900">
+                          ₹{Number(tx.amount || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                         </td>
 
-                        {/* SEARCHABLE TYPEAHEAD COMBOBOX IN BANK TABLE */}
+                        {/* 5) Ledger Allocation */}
                         <td className="py-3 px-4 relative overflow-visible">
                           {bankSubTab === "needs_review" ? (
                             <div className="flex items-center gap-1.5">
@@ -1270,10 +1280,7 @@ ${xmlVoucher}
                           )}
                         </td>
 
-                        <td className="py-3 px-4 text-right whitespace-nowrap font-mono font-bold text-slate-900">
-                          ₹{Number(tx.amount || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                        </td>
-
+                        {/* 6) Action */}
                         <td className="py-3 px-4 text-center whitespace-nowrap">
                           {bankSubTab === "needs_review" && (
                             <div className="inline-flex items-center gap-1.5">
@@ -1385,12 +1392,10 @@ ${xmlVoucher}
                         <thead className="bg-white border-b border-slate-200 uppercase font-semibold text-slate-400 text-[10px]">
                           <tr>
                             <th className="px-6 py-3">Date</th>
-                            <th className="px-6 py-3">Bank Account</th>
+                            <th className="px-6 py-3">Full Description</th>
                             <th className="px-6 py-3">Type</th>
-                            <th className="px-6 py-3">Narration / Description</th>
-                            <th className="px-6 py-3">Allocated Ledger (COA)</th>
-                            <th className="px-6 py-3">Pushed At</th>
                             <th className="px-6 py-3 font-mono text-right">Amount (₹)</th>
+                            <th className="px-6 py-3">Allocated Ledger (COA)</th>
                             <th className="px-6 py-3 text-right">Status</th>
                           </tr>
                         </thead>
@@ -1400,8 +1405,9 @@ ${xmlVoucher}
                               <td className="px-6 py-3.5 font-mono text-slate-900 font-bold whitespace-nowrap">
                                 {tx.date}
                               </td>
-                              <td className="px-6 py-3.5 font-mono text-slate-600 font-semibold whitespace-nowrap">
-                                {tx.bankLedger}
+                              <td className="px-6 py-3.5 text-slate-900">
+                                <div className="break-words whitespace-normal leading-relaxed">{tx.narration}</div>
+                                <div className="font-mono text-[10px] text-slate-400 mt-0.5">Ref: {tx.refNo}</div>
                               </td>
                               <td className="px-6 py-3.5 whitespace-nowrap">
                                 {tx.type === "Receipt" ? (
@@ -1414,18 +1420,11 @@ ${xmlVoucher}
                                   </span>
                                 )}
                               </td>
-                              <td className="px-6 py-3.5 text-slate-800 max-w-xs truncate" title={tx.narration}>
-                                <p className="font-semibold text-slate-900 leading-tight truncate">{tx.narration}</p>
-                                <p className="font-mono text-[10px] text-slate-400 mt-0.5">Ref: {tx.refNo}</p>
+                              <td className="px-6 py-3.5 font-mono font-bold text-slate-800 text-right">
+                                ₹{Number(tx.amount || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                               </td>
                               <td className="px-6 py-3.5 font-semibold text-indigo-900">
                                 {tx.allocatedLedger}
-                              </td>
-                              <td className="px-6 py-3.5 text-slate-400 text-[11px]">
-                                {tx.pushedAt || "Recent"}
-                              </td>
-                              <td className="px-6 py-3.5 font-mono font-bold text-slate-800 text-right">
-                                ₹{Number(tx.amount || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                               </td>
                               <td className="px-6 py-3.5 text-right">
                                 <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded">
