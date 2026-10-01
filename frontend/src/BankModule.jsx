@@ -461,7 +461,15 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
             const workbook = XLSX.read(data, { type: "array" });
             const firstSheetName = workbook.SheetNames[0];
             const worksheet = workbook.Sheets[firstSheetName];
-            rawRows = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" });
+            
+            // EXPLICIT RANGE FIX: Force SheetJS to read the full extent of the sheet without 200-row caps
+            const range = worksheet['!ref'] ? XLSX.utils.decode_range(worksheet['!ref']) : null;
+            if (range) {
+              range.s.r = 0; // start from row 0
+              worksheet['!ref'] = XLSX.utils.encode_range(range);
+            }
+            
+            rawRows = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "", range: worksheet['!ref'] });
           }
 
           if (!rawRows || rawRows.length < 2) {
