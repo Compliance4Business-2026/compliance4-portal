@@ -277,7 +277,7 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
     }
   }, [availableBankLedgers]);
 
-  // LIVE BANK BALANCE (EXACT CLOSING BALANCE FROM STATEMENT LAST DATE)
+  // LIVE BANK BALANCE (EXACT CLOSING BALANCE FROM STATEMENT LAST DATE FOR THIS BANK ACCOUNT)
   const currentBankBalance = useMemo(() => {
     if (bankBalancesMap[selectedBankLedger] !== undefined) {
       return bankBalancesMap[selectedBankLedger];
@@ -294,6 +294,7 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
     return balance;
   }, [bankBalancesMap, transactions, approvedTransactions, pushedTransactions, selectedBankLedger]);
 
+  // --- FETCH BANK TRANSACTIONS & COA DIRECTLY FROM FIRESTORE ---
   useEffect(() => {
     let isMounted = true;
 
@@ -552,7 +553,11 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
           if (parsedRows.length === 0) {
             notify("No valid withdrawal or deposit rows detected.", "error");
           } else {
-            setTransactions((prev) => [...parsedRows, ...prev]);
+            // Keep existing transactions of OTHER banks, only replace/append for current bank
+            setTransactions((prev) => [
+              ...prev.filter(t => (t.bankLedger || selectedBankLedger) !== selectedBankLedger),
+              ...parsedRows
+            ]);
 
             await api.saveBankTxns(activeClient, "pending", parsedRows).catch((err) => {
               console.warn("Failed saving bank txns to cloud:", err);
@@ -958,7 +963,6 @@ ${xmlVoucher}
     return Object.values(groups);
   }, [pushedTransactions, selectedBankLedger]);
 
-  // STRICTLY FILTER DISPLAYED LIST BY SELECTED BANK ACCOUNT
   const displayedList = useMemo(() => {
     const rawList =
       bankSubTab === "needs_review"
