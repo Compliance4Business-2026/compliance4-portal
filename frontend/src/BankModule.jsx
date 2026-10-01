@@ -59,7 +59,6 @@ const loadSheetJS = () => {
   });
 };
 
-// ROBUST POP-OUT SEARCHABLE TYPEAHEAD COMBOBOX WITH KEYBOARD NAVIGATION
 function SearchableLedgerSelect({ value, onChange, coaList = [], fallbackOptions = [], placeholder = "Type to search ledger..." }) {
   const [isOpen, setIsOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
@@ -228,7 +227,6 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
     }
   });
 
-  // Client-Scoped Dynamic Chart of Accounts
   const [clientCoa, setClientCoa] = useState(() => {
     try {
       const saved = localStorage.getItem(`c4_coa_${activeClient}`);
@@ -238,21 +236,20 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
     }
   });
 
-  // Store latest extracted ending balance from uploaded statement
-  const [latestStatementBalance, setLatestStatementBalance] = useState(() => {
+  // Bank Balances Map stored per account ledger name
+  const [bankBalancesMap, setBankBalancesMap] = useState(() => {
     try {
-      const saved = localStorage.getItem(`c4_bank_balance_${activeClient}`);
-      return saved ? parseFloat(saved) : 0;
+      const saved = localStorage.getItem(`c4_bank_balances_map_${activeClient}`);
+      return saved ? JSON.parse(saved) : {};
     } catch {
-      return 0;
+      return {};
     }
   });
 
   useEffect(() => {
-    localStorage.setItem(`c4_bank_balance_${activeClient}`, latestStatementBalance);
-  }, [latestStatementBalance, activeClient]);
+    localStorage.setItem(`c4_bank_balances_map_${activeClient}`, JSON.stringify(bankBalancesMap));
+  }, [bankBalancesMap, activeClient]);
 
-  // Extract Bank / Cash Ledgers from COA for the dropdown selector
   const availableBankLedgers = useMemo(() => {
     if (clientCoa && clientCoa.length > 0) {
       const banks = clientCoa.filter((l) => {
@@ -281,24 +278,22 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
   }, [availableBankLedgers]);
 
   // LIVE BANK BALANCE (EXACT CLOSING BALANCE FROM STATEMENT LAST DATE)
-  const currentBankBalance = latestStatementBalance !== 0 ? latestStatementBalance : useMemo(() => {
+  const currentBankBalance = useMemo(() => {
+    if (bankBalancesMap[selectedBankLedger] !== undefined) {
+      return bankBalancesMap[selectedBankLedger];
+    }
     let balance = 0;
-    const allBankTxns = [...transactions, ...approvedTransactions, ...pushedTransactions].filter(
+    const bankTxns = [...transactions, ...approvedTransactions, ...pushedTransactions].filter(
       (t) => (t.bankLedger || selectedBankLedger) === selectedBankLedger
     );
-
-    allBankTxns.forEach((tx) => {
+    bankTxns.forEach((tx) => {
       const amt = parseFloat(tx.amount) || 0;
-      if (tx.type === "Receipt") {
-        balance += amt;
-      } else {
-        balance -= amt;
-      }
+      if (tx.type === "Receipt") balance += amt;
+      else balance -= amt;
     });
     return balance;
-  }, [transactions, approvedTransactions, pushedTransactions, selectedBankLedger, latestStatementBalance]);
+  }, [bankBalancesMap, transactions, approvedTransactions, pushedTransactions, selectedBankLedger]);
 
-  // --- FETCH BANK TRANSACTIONS & COA DIRECTLY FROM FIRESTORE ---
   useEffect(() => {
     let isMounted = true;
 
@@ -408,8 +403,11 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
   };
 
   const handleDownloadApprovedExcel = () => {
-    if (approvedTransactions.length === 0) {
-      notify("No approved transactions available to export.", "error");
+    const bankFilteredApproved = approvedTransactions.filter(
+      (tx) => (tx.bankLedger || selectedBankLedger) === selectedBankLedger
+    );
+    if (bankFilteredApproved.length === 0) {
+      notify("No approved transactions available for this bank account to export.", "error");
       return;
     }
 
@@ -417,7 +415,7 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
       "Date", "Bank Ledger", "Type", "Narration / Description", "Reference No", "Allocated Ledger (COA)", "Amount (₹)", "Approved At"
     ];
 
-    const rows = approvedTransactions.map((tx) => [
+    const rows = bankFilteredApproved.map((tx) => [
       `"${tx.date || ""}"`,
       `"${tx.bankLedger || selectedBankLedger}"`,
       `"${tx.type || ""}"`,
@@ -431,11 +429,11 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
     const csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows.map((r) => r.join(","))].join("\n");
     const link = document.createElement("a");
     link.href = encodeURI(csvContent);
-    link.download = `Approved_Bank_Transactions_${activeClient.replace(/\s+/g, "_")}.csv`;
+    link.download = `Approved_Bank_Transactions_${selectedBankLedger.replace(/\s+/g, "_")}.csv`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-    notify(`Exported ${approvedTransactions.length} approved transactions to CSV!`, "success");
+    notify(`Exported ${bankFilteredApproved.length} approved transactions to CSV!`, "success");
   };
 
   const handleFileUpload = async (e) => {
@@ -496,9 +494,10 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
 
           const parseCleanAmount = (rawVal) => {
             if (rawVal === undefined || rawVal === null || rawVal === "") return 0;
-            if (typeof rawVal === "number") return rawVal;
-            const cleaned = String(rawVal).replace(/,/g, "").replace(/[^0-9.-]/g, "");
-            return parseFloat(cleaned) || 0;
+            if (typeof rawVal === "number") return Math.abs(rawVal);
+            const cleaned = String(rawVal).replace(/,/g, "").trim();
+            const num = parseFloat(cleaned);
+            return isNaN(num) ? 0 : Math.abs(num);
           };
 
           for (let i = headerIdx + 1; i < rawRows.length; i++) {
@@ -526,9 +525,6 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
 
             if (withdrawal === 0 && deposit === 0) continue;
 
-            withdrawal = Math.abs(withdrawal);
-            deposit = Math.abs(deposit);
-
             const type = deposit > 0 ? "Receipt" : "Payment";
             const amount = deposit > 0 ? deposit : withdrawal;
             const matched = findMatchingLedger(narrVal);
@@ -547,7 +543,10 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
           }
 
           if (lastExtractedBalance !== 0) {
-            setLatestStatementBalance(lastExtractedBalance);
+            setBankBalancesMap(prev => ({
+              ...prev,
+              [selectedBankLedger]: lastExtractedBalance
+            }));
           }
 
           if (parsedRows.length === 0) {
@@ -663,18 +662,26 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
   };
 
   const handleApproveAll = async () => {
-    if (transactions.length === 0) return;
-    const toApprove = transactions.map((t) => ({ ...t, bankLedger: t.bankLedger || selectedBankLedger, approvedAt: new Date().toLocaleString() }));
+    const bankPending = transactions.filter(
+      (t) => (t.bankLedger || selectedBankLedger) === selectedBankLedger
+    );
+    if (bankPending.length === 0) return;
+
+    const toApprove = bankPending.map((t) => ({ ...t, bankLedger: t.bankLedger || selectedBankLedger, approvedAt: new Date().toLocaleString() }));
+    const remainingPending = transactions.filter(
+      (t) => (t.bankLedger || selectedBankLedger) !== selectedBankLedger
+    );
+
     setApprovedTransactions((prev) => [...toApprove, ...prev]);
-    setTransactions([]);
+    setTransactions(remainingPending);
     setBankSubTab("approved");
 
     try {
       await api.saveBankTxns(activeClient, "reconciled", toApprove);
-      for (const t of transactions) {
+      for (const t of bankPending) {
         await api.deleteBankTxn(activeClient, "pending", t.id).catch(() => null);
       }
-      notify(`Approved all ${toApprove.length} transactions & synced to Firestore!`, "success");
+      notify(`Approved all ${toApprove.length} transactions for [${selectedBankLedger}] & synced!`, "success");
     } catch (err) {
       console.error(err);
       notify("Approved locally.", "info");
@@ -682,25 +689,25 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
   };
 
   const handleDiscardAll = async () => {
+    const list = bankSubTab === "needs_review" ? transactions : approvedTransactions;
+    const bankFiltered = list.filter((t) => (t.bankLedger || selectedBankLedger) === selectedBankLedger);
+    const otherFiltered = list.filter((t) => (t.bankLedger || selectedBankLedger) !== selectedBankLedger);
+
+    if (bankFiltered.length === 0) return;
+    if (!window.confirm(`Discard all ${bankFiltered.length} transactions for [${selectedBankLedger}] in ${bankSubTab === "needs_review" ? "Needs Review" : "Approved"}?`)) return;
+
     if (bankSubTab === "needs_review") {
-      if (transactions.length === 0) return;
-      if (!window.confirm(`Discard all ${transactions.length} transactions in Needs Review from Firestore?`)) return;
-      const idsToDelete = [...transactions];
-      setTransactions([]);
-      for (const t of idsToDelete) {
+      setTransactions(otherFiltered);
+      for (const t of bankFiltered) {
         await api.deleteBankTxn(activeClient, "pending", t.id).catch(() => null);
       }
-      notify("All pending transactions discarded.", "info");
-    } else if (bankSubTab === "approved") {
-      if (approvedTransactions.length === 0) return;
-      if (!window.confirm(`Discard all ${approvedTransactions.length} transactions in Approved queue from Firestore?`)) return;
-      const idsToDelete = [...approvedTransactions];
-      setApprovedTransactions([]);
-      for (const t of idsToDelete) {
+    } else {
+      setApprovedTransactions(otherFiltered);
+      for (const t of bankFiltered) {
         await api.deleteBankTxn(activeClient, "reconciled", t.id).catch(() => null);
       }
-      notify("All approved transactions discarded.", "info");
     }
+    notify("Transactions discarded successfully.", "info");
   };
 
   const handleDeleteApproved = async (txId) => {
@@ -763,9 +770,11 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
   };
 
   const handleDownloadXML = () => {
-    const list = [...approvedTransactions, ...pushedTransactions];
+    const list = [...approvedTransactions, ...pushedTransactions].filter(
+      (t) => (t.bankLedger || selectedBankLedger) === selectedBankLedger
+    );
     if (list.length === 0) {
-      notify("No approved bank transactions to export.", "error");
+      notify("No approved transactions for this bank account to export.", "error");
       return;
     }
 
@@ -792,7 +801,7 @@ ${xmlVouchers}
     const blob = new Blob([fullXML], { type: "text/xml;charset=utf-8" });
     const link = document.createElement("a");
     link.href = URL.createObjectURL(blob);
-    link.download = `Tally_Import_Bank_${activeClient.replace(/\s+/g, "_")}.xml`;
+    link.download = `Tally_Import_Bank_${selectedBankLedger.replace(/\s+/g, "_")}.xml`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -860,14 +869,16 @@ ${xmlVoucher}
   };
 
   const handlePushAllApproved = async () => {
-    if (approvedTransactions.length === 0) return;
+    const bankApproved = approvedTransactions.filter(
+      (t) => (t.bankLedger || selectedBankLedger) === selectedBankLedger
+    );
+    if (bankApproved.length === 0) return;
     setIsSyncing(true);
 
     let pushedCount = 0;
-    const toPush = [...approvedTransactions];
     const successfullyPushed = [];
 
-    for (const tx of toPush) {
+    for (const tx of bankApproved) {
       try {
         await pushVoucherToTallyXml(tx);
         successfullyPushed.push({ ...tx, pushedAt: new Date().toLocaleString() });
@@ -887,7 +898,7 @@ ${xmlVoucher}
         await api.deleteBankTxn(activeClient, "reconciled", pushed.id).catch(() => null);
       }
 
-      notify(`Pushed ${pushedCount} transactions to Tally Prime & recorded in Firestore!`, "success");
+      notify(`Pushed ${pushedCount} transactions for [${selectedBankLedger}] to Tally Prime!`, "success");
       setBankSubTab("pushed");
     } else {
       notify(
@@ -901,7 +912,11 @@ ${xmlVoucher}
 
   const groupedPushedTransactions = useMemo(() => {
     const groups = {};
-    pushedTransactions.forEach((tx) => {
+    const bankPushed = pushedTransactions.filter(
+      (t) => (t.bankLedger || selectedBankLedger) === selectedBankLedger
+    );
+
+    bankPushed.forEach((tx) => {
       const rawDate = tx.date;
       let monthYear = "Other / Undated";
 
@@ -941,14 +956,19 @@ ${xmlVoucher}
     });
 
     return Object.values(groups);
-  }, [pushedTransactions]);
+  }, [pushedTransactions, selectedBankLedger]);
 
-  const displayedList =
-    bankSubTab === "needs_review"
-      ? transactions
-      : bankSubTab === "approved"
-      ? approvedTransactions
-      : pushedTransactions;
+  // STRICTLY FILTER DISPLAYED LIST BY SELECTED BANK ACCOUNT
+  const displayedList = useMemo(() => {
+    const rawList =
+      bankSubTab === "needs_review"
+        ? transactions
+        : bankSubTab === "approved"
+        ? approvedTransactions
+        : pushedTransactions;
+
+    return rawList.filter((t) => (t.bankLedger || selectedBankLedger) === selectedBankLedger);
+  }, [transactions, approvedTransactions, pushedTransactions, bankSubTab, selectedBankLedger]);
 
   return (
     <div className="flex-1 flex flex-col h-full bg-[#F8FAFC] overflow-hidden">
@@ -991,7 +1011,7 @@ ${xmlVoucher}
             </div>
           </div>
 
-          {approvedTransactions.length > 0 && (
+          {approvedTransactions.filter(t => (t.bankLedger || selectedBankLedger) === selectedBankLedger).length > 0 && (
             <button
               onClick={handleDownloadApprovedExcel}
               className="flex items-center gap-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 text-xs font-semibold px-3 py-2 rounded-lg transition"
@@ -1054,7 +1074,7 @@ ${xmlVoucher}
                 bankSubTab === "needs_review" ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600"
               }`}
             >
-              {transactions.length}
+              {transactions.filter(t => (t.bankLedger || selectedBankLedger) === selectedBankLedger).length}
             </span>
           </button>
 
@@ -1072,7 +1092,7 @@ ${xmlVoucher}
                 bankSubTab === "approved" ? "bg-emerald-600 text-white" : "bg-slate-100 text-slate-600"
               }`}
             >
-              {approvedTransactions.length}
+              {approvedTransactions.filter(t => (t.bankLedger || selectedBankLedger) === selectedBankLedger).length}
             </span>
           </button>
 
@@ -1090,19 +1110,19 @@ ${xmlVoucher}
                 bankSubTab === "pushed" ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-600"
               }`}
             >
-              {pushedTransactions.length}
+              {pushedTransactions.filter(t => (t.bankLedger || selectedBankLedger) === selectedBankLedger).length}
             </span>
           </button>
         </div>
 
         {/* BATCH ACTION CONTROLS */}
         <div className="flex items-center gap-2 pb-2">
-          {bankSubTab === "needs_review" && transactions.length > 0 && (
+          {bankSubTab === "needs_review" && transactions.filter(t => (t.bankLedger || selectedBankLedger) === selectedBankLedger).length > 0 && (
             <>
               <button
                 onClick={handleDiscardAll}
                 className="flex items-center gap-1.5 px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-md text-xs font-semibold transition"
-                title="Discard all pending transactions"
+                title="Discard all pending transactions for this bank"
               >
                 <Trash2 className="w-3.5 h-3.5" /> Discard All
               </button>
@@ -1111,17 +1131,17 @@ ${xmlVoucher}
                 onClick={handleApproveAll}
                 className="flex items-center gap-1.5 px-3.5 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-md text-xs font-semibold shadow-xs transition"
               >
-                <Check className="w-3.5 h-3.5" /> Approve All ({transactions.length})
+                <Check className="w-3.5 h-3.5" /> Approve All ({transactions.filter(t => (t.bankLedger || selectedBankLedger) === selectedBankLedger).length})
               </button>
             </>
           )}
 
-          {bankSubTab === "approved" && approvedTransactions.length > 0 && (
+          {bankSubTab === "approved" && approvedTransactions.filter(t => (t.bankLedger || selectedBankLedger) === selectedBankLedger).length > 0 && (
             <>
               <button
                 onClick={handleDiscardAll}
                 className="flex items-center gap-1.5 px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-md text-xs font-semibold transition"
-                title="Discard all approved transactions"
+                title="Discard all approved transactions for this bank"
               >
                 <Trash2 className="w-3.5 h-3.5" /> Discard All
               </button>
@@ -1132,7 +1152,7 @@ ${xmlVoucher}
                 className="flex items-center gap-1.5 px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-md text-xs font-bold shadow-xs transition disabled:opacity-50"
               >
                 <Send className="w-3.5 h-3.5" />
-                {isSyncing ? "Pushing to Tally..." : `Push All to Tally (${approvedTransactions.length})`}
+                {isSyncing ? "Pushing to Tally..." : `Push All to Tally (${approvedTransactions.filter(t => (t.bankLedger || selectedBankLedger) === selectedBankLedger).length})`}
               </button>
             </>
           )}
@@ -1147,10 +1167,10 @@ ${xmlVoucher}
               <div className="bg-white rounded-xl border border-slate-200 p-16 flex flex-col items-center justify-center text-center shadow-xs">
                 <FileSpreadsheet className="w-12 h-12 text-slate-300 mb-3" />
                 <p className="text-sm font-semibold text-slate-700">
-                  No transactions in {bankSubTab === "needs_review" ? "Needs Review" : "Approved"}
+                  No transactions in {bankSubTab === "needs_review" ? "Needs Review" : "Approved"} for [{selectedBankLedger}]
                 </p>
                 <p className="text-xs text-slate-400 mt-1 max-w-sm">
-                  Upload bank statements in <strong>Excel (.xlsx, .xls)</strong> or <strong>CSV</strong> format to extract and auto-classify transactions.
+                  Upload bank statements in <strong>Excel (.xlsx, .xls)</strong> or <strong>CSV</strong> format while this account is selected.
                 </p>
               </div>
             ) : (
@@ -1311,7 +1331,7 @@ ${xmlVoucher}
             {groupedPushedTransactions.length === 0 ? (
               <div className="bg-white border border-slate-200 rounded-xl shadow-xs p-16 text-center">
                 <FileSpreadsheet className="w-8 h-8 text-blue-300 mx-auto mb-2" />
-                <p className="text-sm font-semibold text-slate-700">No transactions pushed to Tally yet</p>
+                <p className="text-sm font-semibold text-slate-700">No transactions pushed to Tally for [{selectedBankLedger}] yet</p>
                 <p className="text-xs text-slate-400 mt-0.5">
                   Transactions pushed to Tally Prime will be organized into monthly folders here.
                 </p>
