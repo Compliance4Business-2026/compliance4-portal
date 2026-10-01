@@ -501,6 +501,7 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
             return isNaN(num) ? 0 : Math.abs(num);
           };
 
+          // Process ALL rows without any 200 row cap limitation
           for (let i = headerIdx + 1; i < rawRows.length; i++) {
             const cells = rawRows[i] || [];
             if (!cells || cells.length === 0) continue;
@@ -563,7 +564,7 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
               console.warn("Failed saving bank txns to cloud:", err);
             });
 
-            notify(`Extracted ${parsedRows.length} transactions for [${selectedBankLedger}] & saved to Firestore!`, "success");
+            notify(`Extracted all ${parsedRows.length} transactions for [${selectedBankLedger}] & saved!`, "success");
             setBankSubTab("needs_review");
           }
         } catch (err) {
