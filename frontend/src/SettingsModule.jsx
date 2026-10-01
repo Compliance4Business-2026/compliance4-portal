@@ -1250,9 +1250,57 @@ export default function SettingsModule({ activeClient, setActiveClient, onGoToDa
           </div>
         )}
 
-        {/* 4. MANAGING A SPECIFIC CLIENT (PROFILE) */}
+        {/* 4. MANAGING A SPECIFIC CLIENT (PROFILE & BRANDING) */}
         {activeTab === "manage_client" && manageSubTab === "profile" && (
           <div className="space-y-6">
+            <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-xs space-y-4">
+              <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                <ImageIcon className="w-4 h-4 text-slate-600" /> Entity Branding & Signatures (For Invoices)
+              </h3>
+
+              <div className="grid grid-cols-2 gap-6 pt-2">
+                <div className="border border-dashed border-slate-300 rounded-xl p-4 flex flex-col items-center justify-center text-center bg-slate-50/50">
+                  {currentForm.logoUrl ? (
+                    <div className="relative group mb-3">
+                      <img src={currentForm.logoUrl} alt="Logo" className="max-h-24 max-w-full object-contain rounded border border-slate-200 bg-white p-1" />
+                      <button onClick={() => setCurrentForm((p) => ({ ...p, logoUrl: "" }))} className="absolute -top-2 -right-2 bg-rose-600 text-white rounded-full p-1 shadow-sm hover:bg-rose-700">
+                        <Trash2 className="w-3 h-3" />
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="w-16 h-16 rounded-full bg-slate-100 flex items-center justify-center text-slate-400 mb-2">
+                      <ImageIcon className="w-7 h-7" />
+                    </div>
+                  )}
+                  <input type="file" ref={logoInputRef} onChange={(e) => handleImageUpload(e, "logoUrl")} accept="image/*" className="hidden" />
+                  <button onClick={() => logoInputRef.current?.click()} className="px-3 py-1.5 bg-white border border-slate-300 hover:border-slate-400 rounded-lg text-xs font-semibold text-slate-700 transition">
+                    {currentForm.logoUrl ? "Replace Logo" : "Upload Company Logo"}
+                  </button>
+                  <p className="text-[10px] text-slate-400 mt-1">PNG, JPG up to 2MB</p>
+                </div>
+
+                <div className="border border-dashed border-slate-300 rounded-xl p-4 flex flex-col items-center justify-center text-center bg-slate-50/50">
+                  {currentForm.signatureUrl ? (
+                    <div className="relative group mb-3">
+                      <img src={currentForm.signatureUrl} alt="Signature" className="max-h-24 max-w-full object-contain rounded border border-slate-200 bg-white p-1" />
+                      <button onClick={() => setCurrentForm((p) => ({ ...p, signatureUrl: "" }))} className="absolute -top-2 -right-2 bg-rose-600 text-white rounded-full p-1 shadow-sm hover:bg-rose-700">
+                        <Trash2 className="w-3 h-3" />
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="w-16 h-16 rounded-full bg-slate-100 flex items-center justify-center text-slate-400 mb-2">
+                      <PenTool className="w-7 h-7" />
+                    </div>
+                  )}
+                  <input type="file" ref={signatureInputRef} onChange={(e) => handleImageUpload(e, "signatureUrl")} accept="image/*" className="hidden" />
+                  <button onClick={() => signatureInputRef.current?.click()} className="px-3 py-1.5 bg-white border border-slate-300 hover:border-slate-400 rounded-lg text-xs font-semibold text-slate-700 transition">
+                    {currentForm.signatureUrl ? "Replace Signature" : "Upload Authorized Signatory"}
+                  </button>
+                  <p className="text-[10px] text-slate-400 mt-1">Digital signature image</p>
+                </div>
+              </div>
+            </div>
+
             <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-xs space-y-4">
               <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
                 <Building2 className="w-4 h-4 text-slate-600" /> Legal Entity & GST Configuration
@@ -1267,6 +1315,87 @@ export default function SettingsModule({ activeClient, setActiveClient, onGoToDa
                   <label className="block text-xs font-bold text-slate-700 mb-1">GSTIN</label>
                   <input type="text" placeholder="24ABCDE1234F1Z5" value={currentForm.gstin} onChange={(e) => setCurrentForm({ ...currentForm, gstin: e.target.value.toUpperCase() })} className="w-full text-xs font-mono font-bold border border-slate-300 rounded-lg p-2" />
                 </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">PAN Number</label>
+                  <input type="text" placeholder="ABCDE1234F" value={currentForm.pan} onChange={(e) => setCurrentForm({ ...currentForm, pan: e.target.value.toUpperCase() })} className="w-full text-xs font-mono font-bold border border-slate-300 rounded-lg p-2" />
+                </div>
+
+                <div className="col-span-2">
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    GST Scheme & ITC Eligibility <span className="text-rose-500">*</span>
+                  </label>
+                  <select
+                    value={currentForm.isItcEligible ? "YES" : "NO"}
+                    onChange={(e) => setCurrentForm({ ...currentForm, isItcEligible: e.target.value === "YES" })}
+                    className="w-full text-xs font-bold border border-slate-300 rounded-lg p-2 bg-white text-slate-800"
+                  >
+                    <option value="YES">YES — Eligible for Full Input Tax Credit (Regular GST Scheme)</option>
+                    <option value="NO">NO — Ineligible for ITC (Standalone Restaurant / Cafe 5% Scheme)</option>
+                  </select>
+                </div>
+
+                <div className="col-span-3">
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Registered Business Address</label>
+                  <input type="text" placeholder="Complete Office Address" value={currentForm.address} onChange={(e) => setCurrentForm({ ...currentForm, address: e.target.value })} className="w-full text-xs border border-slate-300 rounded-lg p-2" />
+                </div>
+              </div>
+            </div>
+
+            {/* CONTACT PERSON DETAILS */}
+            <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-xs space-y-4">
+              <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                <Users className="w-4 h-4 text-slate-600" /> Contact Person Details
+              </h3>
+              <div className="grid grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Contact Person Name</label>
+                  <input type="text" value={currentForm.contactPerson || ""} onChange={(e) => setCurrentForm({ ...currentForm, contactPerson: e.target.value })} className="w-full text-xs border border-slate-300 rounded-lg p-2" placeholder="e.g. Rajesh Kumar" />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Phone Number</label>
+                  <input type="text" value={currentForm.phone || ""} onChange={(e) => setCurrentForm({ ...currentForm, phone: e.target.value })} className="w-full text-xs font-mono border border-slate-300 rounded-lg p-2" placeholder="e.g. 9876543210" />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Email Address</label>
+                  <input type="email" value={currentForm.email || ""} onChange={(e) => setCurrentForm({ ...currentForm, email: e.target.value })} className="w-full text-xs border border-slate-300 rounded-lg p-2" placeholder="e.g. contact@business.com" />
+                </div>
+              </div>
+            </div>
+
+            {/* PRIMARY BANK DETAILS */}
+            <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-xs space-y-4">
+              <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                <CreditCard className="w-4 h-4 text-slate-600" /> Primary Settlement Bank
+              </h3>
+              <div className="grid grid-cols-4 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Bank Name</label>
+                  <input type="text" value={currentForm.bankName} onChange={(e) => setCurrentForm({ ...currentForm, bankName: e.target.value })} className="w-full text-xs border border-slate-300 rounded-lg p-2" />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Account Number</label>
+                  <input type="text" value={currentForm.accountNo} onChange={(e) => setCurrentForm({ ...currentForm, accountNo: e.target.value })} className="w-full text-xs font-mono font-bold border border-slate-300 rounded-lg p-2" />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">IFSC Code</label>
+                  <input type="text" value={currentForm.ifscCode} onChange={(e) => setCurrentForm({ ...currentForm, ifscCode: e.target.value.toUpperCase() })} className="w-full text-xs font-mono font-bold border border-slate-300 rounded-lg p-2" />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Branch</label>
+                  <input type="text" value={currentForm.branch} onChange={(e) => setCurrentForm({ ...currentForm, branch: e.target.value })} className="w-full text-xs border border-slate-300 rounded-lg p-2" />
+                </div>
+              </div>
+            </div>
+
+            {/* PREFIXED MESSAGE / TERMS FOR SALES INVOICE */}
+            <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-xs space-y-4">
+              <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                <BookOpen className="w-4 h-4 text-slate-600" /> Terms & Conditions / Prefixed Invoice Notes
+              </h3>
+              <div>
+                <textarea rows={3} value={currentForm.terms} onChange={(e) => setCurrentForm({ ...currentForm, terms: e.target.value })} className="w-full text-xs border border-slate-300 rounded-lg p-2.5 font-medium leading-relaxed" />
+                <p className="text-[10px] text-slate-400 mt-1">This text appears at the bottom of generated invoices and bill prints.</p>
               </div>
             </div>
 
@@ -1278,7 +1407,7 @@ export default function SettingsModule({ activeClient, setActiveClient, onGoToDa
           </div>
         )}
 
-        {/* 5. MANAGING CLIENT COA (WITH OPENING BALANCE INPUTS) */}
+        {/* 5. MANAGING CLIENT COA (WITH OPENING BALANCE) */}
         {activeTab === "manage_client" && manageSubTab === "coa" && (
           <div className="space-y-6">
             <form onSubmit={handleAddLedger} className="bg-white rounded-xl border border-slate-200 p-6 shadow-xs space-y-4">
@@ -1403,7 +1532,6 @@ export default function SettingsModule({ activeClient, setActiveClient, onGoToDa
 
                       <div className="divide-y divide-slate-100">
                         {ledgers.map((item) => {
-                          const plNature = getPlNature(item);
                           const openBal = Number(item.openingBalance || 0);
 
                           return (
@@ -1446,7 +1574,7 @@ export default function SettingsModule({ activeClient, setActiveClient, onGoToDa
         )}
       </div>
 
-      {/* EDIT LEDGER MODAL WITH OPENING BALANCE FIELDS */}
+      {/* EDIT LEDGER MODAL */}
       {editingLedger && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4">
           <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4 border border-slate-200 animate-in fade-in duration-150">
