@@ -442,7 +442,6 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
     if (!file) return;
 
     setIsUploading(true);
-    const fileName = file.name.toLowerCase();
 
     try {
       const XLSX = await loadSheetJS();
@@ -450,27 +449,20 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
 
       reader.onload = async (event) => {
         try {
-          let rawRows = [];
-
-          if (fileName.endsWith(".csv") || fileName.endsWith(".txt")) {
-            const text = new TextDecoder().decode(event.target.result);
-            const lines = text.split(/\r\n|\n/).filter((l) => l.trim().length > 0);
-            rawRows = lines.map((line) => line.split(",").map((c) => c.replace(/["']/g, "").trim()));
-          } else {
-            const data = new Uint8Array(event.target.result);
-            const workbook = XLSX.read(data, { type: "array" });
-            const firstSheetName = workbook.SheetNames[0];
-            const worksheet = workbook.Sheets[firstSheetName];
-            
-            // EXPLICIT RANGE FIX: Force SheetJS to read the full extent of the sheet without 200-row caps
-            const range = worksheet['!ref'] ? XLSX.utils.decode_range(worksheet['!ref']) : null;
-            if (range) {
-              range.s.r = 0; // start from row 0
-              worksheet['!ref'] = XLSX.utils.encode_range(range);
-            }
-            
-            rawRows = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "", range: worksheet['!ref'] });
+          const data = new Uint8Array(event.target.result);
+          // Parse workbook natively (handles CSV and Excel with proper comma quoting out of the box)
+          const workbook = XLSX.read(data, { type: "array", cellDates: true });
+          const firstSheetName = workbook.SheetNames[0];
+          const worksheet = workbook.Sheets[firstSheetName];
+          
+          // Force range to cover the absolute full extent of the sheet
+          const range = worksheet['!ref'] ? XLSX.utils.decode_range(worksheet['!ref']) : null;
+          if (range) {
+            range.s.r = 0;
+            worksheet['!ref'] = XLSX.utils.encode_range(range);
           }
+          
+          const rawRows = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "", range: worksheet['!ref'] });
 
           if (!rawRows || rawRows.length < 2) {
             notify("File appears to be empty or missing data rows.", "error");
@@ -504,10 +496,93 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
           const parseCleanAmount = (rawVal) => {
             if (rawVal === undefined || rawVal === null || rawVal === "") return 0;
             if (typeof rawVal === "number") return Math.abs(rawVal);
+            // Clean out commas and currency strings completely
             const cleaned = String(rawVal).replace(/,/g, "").trim();
             const num = parseFloat(cleaned);
             return isNaN(num) ? 0 : Math.abs(num);
           };
+
+          // Loop through EVERY SINGLE ROW without any limits or caps
+          for (let i = headerIdx + 1; i < rawRows.length; i++) {
+            const cells = rawRows[i] || [];
+            if (!cells || cells.length === 0) continue;
+
+            let dateVal = dateIdx !== -1 && cells[dateIdx] ? String(cells[dateIdx]).trim() : "";
+            if (!dateVal) continue;
+
+            if (!isNaN(dateVal) && Number(dateVal) > 20000 && Number(dateVal) < 60000) {
+              const excelDate = new Date(Math.round((Number(dateVal) - 25569) * 86400 * 1000));
+              dateVal = excelDate.toISOString().split("T")[0];
+            }
+
+            const narrVal = narrIdx !== -1 && cells[narrIdx] !== undefined ? String(cells[narrIdx]).trim() : "Bank Transaction";
+            const refVal = refIdx !== -1 && cells[refIdx] !== undefined ? String(cells[refIdx]).trim() : "-";
+
+            let withdrawal = withIdx !== -1 ? parseCleanAmount(cells[withIdx]) : 0;
+            let deposit = depIdx !== -1 ? parseCleanAmount(cells[depIdx]) : 0;
+            const rowBalance = balIdx !== -1 ? parseCleanAmount(cells[balIdx]) : 0;
+
+            if (rowBalance !== 0) {
+              lastExtractedBalance = rowBalance;
+            }
+
+            if (withdrawal === 0 && deposit === 0) continue;
+
+            const type = deposit > 0 ? "Receipt" : "Payment";
+            const amount = deposit > 0 ? deposit : withdrawal;
+            const matched = findMatchingLedger(narrVal);
+
+            parsedRows.push({
+              id: `tx_${Date.now()}_${i}_${Math.random().toString(36).substr(2, 4)}`,
+              date: dateVal,
+              bankLedger: selectedBankLedger,
+              narration: narrVal,
+              refNo: refVal,
+              type,
+              amount,
+              allocatedLedger: matched || (type === "Receipt" ? "Sales: Direct UPI Collection" : "Tea & Refreshment Expenses"),
+              isAutoMatched: Boolean(matched)
+            });
+          }
+
+          if (lastExtractedBalance !== 0) {
+            setBankBalancesMap(prev => ({
+              ...prev,
+              [selectedBankLedger]: lastExtractedBalance
+            }));
+          }
+
+          if (parsedRows.length === 0) {
+            notify("No valid withdrawal or deposit rows detected.", "error");
+          } else {
+            setTransactions((prev) => [
+              ...prev.filter(t => (t.bankLedger || selectedBankLedger) !== selectedBankLedger),
+              ...parsedRows
+            ]);
+
+            await api.saveBankTxns(activeClient, "pending", parsedRows).catch((err) => {
+              console.warn("Failed saving bank txns to cloud:", err);
+            });
+
+            notify(`Successfully extracted all ${parsedRows.length} transactions for [${selectedBankLedger}]!`, "success");
+            setBankSubTab("needs_review");
+          }
+        } catch (err) {
+          console.error(err);
+          notify("Failed to process statement layout.", "error");
+        } finally {
+          setIsUploading(false);
+          if (fileInputRef.current) fileInputRef.current.value = "";
+        }
+      };
+
+      reader.readAsArrayBuffer(file);
+    } catch (err) {
+      console.error(err);
+      notify("Failed to initialize spreadsheet reader.", "error");
+      setIsUploading(false);
+    }
+  };          };
 
           // Process ALL rows without any 200 row cap limitation
           for (let i = headerIdx + 1; i < rawRows.length; i++) {
