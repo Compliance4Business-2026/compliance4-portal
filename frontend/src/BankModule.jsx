@@ -450,12 +450,11 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
       reader.onload = async (event) => {
         try {
           const data = new Uint8Array(event.target.result);
-          // Parse workbook natively (handles CSV and Excel with proper comma quoting out of the box)
           const workbook = XLSX.read(data, { type: "array", cellDates: true });
           const firstSheetName = workbook.SheetNames[0];
           const worksheet = workbook.Sheets[firstSheetName];
           
-          // Force range to cover the absolute full extent of the sheet
+          // Force range to cover the absolute full extent of the sheet with zero row caps
           const range = worksheet['!ref'] ? XLSX.utils.decode_range(worksheet['!ref']) : null;
           if (range) {
             range.s.r = 0;
@@ -496,13 +495,11 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
           const parseCleanAmount = (rawVal) => {
             if (rawVal === undefined || rawVal === null || rawVal === "") return 0;
             if (typeof rawVal === "number") return Math.abs(rawVal);
-            // Clean out commas and currency strings completely
             const cleaned = String(rawVal).replace(/,/g, "").trim();
             const num = parseFloat(cleaned);
             return isNaN(num) ? 0 : Math.abs(num);
           };
 
-          // Loop through EVERY SINGLE ROW without any limits or caps
           for (let i = headerIdx + 1; i < rawRows.length; i++) {
             const cells = rawRows[i] || [];
             if (!cells || cells.length === 0) continue;
@@ -565,89 +562,6 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
             });
 
             notify(`Successfully extracted all ${parsedRows.length} transactions for [${selectedBankLedger}]!`, "success");
-            setBankSubTab("needs_review");
-          }
-        } catch (err) {
-          console.error(err);
-          notify("Failed to process statement layout.", "error");
-        } finally {
-          setIsUploading(false);
-          if (fileInputRef.current) fileInputRef.current.value = "";
-        }
-      };
-
-      reader.readAsArrayBuffer(file);
-    } catch (err) {
-      console.error(err);
-      notify("Failed to initialize spreadsheet reader.", "error");
-      setIsUploading(false);
-    }
-  };          };
-
-          // Process ALL rows without any 200 row cap limitation
-          for (let i = headerIdx + 1; i < rawRows.length; i++) {
-            const cells = rawRows[i] || [];
-            if (!cells || cells.length === 0) continue;
-
-            let dateVal = dateIdx !== -1 && cells[dateIdx] ? String(cells[dateIdx]).trim() : "";
-            if (!dateVal) continue;
-
-            if (!isNaN(dateVal) && Number(dateVal) > 20000 && Number(dateVal) < 60000) {
-              const excelDate = new Date(Math.round((Number(dateVal) - 25569) * 86400 * 1000));
-              dateVal = excelDate.toISOString().split("T")[0];
-            }
-
-            const narrVal = narrIdx !== -1 && cells[narrIdx] ? String(cells[narrIdx]).trim() : "Bank Transaction";
-            const refVal = refIdx !== -1 && cells[refIdx] ? String(cells[refIdx]).trim() : "-";
-
-            let withdrawal = withIdx !== -1 ? parseCleanAmount(cells[withIdx]) : 0;
-            let deposit = depIdx !== -1 ? parseCleanAmount(cells[depIdx]) : 0;
-            const rowBalance = balIdx !== -1 ? parseCleanAmount(cells[balIdx]) : 0;
-
-            if (rowBalance !== 0) {
-              lastExtractedBalance = rowBalance;
-            }
-
-            if (withdrawal === 0 && deposit === 0) continue;
-
-            const type = deposit > 0 ? "Receipt" : "Payment";
-            const amount = deposit > 0 ? deposit : withdrawal;
-            const matched = findMatchingLedger(narrVal);
-
-            parsedRows.push({
-              id: `tx_${Date.now()}_${i}_${Math.random().toString(36).substr(2, 4)}`,
-              date: dateVal,
-              bankLedger: selectedBankLedger,
-              narration: narrVal,
-              refNo: refVal,
-              type,
-              amount,
-              allocatedLedger: matched || (type === "Receipt" ? "Sales: Direct UPI Collection" : "Tea & Refreshment Expenses"),
-              isAutoMatched: Boolean(matched)
-            });
-          }
-
-          if (lastExtractedBalance !== 0) {
-            setBankBalancesMap(prev => ({
-              ...prev,
-              [selectedBankLedger]: lastExtractedBalance
-            }));
-          }
-
-          if (parsedRows.length === 0) {
-            notify("No valid withdrawal or deposit rows detected.", "error");
-          } else {
-            // Keep existing transactions of OTHER banks, only replace/append for current bank
-            setTransactions((prev) => [
-              ...prev.filter(t => (t.bankLedger || selectedBankLedger) !== selectedBankLedger),
-              ...parsedRows
-            ]);
-
-            await api.saveBankTxns(activeClient, "pending", parsedRows).catch((err) => {
-              console.warn("Failed saving bank txns to cloud:", err);
-            });
-
-            notify(`Extracted all ${parsedRows.length} transactions for [${selectedBankLedger}] & saved!`, "success");
             setBankSubTab("needs_review");
           }
         } catch (err) {
