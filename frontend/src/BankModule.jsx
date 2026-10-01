@@ -377,7 +377,7 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
 
   const handleDownloadTemplate = () => {
     const csvContent =
-      "Date,Narration,Chq_Ref_No,Withdrawal,Deposit,Balance\n" +
+      "Date,Narration,Chq_Ref_No,Withdraw,Deposit,Balance\n" +
       "2026-09-01,UPI/524310982/Customer Settlement,REF10928,0.00,4500.00,4500.00\n" +
       "2026-09-02,NEFT/Vendor Milk Supplies/Amul,REF39210,1850.00,0.00,2650.00\n" +
       "2026-09-03,ELECTRICITY BILL Torrent Power,REF98211,840.00,0.00,1810.00\n";
@@ -462,7 +462,7 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
             const rowStr = (rawRows[r] || []).join(" ").toLowerCase();
             if (
               rowStr.includes("date") &&
-              (rowStr.includes("narr") || rowStr.includes("desc") || rowStr.includes("particular") || rowStr.includes("withdrawal") || rowStr.includes("deposit") || rowStr.includes("debit") || rowStr.includes("credit"))
+              (rowStr.includes("narr") || rowStr.includes("desc") || rowStr.includes("particular") || rowStr.includes("withdraw") || rowStr.includes("deposit") || rowStr.includes("debit") || rowStr.includes("credit"))
             ) {
               headerIdx = r;
               break;
@@ -473,16 +473,23 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
           const dateIdx = headers.findIndex((h) => h.includes("date") || h.includes("txn date"));
           const narrIdx = headers.findIndex((h) => h.includes("narr") || h.includes("desc") || h.includes("particular") || h.includes("remark"));
           const refIdx = headers.findIndex((h) => h.includes("ref") || h.includes("chq") || h.includes("cheque") || h.includes("utr"));
-          const withIdx = headers.findIndex((h) => h.includes("with") || h.includes("debit") || h.includes("dr"));
-          const depIdx = headers.findIndex((h) => h.includes("dep") || h.includes("credit") || h.includes("cr"));
+          const withIdx = headers.findIndex((h) => h.includes("withdraw") || h.includes("with") || h.includes("debit") || h.includes("dr"));
+          const depIdx = headers.findIndex((h) => h.includes("deposit") || h.includes("dep") || h.includes("credit") || h.includes("cr"));
 
           const parsedRows = [];
+
+          const parseCleanAmount = (rawVal) => {
+            if (rawVal === undefined || rawVal === null || rawVal === "") return 0;
+            const cleaned = String(rawVal).replace(/,/g, "").replace(/[^0-9.-]/g, "");
+            return parseFloat(cleaned) || 0;
+          };
 
           for (let i = headerIdx + 1; i < rawRows.length; i++) {
             const cells = rawRows[i] || [];
             if (!cells || cells.length === 0) continue;
 
-            let dateVal = dateIdx !== -1 && cells[dateIdx] ? String(cells[dateIdx]).trim() : new Date().toISOString().split("T")[0];
+            let dateVal = dateIdx !== -1 && cells[dateIdx] ? String(cells[dateIdx]).trim() : "";
+            if (!dateVal) continue;
 
             if (!isNaN(dateVal) && Number(dateVal) > 20000 && Number(dateVal) < 60000) {
               const excelDate = new Date(Math.round((Number(dateVal) - 25569) * 86400 * 1000));
@@ -492,17 +499,13 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
             const narrVal = narrIdx !== -1 && cells[narrIdx] ? String(cells[narrIdx]).trim() : "Bank Transaction";
             const refVal = refIdx !== -1 && cells[refIdx] ? String(cells[refIdx]).trim() : "-";
 
-            // FIX FOR THOUSAND-SEPARATOR COMMAS (e.g. "35,261.79" -> 35261.79)
-            const parseCleanAmount = (rawVal) => {
-              if (!rawVal) return 0;
-              const cleaned = String(rawVal).replace(/,/g, "").replace(/[^0-9.-]/g, "");
-              return Math.abs(parseFloat(cleaned) || 0);
-            };
-
-            const withdrawal = withIdx !== -1 ? parseCleanAmount(cells[withIdx]) : 0;
-            const deposit = depIdx !== -1 ? parseCleanAmount(cells[depIdx]) : 0;
+            let withdrawal = withIdx !== -1 ? parseCleanAmount(cells[withIdx]) : 0;
+            let deposit = depIdx !== -1 ? parseCleanAmount(cells[depIdx]) : 0;
 
             if (withdrawal === 0 && deposit === 0) continue;
+
+            withdrawal = Math.abs(withdrawal);
+            deposit = Math.abs(deposit);
 
             const type = deposit > 0 ? "Receipt" : "Payment";
             const amount = deposit > 0 ? deposit : withdrawal;
