@@ -22,7 +22,8 @@ import {
   Users, 
   Key, 
   UserCheck, 
-  LayoutDashboard 
+  LayoutDashboard,
+  Search
 } from "lucide-react";
 import { api } from "./api";
 
@@ -140,6 +141,7 @@ export default function SettingsModule({ activeClient, setActiveClient, onGoToDa
 
   const [currentForm, setCurrentForm] = useState(() => getFreshProfileState(activeClient, profiles));
   const [coaFilter, setCoaFilter] = useState("ALL");
+  const [ledgerSearchTerm, setLedgerSearchTerm] = useState(""); // <-- Search state added
 
   const [newLedgerName, setNewLedgerName] = useState("");
   const [newStatementType, setNewStatementType] = useState("P&L");
@@ -180,7 +182,6 @@ export default function SettingsModule({ activeClient, setActiveClient, onGoToDa
     setTimeout(() => setNotification(null), 4000);
   };
 
-  // --- INITIAL CLOUD DATA RECONCILIATION ---
   useEffect(() => {
     async function loadCloudSettings() {
       try {
@@ -202,7 +203,6 @@ export default function SettingsModule({ activeClient, setActiveClient, onGoToDa
     loadCloudSettings();
   }, []);
 
-  // --- SYNC COA & PROFILE UPON ACTIVE CLIENT SWITCH ---
   useEffect(() => {
     try {
       const savedProfiles = JSON.parse(localStorage.getItem("c4_client_profiles") || "{}");
@@ -859,9 +859,12 @@ export default function SettingsModule({ activeClient, setActiveClient, onGoToDa
     }
   };
 
+  // --- FILTER & SEARCH LOGIC ---
   const filteredCoa = clientCoa.filter((l) => {
-    if (coaFilter === "ALL") return true;
-    return l.statementType === coaFilter;
+    const matchesStatement = coaFilter === "ALL" || l.statementType === coaFilter;
+    const term = ledgerSearchTerm.toLowerCase().trim();
+    const matchesSearch = !term || (l.name || "").toLowerCase().includes(term) || (l.category || "").toLowerCase().includes(term);
+    return matchesStatement && matchesSearch;
   });
 
   const categoriesGrouped = filteredCoa.reduce((acc, item) => {
@@ -1407,7 +1410,7 @@ export default function SettingsModule({ activeClient, setActiveClient, onGoToDa
           </div>
         )}
 
-        {/* 5. MANAGING CLIENT COA (WITH OPENING BALANCE) */}
+        {/* 5. MANAGING CLIENT COA (WITH SEARCH & OPENING BALANCE) */}
         {activeTab === "manage_client" && manageSubTab === "coa" && (
           <div className="space-y-6">
             <form onSubmit={handleAddLedger} className="bg-white rounded-xl border border-slate-200 p-6 shadow-xs space-y-4">
@@ -1504,10 +1507,45 @@ export default function SettingsModule({ activeClient, setActiveClient, onGoToDa
               </div>
             </form>
 
+            {/* FILTER & SEARCH BAR */}
+            <div className="flex items-center justify-between bg-white px-5 py-3 rounded-xl border border-slate-200 gap-4 flex-wrap">
+              <div className="flex items-center gap-2 flex-1 min-w-[260px] relative">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3 pointer-events-none" />
+                <input
+                  type="text"
+                  placeholder="Search ledger by name or category..."
+                  value={ledgerSearchTerm}
+                  onChange={(e) => setLedgerSearchTerm(e.target.value)}
+                  className="w-full text-xs font-semibold border border-slate-300 rounded-lg pl-9 pr-3 py-2 bg-white text-slate-800 focus:outline-none focus:ring-1 focus:ring-slate-900"
+                />
+                {ledgerSearchTerm && (
+                  <button onClick={() => setLedgerSearchTerm("")} className="absolute right-3 text-slate-400 hover:text-slate-600">
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+
+              <div className="flex items-center gap-2">
+                <Filter className="w-4 h-4 text-slate-500" />
+                <span className="text-xs font-bold text-slate-700">Statement:</span>
+                {["ALL", "P&L", "Balance Sheet"].map((f) => (
+                  <button
+                    key={f}
+                    onClick={() => setCoaFilter(f)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${
+                      coaFilter === f ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                    }`}
+                  >
+                    {f}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             <div className="space-y-4">
               {Object.keys(categoriesGrouped).length === 0 ? (
                 <div className="bg-white rounded-xl border border-slate-200 p-12 text-center text-slate-400 text-xs">
-                  No ledgers uploaded yet for {activeClient}.
+                  {ledgerSearchTerm ? `No ledgers matching "${ledgerSearchTerm}" found.` : `No ledgers uploaded yet for ${activeClient}.`}
                 </div>
               ) : (
                 Object.entries(categoriesGrouped).map(([categoryName, ledgers]) => {
