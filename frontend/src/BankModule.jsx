@@ -1,24 +1,24 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
-import {
-  Upload,
-  Download,
-  FileCode,
-  CheckCircle2,
-  AlertCircle,
-  FileSpreadsheet,
-  Check,
-  Send,
-  Trash2,
-  Sparkles,
-  ArrowDownLeft,
-  ArrowUpRight,
-  Folder,
-  FolderOpen,
-  ChevronDown,
-  ChevronRight,
-  Edit2,
-  RotateCcw,
-  Search,
+import { 
+  Upload, 
+  Download, 
+  FileCode, 
+  CheckCircle2, 
+  AlertCircle, 
+  FileSpreadsheet, 
+  Check, 
+  Send, 
+  Trash2, 
+  Sparkles, 
+  ArrowDownLeft, 
+  ArrowUpRight, 
+  Folder, 
+  FolderOpen, 
+  ChevronDown, 
+  ChevronRight, 
+  Edit2, 
+  RotateCcw, 
+  Search, 
   Building
 } from "lucide-react";
 import { api } from "./api";
@@ -59,36 +59,42 @@ const loadSheetJS = () => {
   });
 };
 
-// ROBUST POP-OUT SEARCHABLE TYPEAHEAD COMBOBOX
+// ROBUST POP-OUT SEARCHABLE TYPEAHEAD COMBOBOX WITH KEYBOARD NAVIGATION
 function SearchableLedgerSelect({ value, onChange, coaList = [], fallbackOptions = [], placeholder = "Type to search ledger..." }) {
   const [isOpen, setIsOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
+  const [highlightedIndex, setHighlightedIndex] = useState(0);
   const dropdownRef = useRef(null);
 
-  const filteredGroups = useMemo(() => {
+  const allFlattenedLedgers = useMemo(() => {
     const term = searchTerm.toLowerCase().trim();
-    const groups = {};
+    const list = [];
 
     if (coaList && coaList.length > 0) {
       coaList.forEach((l) => {
         const name = l.name || "";
         const cat = l.category || "General Accounts";
         if (!term || name.toLowerCase().includes(term) || cat.toLowerCase().includes(term)) {
-          if (!groups[cat]) groups[cat] = [];
-          groups[cat].push(l);
+          list.push({ ...l, groupName: cat });
         }
       });
     }
 
-    if (Object.keys(groups).length === 0) {
+    if (list.length === 0) {
       const defaultGroup = "Standard Accounts";
-      groups[defaultGroup] = fallbackOptions
+      fallbackOptions
         .filter((name) => !term || name.toLowerCase().includes(term))
-        .map((name) => ({ name, category: defaultGroup }));
+        .forEach((name) => {
+          list.push({ id: name, name, category: defaultGroup, groupName: defaultGroup });
+        });
     }
 
-    return groups;
+    return list;
   }, [coaList, fallbackOptions, searchTerm]);
+
+  useEffect(() => {
+    setHighlightedIndex(0);
+  }, [searchTerm]);
 
   useEffect(() => {
     const handleOutsideClick = (e) => {
@@ -99,6 +105,32 @@ function SearchableLedgerSelect({ value, onChange, coaList = [], fallbackOptions
     document.addEventListener("mousedown", handleOutsideClick);
     return () => document.removeEventListener("mousedown", handleOutsideClick);
   }, []);
+
+  const handleKeyDown = (e) => {
+    if (!isOpen) {
+      if (e.key === "ArrowDown" || e.key === "Enter") {
+        setIsOpen(true);
+        e.preventDefault();
+      }
+      return;
+    }
+
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setHighlightedIndex((prev) => (prev < allFlattenedLedgers.length - 1 ? prev + 1 : prev));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setHighlightedIndex((prev) => (prev > 0 ? prev - 1 : 0));
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      if (allFlattenedLedgers[highlightedIndex]) {
+        onChange(allFlattenedLedgers[highlightedIndex].name);
+        setIsOpen(false);
+      }
+    } else if (e.key === "Escape") {
+      setIsOpen(false);
+    }
+  };
 
   return (
     <div className="relative w-full" ref={dropdownRef}>
@@ -115,6 +147,7 @@ function SearchableLedgerSelect({ value, onChange, coaList = [], fallbackOptions
             setSearchTerm(e.target.value);
             setIsOpen(true);
           }}
+          onKeyDown={handleKeyDown}
           className="w-full text-xs font-semibold border border-slate-300 rounded p-1.5 bg-white text-slate-800 pr-7 focus:outline-none focus:ring-1 focus:ring-slate-900 transition"
         />
         <Search className="w-3.5 h-3.5 text-slate-400 absolute right-2 top-2.5 pointer-events-none" />
@@ -125,36 +158,28 @@ function SearchableLedgerSelect({ value, onChange, coaList = [], fallbackOptions
           className="absolute left-0 top-full mt-1 w-[320px] max-h-64 bg-white border border-slate-200 rounded-xl shadow-2xl overflow-y-auto z-[999] divide-y divide-slate-100"
           style={{ minWidth: "100%" }}
         >
-          {Object.keys(filteredGroups).length === 0 ? (
+          {allFlattenedLedgers.length === 0 ? (
             <div className="p-3 text-xs text-slate-400 text-center italic">
               No matching ledger in Client COA
             </div>
           ) : (
-            Object.entries(filteredGroups).map(([groupName, ledgers]) => (
-              <div key={groupName} className="py-1">
-                <div className="px-3 py-1 text-[10px] font-bold text-slate-500 uppercase tracking-wider bg-slate-50 flex items-center justify-between">
-                  <span>📂 {groupName}</span>
-                  <span className="font-mono text-[9px] text-slate-400">{ledgers.length}</span>
-                </div>
-                {ledgers.map((l) => (
-                  <button
-                    key={l.id || l.name}
-                    type="button"
-                    onClick={() => {
-                      onChange(l.name);
-                      setIsOpen(false);
-                    }}
-                    className={`w-full text-left px-3 py-2 text-xs transition flex items-center justify-between hover:bg-slate-100 ${
-                      value === l.name ? "bg-indigo-50 text-indigo-700 font-bold" : "text-slate-800 font-medium"
-                    }`}
-                  >
-                    <span className="truncate pr-2">{l.name}</span>
-                    <span className="shrink-0 text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-100 text-slate-500">
-                      {l.statementType === "Balance Sheet" ? "B/S" : (l.cogsClassification === "COGS" ? "COGS" : "P&L")}
-                    </span>
-                  </button>
-                ))}
-              </div>
+            allFlattenedLedgers.map((l, idx) => (
+              <button
+                key={l.id || l.name + idx}
+                type="button"
+                onClick={() => {
+                  onChange(l.name);
+                  setIsOpen(false);
+                }}
+                className={`w-full text-left px-3 py-2 text-xs transition flex items-center justify-between ${
+                  highlightedIndex === idx ? "bg-indigo-100 text-indigo-900 font-bold" : (value === l.name ? "bg-indigo-50 text-indigo-700 font-bold" : "text-slate-800 font-medium hover:bg-slate-100")
+                }`}
+              >
+                <span className="truncate pr-2">{l.name}</span>
+                <span className="shrink-0 text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-100 text-slate-500">
+                  {l.statementType === "Balance Sheet" ? "B/S" : (l.cogsClassification === "COGS" ? "COGS" : "P&L")}
+                </span>
+              </button>
             ))
           )}
         </div>
@@ -222,7 +247,6 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
         const name = (l.name || "").toLowerCase();
         const stmt = (l.statementType || "").toLowerCase();
         
-        // Strict match for Balance Sheet assets under Bank or Cash
         return (
           stmt === "balance sheet" &&
           (cat.includes("bank") || cat.includes("cash") || sub.includes("bank") || sub.includes("cash") || name.includes("bank") || name.includes("hdfc") || name.includes("sbi") || name.includes("icici"))
@@ -233,6 +257,7 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
     }
     return DEFAULT_BANK_LEDGERS;
   }, [clientCoa]);
+
   const [selectedBankLedger, setSelectedBankLedger] = useState(() => availableBankLedgers[0] || "HDFC Bank - 8050");
 
   useEffect(() => {
@@ -240,6 +265,24 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
       setSelectedBankLedger(availableBankLedgers[0]);
     }
   }, [availableBankLedgers]);
+
+  // LIVE BANK BALANCE CALCULATION FOR SELECTED BANK
+  const currentBankBalance = useMemo(() => {
+    let balance = 0;
+    const allBankTxns = [...transactions, ...approvedTransactions, ...pushedTransactions].filter(
+      (t) => (t.bankLedger || selectedBankLedger) === selectedBankLedger
+    );
+
+    allBankTxns.forEach((tx) => {
+      const amt = parseFloat(tx.amount) || 0;
+      if (tx.type === "Receipt") {
+        balance += amt;
+      } else {
+        balance -= amt;
+      }
+    });
+    return balance;
+  }, [transactions, approvedTransactions, pushedTransactions, selectedBankLedger]);
 
   // --- FETCH BANK TRANSACTIONS & COA DIRECTLY FROM FIRESTORE ---
   useEffect(() => {
@@ -449,8 +492,15 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
             const narrVal = narrIdx !== -1 && cells[narrIdx] ? String(cells[narrIdx]).trim() : "Bank Transaction";
             const refVal = refIdx !== -1 && cells[refIdx] ? String(cells[refIdx]).trim() : "-";
 
-            const withdrawal = withIdx !== -1 ? Math.abs(parseFloat(String(cells[withIdx]).replace(/[^0-9.-]/g, "")) || 0) : 0;
-            const deposit = depIdx !== -1 ? Math.abs(parseFloat(String(cells[depIdx]).replace(/[^0-9.-]/g, "")) || 0) : 0;
+            // FIX FOR THOUSAND-SEPARATOR COMMAS (e.g. "35,261.79" -> 35261.79)
+            const parseCleanAmount = (rawVal) => {
+              if (!rawVal) return 0;
+              const cleaned = String(rawVal).replace(/,/g, "").replace(/[^0-9.-]/g, "");
+              return Math.abs(parseFloat(cleaned) || 0);
+            };
+
+            const withdrawal = withIdx !== -1 ? parseCleanAmount(cells[withIdx]) : 0;
+            const deposit = depIdx !== -1 ? parseCleanAmount(cells[depIdx]) : 0;
 
             if (withdrawal === 0 && deposit === 0) continue;
 
@@ -476,7 +526,6 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
           } else {
             setTransactions((prev) => [...parsedRows, ...prev]);
 
-            // Persist newly parsed statement to Firestore under 'pending'
             await api.saveBankTxns(activeClient, "pending", parsedRows).catch((err) => {
               console.warn("Failed saving bank txns to cloud:", err);
             });
@@ -637,7 +686,7 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
     notify("Transaction dismissed.", "info");
   };
 
-  // 100% TALLY-COMPLIANT SINGLE VOUCHER XML GENERATOR (FIXED FOR EXCEPTIONS)
+  // 100% TALLY-COMPLIANT SINGLE VOUCHER XML GENERATOR
   const buildSingleXmlVoucher = (tx) => {
     const rawDate = tx.date || "2026-09-29";
     const tallyDate = String(rawDate).replace(/[^0-9]/g, "").padEnd(8, "0").slice(0, 8);
@@ -661,7 +710,7 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
           <NARRATION>${narration} [Synced via Compliance4]</NARRATION>
           <ISINVOICE>No</ISINVOICE>
 
-          <!-- BANK LEDGER (Top Header Party Ledger in Tally) -->
+          <!-- BANK LEDGER -->
           <ALLLEDGERENTRIES.LIST>
             <LEDGERNAME>${bankLedger}</LEDGERNAME>
             <ISDEEMEDPOSITIVE>${isReceipt ? "Yes" : "No"}</ISDEEMEDPOSITIVE>
@@ -671,7 +720,7 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
             <AMOUNT>${isReceipt ? `-${amountVal}` : amountVal}</AMOUNT>
           </ALLLEDGERENTRIES.LIST>
 
-          <!-- ALLOCATED / COUNTER LEDGER (Expense / Income / Debtor / Creditor) -->
+          <!-- ALLOCATED / COUNTER LEDGER -->
           <ALLLEDGERENTRIES.LIST>
             <LEDGERNAME>${allocatedLedger}</LEDGERNAME>
             <ISDEEMEDPOSITIVE>${isReceipt ? "No" : "Yes"}</ISDEEMEDPOSITIVE>
@@ -875,7 +924,7 @@ ${xmlVoucher}
   return (
     <div className="flex-1 flex flex-col h-full bg-[#F8FAFC] overflow-hidden">
       {/* HEADER BAR */}
-      <header className="bg-white border-b border-slate-200 px-8 py-4 flex items-center justify-between shadow-xs shrink-0">
+      <header className="bg-white border-b border-slate-200 px-8 py-4 flex items-center justify-between shadow-xs shrink-0 flex-wrap gap-3">
         <div>
           <h2 className="text-xl font-bold text-slate-900 tracking-tight">Banking Center</h2>
           <div className="flex items-center gap-2 mt-0.5">
@@ -889,21 +938,27 @@ ${xmlVoucher}
           </div>
         </div>
 
-        {/* BANK ACCOUNT SELECTOR & ACTIONS */}
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-lg">
-            <Building className="w-4 h-4 text-slate-500" />
+        {/* BANK ACCOUNT SELECTOR, LIVE BALANCE & ACTIONS */}
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="flex items-center gap-3 bg-slate-50 border border-slate-200 px-3.5 py-2 rounded-lg">
+            <Building className="w-4 h-4 text-slate-500 shrink-0" />
             <div className="text-left">
               <span className="block text-[9px] font-bold text-slate-400 uppercase leading-none">Target Bank Account</span>
               <select
                 value={selectedBankLedger}
                 onChange={(e) => setSelectedBankLedger(e.target.value)}
-                className="text-xs font-bold text-slate-900 bg-transparent border-none focus:outline-none cursor-pointer pr-4"
+                className="text-xs font-bold text-slate-900 bg-transparent border-none focus:outline-none cursor-pointer pr-4 mt-0.5"
               >
                 {availableBankLedgers.map((bank) => (
                   <option key={bank} value={bank}>{bank}</option>
                 ))}
               </select>
+            </div>
+            <div className="border-l border-slate-200 pl-3 text-right">
+              <span className="block text-[9px] font-bold text-slate-400 uppercase leading-none">Live Balance</span>
+              <span className={`text-xs font-mono font-black ${currentBankBalance >= 0 ? "text-emerald-700" : "text-rose-600"}`}>
+                ₹{currentBankBalance.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+              </span>
             </div>
           </div>
 
@@ -1057,7 +1112,6 @@ ${xmlVoucher}
 
       {/* TABLE VIEW */}
       <div className="flex-1 p-8 overflow-y-auto">
-        {/* TABS 1 & 2: NEEDS REVIEW & APPROVED */}
         {bankSubTab !== "pushed" && (
           <>
             {displayedList.length === 0 ? (
