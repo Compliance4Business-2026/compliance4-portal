@@ -467,7 +467,7 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
 
     setVoucherData({
       ...bill,
-      file_preview_url: bill.file_preview_url || activeReviewBill?.file_preview_url || ""
+      file_preview_url: bill.file_preview_url || activeReviewBill?.file_preview_url || "",
       voucher_type: bill.voucher_type || "Purchase",
       voucher_date: bill.voucher_date || bill.invoice_date || bill.bill_date || new Date().toISOString().split("T")[0],
       supplier_invoice_no: bill.supplier_invoice_no || bill.invoice_number || "",
