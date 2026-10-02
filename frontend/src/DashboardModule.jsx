@@ -266,7 +266,7 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
     return "Administrative & General Expenses";
   };
 
-  // 2. SCHEDULE BREAKDOWN (Respecting ITC Rules for GST Expenses)
+  // 2. SCHEDULE BREAKDOWN (Ensuring Non-ITC GST Tax Components are Added as Expenses)
   const plBreakdown = useMemo(() => {
     let directCogs = 0;
     let otherIncomeTotal = 0;
@@ -292,7 +292,7 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
         directCogs += bAmt;
       }
 
-      // ONLY ADD GST TO EXPENSES IF CLIENT IS NON-ITC ELIGIBLE OR BILL SPECIFIES IT AS EXPENSE
+      // FOR NON-ITC CLIENTS, ADD SEPARATE GST COMPONENTS INTO P&L EXPENSES
       const treatTaxAsExp = !isClientItcEligible || bill.treatTaxAsExpense;
       if (treatTaxAsExp) {
         const cgstAmt = parseFloat(bill.cgst) || 0;
@@ -356,7 +356,6 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
       otherIncomeTotal
     };
   }, [filteredPurchases, filteredOverheads, clientCoa, isClientItcEligible]);
-
   // 3. TOP 4 KPI CALCULATIONS WITH STRICT COA SUNDRY CREDITOR MATCHING
   const kpiData = useMemo(() => {
     const normalRev = filteredNormalSales.reduce((acc, inv) => acc + (parseFloat(inv.taxableAmount) || 0), 0);
