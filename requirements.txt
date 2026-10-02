@@ -10,3 +10,4 @@ requests
 httpx
 xlrd
 google-cloud-firestore>=2.14.0
+google-cloud-storage
