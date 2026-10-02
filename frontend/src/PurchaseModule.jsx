@@ -284,15 +284,12 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
 
         if (Array.isArray(cloudNeedsReview)) {
           setPendingBills(cloudNeedsReview);
-          localStorage.setItem(`c4_pending_bills_${activeClient}`, JSON.stringify(cloudNeedsReview));
         }
         if (Array.isArray(cloudApproved)) {
           setApprovedBills(cloudApproved);
-          localStorage.setItem(`c4_approved_bills_${activeClient}`, JSON.stringify(cloudApproved));
         }
         if (Array.isArray(cloudPushed)) {
           setPushedBills(cloudPushed);
-          localStorage.setItem(`c4_pushed_bills_${activeClient}`, JSON.stringify(cloudPushed));
         }
         if (Array.isArray(coaData) && coaData.length > 0) {
           setClientCoa(coaData);
@@ -350,16 +347,30 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
     );
   }, [clientCoa]);
 
+  // SAFE STORAGE HELPER TO PREVENT QUOTA EXCEEDED ERRORS
+  const saveWithoutPreviews = (storageKey, billsArray) => {
+    try {
+      const stripped = (Array.isArray(billsArray) ? billsArray : []).map(b => ({
+        ...b,
+        file_preview_url: "" // Omit bulky base64 string from local storage quota
+      }));
+      localStorage.setItem(storageKey, JSON.stringify(stripped));
+    } catch (e) {
+      console.warn("Storage quota limit reached, clearing local bill cache safely.");
+      localStorage.setItem(storageKey, JSON.stringify([]));
+    }
+  };
+
   useEffect(() => {
-    localStorage.setItem(`c4_pending_bills_${activeClient}`, JSON.stringify(pendingBills));
+    saveWithoutPreviews(`c4_pending_bills_${activeClient}`, pendingBills);
   }, [pendingBills, activeClient]);
 
   useEffect(() => {
-    localStorage.setItem(`c4_approved_bills_${activeClient}`, JSON.stringify(approvedBills));
+    saveWithoutPreviews(`c4_approved_bills_${activeClient}`, approvedBills);
   }, [approvedBills, activeClient]);
 
   useEffect(() => {
-    localStorage.setItem(`c4_pushed_bills_${activeClient}`, JSON.stringify(pushedBills));
+    saveWithoutPreviews(`c4_pushed_bills_${activeClient}`, pushedBills);
   }, [pushedBills, activeClient]);
 
   useEffect(() => {
@@ -481,7 +492,7 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
     });
   };
 
-  // ROBUST BULK UPLOAD HANDLER WITH SAFE EXTRACTION NORMALIZATION
+  // ROBUST BULK UPLOAD HANDLER
   const handleMultipleInvoiceUpload = async (e) => {
     const files = Array.from(e.target.files || []);
     if (files.length === 0) return;
