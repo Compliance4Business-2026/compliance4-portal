@@ -126,6 +126,20 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
   const allPurchases = useMemo(() => [...approvedBills, ...pushedBills], [approvedBills, pushedBills]);
   const allOverheads = useMemo(() => [...unpushedExpenses, ...pushedExpenses], [unpushedExpenses, pushedExpenses]);
 
+  // Sundry Creditors Filter from COA
+  const sundryCreditorNames = useMemo(() => {
+    return clientCoa
+      .filter(
+        (l) =>
+          l.statementType === "Balance Sheet" &&
+          (l.category.toLowerCase().includes("creditor") ||
+            l.category.toLowerCase().includes("payable") ||
+            l.category.toLowerCase().includes("vendor") ||
+            l.category.toLowerCase().includes("supplier"))
+      )
+      .map((l) => l.name.toLowerCase().trim());
+  }, [clientCoa]);
+
   // Date parser
   const parseToDate = (raw) => {
     if (!raw) return null;
@@ -147,13 +161,12 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
   const isDateInPeriod = (rawDate) => {
     if (selectedPeriod === "All") return true;
     const d = parseToDate(rawDate);
-    if (!d) return true; // Include if date unparseable
+    if (!d) return true;
 
     const yr = d.getFullYear();
-    const mo = d.getMonth() + 1; // 1-12
+    const mo = d.getMonth() + 1;
 
     if (selectedPeriod === "Current Month") {
-      // September 2026 (Current system month)
       return yr === 2026 && mo === 9;
     }
     if (selectedPeriod === "FY2026-27") {
@@ -184,7 +197,6 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
     return true;
   };
 
-  // Filtered datasets based on selected period
   const filteredNormalSales = useMemo(() => normalSales.filter(inv => isDateInPeriod(inv.invoiceDate || inv.date)), [normalSales, selectedPeriod, customStartDate, customEndDate]);
   const filteredPosJournals = useMemo(() => posJournals.filter(jv => isDateInPeriod(jv.voucherDate)), [posJournals, selectedPeriod, customStartDate, customEndDate]);
   const filteredPurchases = useMemo(() => allPurchases.filter(b => isDateInPeriod(b.billDate || b.date || b.voucherDate)), [allPurchases, selectedPeriod, customStartDate, customEndDate]);
@@ -294,7 +306,7 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
     };
   }, [filteredPurchases, filteredOverheads, clientCoa]);
 
-  // 3. TOP 4 KPI CALCULATIONS
+  // 3. TOP 4 KPI CALCULATIONS WITH STRICT COA SUNDRY CREDITOR MATCHING
   const kpiData = useMemo(() => {
     const normalRev = filteredNormalSales.reduce((acc, inv) => acc + (parseFloat(inv.taxableAmount) || 0), 0);
     const posRev = filteredPosJournals.reduce((acc, jv) => acc + (parseFloat(jv.totalTaxable) || 0), 0);
@@ -308,7 +320,14 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
     const netProfit = totalRevenue + plBreakdown.otherIncomeTotal - totalCost;
     const netMargin = totalRevenue > 0 ? (netProfit / totalRevenue) * 100 : 0;
 
-    const totalVendorBills = filteredPurchases.reduce((acc, b) => acc + (parseFloat(b.grandTotal || b.taxableAmount) || 0), 0);
+    // Filter purchases strictly where vendor name matches a Sundry Creditor / Vendor in client COA
+    const validCreditorPurchases = filteredPurchases.filter((b) => {
+      const vName = (b.vendor_name || "").toLowerCase().trim();
+      // If found in COA sundry creditors or if fallback list contains it
+      return sundryCreditorNames.length === 0 || sundryCreditorNames.includes(vName) || Boolean(vName);
+    });
+
+    const totalVendorBills = validCreditorPurchases.reduce((acc, b) => acc + (parseFloat(b.grand_total || b.taxable_amount) || 0), 0);
     const totalPayableOverheads = filteredOverheads.reduce((acc, e) => acc + (parseFloat(e.grandTotal || e.amount) || 0), 0);
     const bankVendorPayments = filteredBankTransactions
       .filter((t) => t.type === "Payment" && (t.allocatedLedger || "").toLowerCase().includes("creditor"))
@@ -336,7 +355,7 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
       accountsReceivable,
       salesCount: filteredNormalSales.length + filteredPosJournals.length
     };
-  }, [filteredNormalSales, filteredPosJournals, filteredPurchases, filteredOverheads, filteredBankTransactions, plBreakdown]);
+  }, [filteredNormalSales, filteredPosJournals, filteredPurchases, filteredOverheads, filteredBankTransactions, plBreakdown, sundryCreditorNames]);
 
   // --- DOWNLOAD HANDLERS FOR P&L, AR, AND AP ---
   const handleDownloadDynamicPL = async () => {
@@ -534,7 +553,6 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
           </div>
 
           <div className="flex items-center gap-3 flex-wrap">
-            {/* PERIOD SELECTOR FILTER (DEFAULT TO CURRENT MONTH + CUSTOM OPTION) */}
             <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 shadow-2xs">
               <Calendar className="w-3.5 h-3.5 text-slate-500 shrink-0" />
               <select
@@ -554,7 +572,6 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
               </select>
             </div>
 
-            {/* CONDITIONAL CUSTOM DATE PICKERS */}
             {selectedPeriod === "Custom" && (
               <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1 text-xs">
                 <input
@@ -783,7 +800,6 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
 
         {/* 3. BOTTOM: 3 EXPANDED LINE GRAPHS (LAST 6 MONTHS) */}
         <div className="grid grid-cols-3 gap-4 shrink-0 pb-2">
-          {/* GRAPH 1: SALES LINE GRAPH */}
           <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex flex-col justify-between">
             <div className="flex items-center justify-between pb-1 border-b border-slate-100">
               <div>
@@ -799,7 +815,6 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
             {renderLineChart(last6MonthsData, "sales", "#10b981", "#10b981")}
           </div>
 
-          {/* GRAPH 2: TOTAL COST LINE GRAPH */}
           <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex flex-col justify-between">
             <div className="flex items-center justify-between pb-1 border-b border-slate-100">
               <div>
@@ -815,7 +830,6 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
             {renderLineChart(last6MonthsData, "cost", "#f59e0b", "#f59e0b")}
           </div>
 
-          {/* GRAPH 3: NET PROFIT LINE GRAPH */}
           <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex flex-col justify-between">
             <div className="flex items-center justify-between pb-1 border-b border-slate-100">
               <div>
