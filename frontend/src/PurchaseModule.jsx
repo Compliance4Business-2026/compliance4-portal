@@ -106,7 +106,6 @@ function validateGSTIN(gstin) {
   };
 }
 
-// ROBUST POP-OUT SEARCHABLE TYPEAHEAD COMBOBOX
 function SearchableLedgerSelect({ value, onChange, coaList = [], fallbackOptions = [], placeholder = "Type ledger name..." }) {
   const [isOpen, setIsOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
@@ -213,7 +212,6 @@ function SearchableLedgerSelect({ value, onChange, coaList = [], fallbackOptions
 export default function PurchaseModule({ activeClient = "Pansuria Confectionery & Food" }) {
   const [purchaseSubTab, setPurchaseSubTab] = useState("needs_review");
 
-  // Read active client's profile for ITC Eligibility check
   const clientProfile = useMemo(() => {
     try {
       const profiles = JSON.parse(localStorage.getItem("c4_client_profiles") || "{}");
@@ -223,7 +221,7 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
     }
   }, [activeClient]);
 
-  const isClientItcEligible = clientProfile.isItcEligible !== false; // Default true
+  const isClientItcEligible = clientProfile.isItcEligible !== false;
 
   const [pendingBills, setPendingBills] = useState(() => {
     try {
@@ -270,7 +268,6 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
     }
   });
 
-  // --- FETCH BILLS & COA FROM FIRESTORE ON LOAD / CLIENT SWITCH ---
   useEffect(() => {
     let isMounted = true;
 
@@ -321,7 +318,6 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
     return FALLBACK_EXPENSE_LEDGERS;
   }, [clientCoa]);
 
-  // ALL TAX LEDGERS (BOTH BALANCE SHEET DUTIES & TAXES AND P&L GST EXPENSE)
   const dynamicGstLedgers = useMemo(() => {
     const coaMatches = clientCoa
       .filter((l) => {
@@ -425,14 +421,11 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
     });
   };
 
-  // OPEN REVIEW: AUTOMATICALLY ASSIGN GST EXPENSE ON PURCHASE IF CLIENT IS NON-ITC
   const openReviewWorkspace = (bill) => {
     setActiveReviewBill(bill);
     setZoomLevel(1);
 
     const defaultLedger = dynamicExpenseLedgers[0] || "Purchase: General Goods";
-    
-    // Auto-decide default tax routing based on Client Profile
     const isNonItcClient = !isClientItcEligible;
     const defaultTaxLedger = isNonItcClient ? "GST Expense on Purchase" : "Input CGST";
     const defaultSgstLedger = isNonItcClient ? "GST Expense on Purchase" : "Input SGST";
@@ -443,8 +436,8 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
         item_name: bill.vendor_name ? "General Purchase" : "Bakery Raw Material",
         description: bill.vendor_name || "General Supplies",
         qty: 1,
-        rate: bill.taxable_amount || 0,
-        amount: bill.taxable_amount || 0
+        rate: bill.taxable_amount || bill.grand_total || 0,
+        amount: bill.taxable_amount || bill.grand_total || 0
       }
     ];
 
@@ -452,7 +445,7 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
       const cleanKey = (it.item_name || it.description || "").trim().toLowerCase();
       const memorized = itemRules[cleanKey];
       return {
-        description: it.description || "Raw Material",
+        description: it.description || it.item_name || "Raw Material",
         ledger_name: memorized || it.ledger_name || defaultLedger,
         amount: it.amount || 0,
         isAutoMatched: Boolean(memorized)
@@ -462,7 +455,7 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
     setVoucherData({
       ...bill,
       voucher_type: bill.voucher_type || "Purchase",
-      voucher_date: bill.voucher_date || bill.invoice_date || new Date().toISOString().split("T")[0],
+      voucher_date: bill.voucher_date || bill.invoice_date || bill.bill_date || new Date().toISOString().split("T")[0],
       supplier_invoice_no: bill.supplier_invoice_no || bill.invoice_number || "",
       bill_date: bill.bill_date || bill.invoice_date || new Date().toISOString().split("T")[0],
       source_of_supply: bill.source_of_supply || bill.place_of_supply || "Gujarat",
@@ -472,18 +465,15 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
       sgst_ledger: bill.sgst_ledger || defaultSgstLedger,
       igst_ledger: bill.igst_ledger || defaultIgstLedger,
       round_off: bill.round_off || 0.00,
-      items: items.map(it => {
-        const cleanKey = (it.item_name || it.description || "").trim().toLowerCase();
-        const memorized = itemRules[cleanKey];
-        return {
-          item_name: it.item_name || it.description || "General Item",
-          description: it.description || "",
-          qty: it.qty || 1,
-          rate: it.rate || it.amount || 0,
-          amount: it.amount || 0,
-          memorized_ledger: memorized || null
-        };
-      }),
+      taxable_amount: bill.taxable_amount || bill.grand_total || 0,
+      grand_total: bill.grand_total || bill.taxable_amount || 0,
+      items: items.map(it => ({
+        item_name: it.item_name || it.description || "General Item",
+        description: it.description || "",
+        qty: it.qty || 1,
+        rate: it.rate || it.amount || 0,
+        amount: it.amount || 0
+      })),
       accounting_ledgers: mappedAccountingLedgers
     });
   };
@@ -509,53 +499,87 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
         persistentPreview = "";
       }
 
+      let extracted = {};
       try {
-        const extracted = await api.extractInvoice(file, activeClient);
-        extracted.id = extracted.id || `inv_${Date.now()}_${i}`;
-        extracted.file_preview_url = persistentPreview;
-
-        if (extracted.items && extracted.items.length > 0) {
-          extracted.accounting_ledgers = extracted.items.map(it => {
-            const cleanKey = (it.item_name || it.description || "").trim().toLowerCase();
-            const memorized = itemRules[cleanKey];
-            return {
-              description: it.description || it.item_name || "Supplies",
-              ledger_name: memorized || defaultLedger,
-              amount: it.amount || 0,
-              isAutoMatched: Boolean(memorized)
-            };
-          });
-        }
-
-        const invNo = extracted.supplier_invoice_no || extracted.invoice_number;
-        const duplicate = checkDuplicateInvoice(invNo, extracted.vendor_name);
-        if (duplicate) {
-          extracted.duplicateWarning = `Already present in ${duplicate.stage}`;
-          duplicateWarningsCount++;
-        }
-
-        // Persist extracted bill into Firestore under 'needs_review'
-        await api.saveBill(activeClient, "needs_review", extracted).catch(err => {
-          console.warn("Failed saving bill to Firestore during upload:", err);
-        });
-
-        newExtractedBills.push(extracted);
-        successCount++;
+        const res = await api.extractInvoice(file, activeClient);
+        extracted = res || {};
       } catch (err) {
-        console.error(`Failed to process ${file.name}:`, err);
+        console.warn(`AI Extraction failed for ${file.name}, using safe fallback:`, err);
+        extracted = {};
       }
+
+      // ROBUST PROPERTY MAPPING (Handles camelCase and snake_case from backend)
+      const vName = extracted.vendor_name || extracted.vendorName || file.name.replace(/\.[^/.]+$/, "");
+      const vGstin = extracted.vendor_gstin || extracted.gstin || "";
+      const invNo = extracted.supplier_invoice_no || extracted.invoice_number || extracted.invoiceNo || `INV-${Math.floor(1000 + Math.random() * 9000)}`;
+      const invDate = extracted.invoice_date || extracted.bill_date || extracted.invoiceDate || new Date().toISOString().split("T")[0];
+      const taxable = parseFloat(extracted.taxable_amount || extracted.taxableAmount || extracted.amount || 0);
+      const cgstVal = parseFloat(extracted.cgst || 0);
+      const sgstVal = parseFloat(extracted.sgst || 0);
+      const igstVal = parseFloat(extracted.igst || 0);
+      const roundVal = parseFloat(extracted.round_off || extracted.roundOff || 0);
+      const grandTotalVal = parseFloat(extracted.grand_total || extracted.grandTotal || (taxable + cgstVal + sgstVal + igstVal) || taxable);
+
+      const safeBill = {
+        id: extracted.id || `inv_${Date.now()}_${i}_${Math.random().toString(36).substr(2, 4)}`,
+        vendor_name: vName,
+        vendor_gstin: vGstin,
+        supplier_invoice_no: invNo,
+        invoice_number: invNo,
+        invoice_date: invDate,
+        bill_date: invDate,
+        voucher_type: "Purchase",
+        source_of_supply: extracted.source_of_supply || extracted.placeOfSupply || "Gujarat",
+        taxable_amount: taxable,
+        cgst: cgstVal,
+        sgst: sgstVal,
+        igst: igstVal,
+        round_off: roundVal,
+        grand_total: grandTotalVal > 0 ? grandTotalVal : taxable,
+        file_preview_url: persistentPreview,
+        items: Array.isArray(extracted.items) ? extracted.items : []
+      };
+
+      if (safeBill.items.length > 0) {
+        safeBill.accounting_ledgers = safeBill.items.map(it => {
+          const cleanKey = (it.item_name || it.description || "").trim().toLowerCase();
+          const memorized = itemRules[cleanKey];
+          return {
+            description: it.description || it.item_name || "Supplies",
+            ledger_name: memorized || defaultLedger,
+            amount: parseFloat(it.amount || it.rate) || safeBill.taxable_amount,
+            isAutoMatched: Boolean(memorized)
+          };
+        });
+      } else {
+        safeBill.accounting_ledgers = [{
+          description: "General Purchase",
+          ledger_name: defaultLedger,
+          amount: safeBill.taxable_amount || safeBill.grand_total,
+          isAutoMatched: false
+        }];
+      }
+
+      const duplicate = checkDuplicateInvoice(safeBill.supplier_invoice_no, safeBill.vendor_name);
+      if (duplicate) {
+        safeBill.duplicateWarning = `Already present in ${duplicate.stage}`;
+        duplicateWarningsCount++;
+      }
+
+      await api.saveBill(activeClient, "needs_review", safeBill).catch(err => {
+        console.warn("Failed saving bill to Firestore during upload:", err);
+      });
+
+      newExtractedBills.push(safeBill);
+      successCount++;
     }
 
     if (newExtractedBills.length > 0) {
       setPendingBills(prev => [...newExtractedBills, ...prev]);
-      if (duplicateWarningsCount > 0) {
-        notify(`Parsed ${successCount} bills (${duplicateWarningsCount} duplicate warnings detected)!`, "info");
-      } else {
-        notify(`Successfully extracted ${successCount} out of ${files.length} bills & synced to Firestore!`, "success");
-      }
+      notify(`Successfully loaded ${successCount} bills into Needs Review!`, "success");
       setPurchaseSubTab("needs_review");
     } else {
-      notify("Failed to parse the selected bills. Check file formats.", "error");
+      notify("Failed to process the selected bills.", "error");
     }
 
     setIsUploadingBill(false);
@@ -630,9 +654,7 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
     setApprovedBills(prev => [approvedVoucher, ...prev.filter(b => b.id !== approvedVoucher.id)]);
 
     try {
-      // 1. Save in 'approved' stage in Firestore
       await api.saveBill(activeClient, "approved", approvedVoucher);
-      // 2. Remove from 'needs_review' stage in Firestore
       await api.deleteBill(activeClient, "needs_review", activeReviewBill.id);
       notify(`Invoice #${approvedVoucher.supplier_invoice_no} approved & synced to Firestore!`, "success");
     } catch (err) {
@@ -684,7 +706,6 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
         setApprovedBills(prev => prev.filter(b => b.id !== bill.id));
         setPushedBills(prev => [pushedRecord, ...prev]);
 
-        // Update Firestore stages
         await api.saveBill(activeClient, "pushed", pushedRecord).catch(() => null);
         await api.deleteBill(activeClient, "approved", bill.id).catch(() => null);
 
@@ -738,7 +759,6 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
     notify("Exported Approved Invoices to Excel CSV!", "success");
   };
 
-  // 100% TALLY-COMPLIANT PURCHASE XML BUILDER
   const buildSingleXmlVoucher = (b) => {
     const rawDate = b.voucher_date || b.invoice_date || "2026-09-29";
     const tallyDate = String(rawDate).replace(/[^0-9]/g, "").padEnd(8, "0").slice(0, 8);
@@ -766,7 +786,6 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
           <NARRATION>Purchase Invoice #${invoiceNo} imported via Compliance4</NARRATION>
           <ISINVOICE>No</ISINVOICE>
 
-          <!-- CREDIT: Supplier / Party Ledger -->
           <ALLLEDGERENTRIES.LIST>
             <LEDGERNAME>${party}</LEDGERNAME>
             <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
@@ -776,7 +795,6 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
             <AMOUNT>${total.toFixed(2)}</AMOUNT>
           </ALLLEDGERENTRIES.LIST>
 
-          <!-- DEBIT: Expense Ledger -->
           <ALLLEDGERENTRIES.LIST>
             <LEDGERNAME>${expenseLedger}</LEDGERNAME>
             <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
@@ -787,7 +805,6 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
           </ALLLEDGERENTRIES.LIST>
 
           ${cgst > 0 ? `
-          <!-- DEBIT: CGST -->
           <ALLLEDGERENTRIES.LIST>
             <LEDGERNAME>${cgstLedger}</LEDGERNAME>
             <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
@@ -798,7 +815,6 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
           </ALLLEDGERENTRIES.LIST>` : ""}
 
           ${sgst > 0 ? `
-          <!-- DEBIT: SGST -->
           <ALLLEDGERENTRIES.LIST>
             <LEDGERNAME>${sgstLedger}</LEDGERNAME>
             <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
@@ -809,7 +825,6 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
           </ALLLEDGERENTRIES.LIST>` : ""}
 
           ${igst > 0 ? `
-          <!-- DEBIT: IGST -->
           <ALLLEDGERENTRIES.LIST>
             <LEDGERNAME>${igstLedger}</LEDGERNAME>
             <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
@@ -1368,7 +1383,7 @@ ${xmlVouchers}
                 </div>
               )}
 
-              {/* GST ROW & TOTALS (AUTOMATICALLY ROUTED BASED ON CLIENT'S ITC ELIGIBILITY) */}
+              {/* GST ROW & TOTALS */}
               <div className="border-t border-slate-100 pt-4 space-y-3">
                 <div className="flex items-center justify-between pb-1">
                   <span className="text-xs text-slate-600 font-medium">Sub Total (Taxable Value):</span>
@@ -1377,7 +1392,6 @@ ${xmlVouchers}
                   </span>
                 </div>
 
-                {/* AUTOMATIC ITC STATUS BANNER */}
                 <div className={`p-2.5 rounded-lg border flex items-center justify-between ${
                   !isClientItcEligible 
                     ? "bg-amber-50/80 border-amber-300 text-amber-900" 
@@ -1393,11 +1407,6 @@ ${xmlVouchers}
                       />
                       <span>Ineligible ITC / Treat Tax as Expense (Restaurant 5% Scheme)</span>
                     </label>
-                    <p className="text-[10px] pl-5 mt-0.5 opacity-80">
-                      {!isClientItcEligible 
-                        ? "Active Client is configured as Non-ITC: taxes auto-default to GST Expense on Purchase (P&L Overhead)."
-                        : "Active Client is ITC Eligible: taxes default to Balance Sheet Input Credit (Duties & Taxes)."}
-                    </p>
                   </div>
                   <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded ${
                     voucherData.treatTaxAsExpense 
@@ -1417,7 +1426,7 @@ ${xmlVouchers}
                       onChange={(selected) => setVoucherData({ ...voucherData, cgst_ledger: selected })}
                       coaList={clientCoa}
                       fallbackOptions={dynamicGstLedgers}
-                      placeholder="Select CGST or GST Expense..."
+                      placeholder="Select CGST..."
                     />
                   </div>
                   <div className="col-span-2">
@@ -1441,7 +1450,7 @@ ${xmlVouchers}
                       onChange={(selected) => setVoucherData({ ...voucherData, sgst_ledger: selected })}
                       coaList={clientCoa}
                       fallbackOptions={dynamicGstLedgers}
-                      placeholder="Select SGST or GST Expense..."
+                      placeholder="Select SGST..."
                     />
                   </div>
                   <div className="col-span-2">
@@ -1465,7 +1474,7 @@ ${xmlVouchers}
                       onChange={(selected) => setVoucherData({ ...voucherData, igst_ledger: selected })}
                       coaList={clientCoa}
                       fallbackOptions={dynamicGstLedgers}
-                      placeholder="Select IGST or GST Expense..."
+                      placeholder="Select IGST..."
                     />
                   </div>
                   <div className="col-span-2">
@@ -1515,21 +1524,6 @@ ${xmlVouchers}
                 <p className="text-slate-600">
                   Save and approve invoice <strong>#{voucherData.supplier_invoice_no}</strong> from <strong>{voucherData.vendor_name}</strong> for <strong>₹{voucherData.grand_total}</strong>?
                 </p>
-                {duplicateMatch && (
-                  <div className="bg-amber-50 p-3 rounded-lg border border-amber-200 text-amber-800">
-                    <p className="font-semibold flex items-center gap-1">
-                      <AlertTriangle className="w-4 h-4 text-amber-600" /> Duplicate Detected
-                    </p>
-                    <p className="text-[11px] mt-0.5">
-                      This bill already exists in {duplicateMatch.stage}. Confirming will record an additional entry.
-                    </p>
-                  </div>
-                )}
-                <div className="bg-slate-50 p-3 rounded-lg border border-slate-200">
-                  <p className="text-[11px] text-slate-500">
-                    This bill will be stored in <strong>Approved Invoices</strong> where it can be batch exported to Excel/XML or pushed directly to Tally Prime.
-                  </p>
-                </div>
               </div>
 
               <div className="pt-3 flex items-center justify-end gap-2 border-t border-slate-100 text-xs">
@@ -1553,7 +1547,6 @@ ${xmlVouchers}
     );
   }
 
-  // MAIN TAB VIEW
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
       <header className="h-16 bg-white border-b border-slate-200 px-8 flex items-center justify-between shadow-xs">
@@ -1564,12 +1557,6 @@ ${xmlVouchers}
             <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${isClientItcEligible ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-amber-50 text-amber-800 border-amber-300"}`}>
               {isClientItcEligible ? "ITC Eligible" : "Non-ITC Scheme"}
             </span>
-            {Object.keys(itemRules).length > 0 && (
-              <span className="flex items-center gap-1 text-[10px] bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-full font-semibold border border-indigo-200">
-                <Sparkles className="w-2.5 h-2.5" />
-                {Object.keys(itemRules).length} Rules Learned
-              </span>
-            )}
           </div>
         </div>
         <div className="flex items-center gap-3">
@@ -1696,26 +1683,10 @@ ${xmlVouchers}
                           <p className="font-bold text-slate-900">{b.vendor_name || "Unknown Vendor"}</p>
                           <div className="flex items-center gap-1.5 mt-0.5">
                             <span className="text-[11px] text-slate-400 font-mono">{b.vendor_gstin || "No GSTIN"}</span>
-                            {b.vendor_gstin && (
-                              gstCheck.isValid ? (
-                                <span className="inline-flex items-center gap-0.5 text-[9px] font-bold text-emerald-700 bg-emerald-50 px-1 py-0.5 rounded">
-                                  <ShieldCheck className="w-2.5 h-2.5 text-emerald-600" /> {gstCheck.stateName}
-                                </span>
-                              ) : (
-                                <span className="inline-flex items-center gap-0.5 text-[9px] font-bold text-rose-700 bg-rose-50 px-1 py-0.5 rounded">
-                                  <ShieldAlert className="w-2.5 h-2.5 text-rose-600" /> Invalid
-                                </span>
-                              )
-                            )}
                           </div>
                         </td>
                         <td className="px-6 py-4 font-mono font-medium text-slate-800">
                           #{b.invoice_number || b.supplier_invoice_no}
-                          {duplicate && (
-                            <span className="ml-1.5 inline-flex items-center gap-0.5 text-[10px] font-bold bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded border border-amber-300">
-                              <AlertTriangle className="w-2.5 h-2.5 text-amber-700" /> Duplicate
-                            </span>
-                          )}
                         </td>
                         <td className="px-6 py-4 text-slate-500">
                           {b.invoice_date || b.bill_date}
@@ -1750,7 +1721,6 @@ ${xmlVouchers}
               <div className="p-16 text-center">
                 <CheckCircle2 className="w-8 h-8 text-emerald-300 mx-auto mb-2" />
                 <p className="text-sm font-semibold text-slate-700">No approved invoices waiting</p>
-                <p className="text-xs text-slate-400 mt-0.5">Approve verified invoices in "Needs Review" to prepare for Tally sync or export</p>
               </div>
             ) : (
               <table className="w-full text-left text-xs text-slate-600">
@@ -1768,7 +1738,6 @@ ${xmlVouchers}
                     <tr key={b.id} className="hover:bg-slate-50 transition">
                       <td className="px-6 py-4">
                         <p className="font-bold text-slate-900">{b.vendor_name}</p>
-                        <p className="text-[11px] text-slate-400 font-mono">{b.vendor_gstin}</p>
                       </td>
                       <td className="px-6 py-4 font-mono font-medium text-slate-800">
                         #{b.supplier_invoice_no || b.invoice_number}
@@ -1785,21 +1754,9 @@ ${xmlVouchers}
                         <div className="inline-flex items-center gap-2">
                           <button
                             onClick={() => openReviewWorkspace(b)}
-                            title="Edit invoice again"
                             className="inline-flex items-center gap-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-[11px] px-2.5 py-1.5 rounded transition"
                           >
                             <Edit2 className="w-3.5 h-3.5" /> Edit
-                          </button>
-                          <button
-                            onClick={async () => {
-                              setApprovedBills(prev => prev.filter(x => x.id !== b.id));
-                              await api.deleteBill(activeClient, "approved", b.id).catch(() => null);
-                              notify("Invoice removed from Approved tab.", "info");
-                            }}
-                            title="Remove invoice"
-                            className="text-slate-400 hover:text-rose-600 p-1.5 transition"
-                          >
-                            <Trash2 className="w-4 h-4" />
                           </button>
                           <button
                             onClick={() => handlePushToTally(b)}
@@ -1824,7 +1781,6 @@ ${xmlVouchers}
               <div className="bg-white border border-slate-200 rounded-xl shadow-xs p-16 text-center">
                 <FileSpreadsheet className="w-8 h-8 text-blue-300 mx-auto mb-2" />
                 <p className="text-sm font-semibold text-slate-700">No invoices pushed yet</p>
-                <p className="text-xs text-slate-400 mt-0.5">Invoices successfully sent to Tally Prime will be organized into monthly folders here</p>
               </div>
             ) : (
               groupedPushedBills.map((group) => {
@@ -1837,11 +1793,7 @@ ${xmlVouchers}
                       className="px-6 py-4 bg-slate-50/80 hover:bg-slate-100/80 border-b border-slate-200 flex items-center justify-between cursor-pointer transition select-none"
                     >
                       <div className="flex items-center gap-3">
-                        {isExpanded ? (
-                          <FolderOpen className="w-5 h-5 text-indigo-600" />
-                        ) : (
-                          <Folder className="w-5 h-5 text-slate-400" />
-                        )}
+                        {isExpanded ? <FolderOpen className="w-5 h-5 text-indigo-600" /> : <Folder className="w-5 h-5 text-slate-400" />}
                         <div>
                           <h4 className="text-xs font-bold text-slate-900 tracking-wide uppercase flex items-center gap-2">
                             {group.monthLabel}
@@ -1849,66 +1801,15 @@ ${xmlVouchers}
                               {group.bills.length} invoices
                             </span>
                           </h4>
-                          <p className="text-[11px] text-slate-500 mt-0.5">
-                            Purchases for {group.monthLabel}
-                          </p>
                         </div>
                       </div>
-
-                      <div className="flex items-center gap-4">
-                        <div className="text-right">
-                          <span className="text-[10px] uppercase font-bold text-slate-400">Total Purchase</span>
-                          <p className="text-sm font-black font-mono text-slate-900">
-                            ₹{group.totalAmount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                          </p>
-                        </div>
-                        <div className="p-1 rounded bg-white border border-slate-200 text-slate-500">
-                          {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
-                        </div>
+                      <div className="text-right">
+                        <span className="text-[10px] uppercase font-bold text-slate-400">Total Purchase</span>
+                        <p className="text-sm font-black font-mono text-slate-900">
+                          ₹{group.totalAmount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                        </p>
                       </div>
                     </div>
-
-                    {isExpanded && (
-                      <table className="w-full text-left text-xs text-slate-600">
-                        <thead className="bg-white border-b border-slate-200 uppercase font-semibold text-slate-400 text-[10px]">
-                          <tr>
-                            <th className="px-6 py-3">Vendor</th>
-                            <th className="px-6 py-3">Invoice No.</th>
-                            <th className="px-6 py-3">Invoice Date</th>
-                            <th className="px-6 py-3">Pushed At</th>
-                            <th className="px-6 py-3 font-mono text-right">Amount (₹)</th>
-                            <th className="px-6 py-3 text-right">Status</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-100">
-                          {group.bills.map((b, idx) => (
-                            <tr key={b.id || idx} className="hover:bg-slate-50/60 transition">
-                              <td className="px-6 py-3.5">
-                                <p className="font-bold text-slate-900">{b.vendor_name}</p>
-                                <p className="text-[11px] text-slate-400 font-mono">{b.vendor_gstin || "No GSTIN"}</p>
-                              </td>
-                              <td className="px-6 py-3.5 font-mono font-medium text-slate-800">
-                                #{b.supplier_invoice_no || b.invoice_number}
-                              </td>
-                              <td className="px-6 py-3.5 font-mono text-slate-500">
-                                {b.invoice_date || b.bill_date || "-"}
-                              </td>
-                              <td className="px-6 py-3.5 text-slate-400 text-[11px]">
-                                {b.pushed_at || "Recent"}
-                              </td>
-                              <td className="px-6 py-3.5 font-mono font-bold text-slate-800 text-right">
-                                ₹{(parseFloat(b.grand_total || b.taxable_amount) || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                              </td>
-                              <td className="px-6 py-3.5 text-right">
-                                <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded">
-                                  <Check className="w-3 h-3" /> In Tally
-                                </span>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    )}
                   </div>
                 );
               })
@@ -1918,18 +1819,9 @@ ${xmlVouchers}
       </div>
 
       {notification && (
-        <div
-          className={`fixed bottom-6 right-6 max-w-md px-4 py-3 rounded-lg shadow-xl border text-sm flex items-start gap-3 transition-all z-50 ${
-            notification.type === "error"
-              ? "bg-rose-950 text-rose-100 border-rose-800"
-              : "bg-slate-900 text-white border-slate-800"
-          }`}
-        >
-          {notification.type === "error" ? (
-            <AlertCircle className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
-          ) : (
-            <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
-          )}
+        <div className={`fixed bottom-6 right-6 max-w-md px-4 py-3 rounded-lg shadow-xl border text-sm flex items-start gap-3 transition-all z-50 ${
+          notification.type === "error" ? "bg-rose-950 text-rose-100 border-rose-800" : "bg-slate-900 text-white border-slate-800"
+        }`}>
           <div className="flex-1 font-mono text-xs break-all leading-relaxed">
             {notification.msg}
           </div>
