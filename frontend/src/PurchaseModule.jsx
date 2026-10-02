@@ -702,11 +702,10 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
     let rawTotal = subtotal + cgst + sgst + igst;
     let finalTotal = Math.round(rawTotal);
     
-    // If manualRoundOff is passed as string like "-" or "-0.5", handle it safely
     let roundOffNum = 0;
     if (manualRoundOff !== null && manualRoundOff !== undefined) {
       if (manualRoundOff === "-" || manualRoundOff === "-.") {
-        roundOffNum = 0; // Keep temporary keystroke safe
+        roundOffNum = 0;
       } else {
         roundOffNum = parseFloat(manualRoundOff) || 0;
       }
@@ -719,7 +718,7 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
     setVoucherData({
       ...updated,
       taxable_amount: subtotal,
-      round_off: manualRoundOff === "-" ? "-" : roundOffNum, // preserve typing state if user just typed minus
+      round_off: manualRoundOff === "-" ? "-" : roundOffNum,
       grand_total: parseFloat(grandTotal.toFixed(2)),
       party_ledger: {
         ledger_name: updated.vendor_name || "Sundry Creditor",
@@ -727,6 +726,32 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
         type: "Credit"
       }
     });
+  };
+
+  const validateVoucherBalance = () => {
+    if (!voucherData) return { isBalanced: false, totalDr: 0, totalCr: 0, diff: 0 };
+
+    const totalCr = parseFloat(voucherData.grand_total) || 0;
+    let totalDr = 0;
+
+    if (voucherMode === "item") {
+      totalDr += (voucherData.items || []).reduce((acc, it) => acc + (parseFloat(it.amount) || 0), 0);
+    } else {
+      totalDr += (voucherData.accounting_ledgers || []).reduce((acc, l) => acc + (parseFloat(l.amount) || 0), 0);
+    }
+
+    const cgst = parseFloat(voucherData.cgst) || 0;
+    const sgst = parseFloat(voucherData.sgst) || 0;
+    const igst = parseFloat(voucherData.igst) || 0;
+    totalDr += (cgst + sgst + igst);
+
+    const roundOff = parseFloat(voucherData.round_off) || 0;
+    let adjustedDr = totalDr + roundOff;
+
+    const diff = Math.abs(adjustedDr - totalCr);
+    const isBalanced = diff < 0.05;
+
+    return { isBalanced, totalDr: adjustedDr, totalCr, diff };
   };
 
   const handleToggleTaxAsExpense = (checked) => {
@@ -768,6 +793,15 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
       }));
       notify(`Memorized "${descriptionOrItemName}" → ${newLedger}`, "info");
     }
+  };
+
+  const handlePreApproveCheck = () => {
+    const balanceCheck = validateVoucherBalance();
+    if (!balanceCheck.isBalanced) {
+      notify(`Cannot Approve: Voucher is unbalanced! Total Debits (₹${balanceCheck.totalDr.toFixed(2)}) do not match Total Credits (₹${balanceCheck.totalCr.toFixed(2)}). Difference: ₹${balanceCheck.diff.toFixed(2)}`, "error");
+      return;
+    }
+    setShowAllocationModal(true);
   };
 
   const handleApproveInvoice = async () => {
@@ -1109,6 +1143,8 @@ ${xmlVouchers}
     const currentQueueIndex = safePending.findIndex(b => b.id === activeReviewBill.id);
     const hasNextBill = currentQueueIndex !== -1 && currentQueueIndex < safePending.length - 1;
 
+    const voucherBalanceCheck = validateVoucherBalance();
+
     return (
       <div className="flex flex-col h-full bg-[#F8FAFC] text-slate-800 font-sans">
         <header className="h-14 bg-white border-b border-slate-200 px-6 flex items-center justify-between shadow-xs z-10 shrink-0">
@@ -1126,13 +1162,19 @@ ${xmlVouchers}
             {safePending.length > 0 && currentQueueIndex !== -1 && (
               <span className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded font-mono font-medium">
                 {currentQueueIndex + 1} of {safePending.length}
+            </span>
+            )}
+            {!voucherBalanceCheck.isBalanced && (
+              <span className="flex items-center gap-1 text-[11px] font-bold text-rose-800 bg-rose-100 px-2 py-0.5 rounded border border-rose-300">
+                <AlertCircle className="w-3 h-3 text-rose-700" />
+                Unbalanced (Dr: ₹{voucherBalanceCheck.totalDr.toFixed(2)} ≠ Cr: ₹{voucherBalanceCheck.totalCr.toFixed(2)})
               </span>
             )}
             {duplicateMatch && (
               <span className="flex items-center gap-1 text-[11px] font-bold text-amber-800 bg-amber-100 px-2 py-0.5 rounded border border-amber-300">
                 <AlertTriangle className="w-3 h-3 text-amber-700" />
                 Duplicate: In {duplicateMatch.stage}
-              </span>
+            </span>
             )}
           </div>
 
@@ -1151,7 +1193,7 @@ ${xmlVouchers}
               Delete Bill
             </button>
             <button
-              onClick={() => setShowAllocationModal(true)}
+              onClick={handlePreApproveCheck}
               className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold px-4 py-2 rounded-lg transition shadow-xs"
             >
               <Check className="w-3.5 h-3.5" /> Approve Bill {hasNextBill ? "& Next →" : ""}
@@ -1742,21 +1784,21 @@ ${xmlVouchers}
                 </div>
 
                 <div className="flex items-center justify-between pt-2">
-  <label className="text-xs text-slate-500">Round Off Adjustment (+ / - ₹):</label>
-  <input
-    type="text" 
-    value={voucherData.round_off ?? ""}
-    onChange={(e) => {
-      const val = e.target.value;
-      // Allow typing negative signs, decimals, and numbers smoothly
-      if (val === "" || val === "-" || !isNaN(val)) {
-        updateTotals(voucherData, val === "-" ? "-" : (parseFloat(val) || 0));
-      }
-    }}
-    className="w-28 text-right text-xs font-mono border border-slate-300 rounded p-1 font-semibold text-slate-800"
-    placeholder="e.g. 0.50 or -0.25"
-  />
-</div>
+                  <label className="text-xs text-slate-500">Round Off Adjustment (+ / - ₹):</label>
+                  <input
+                    type="text"
+                    value={voucherData.round_off ?? ""}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (val === "" || val === "-" || !isNaN(val)) {
+                        updateTotals(voucherData, val === "-" ? "-" : (parseFloat(val) || 0));
+                      }
+                    }}
+                    className="w-28 text-right text-xs font-mono border border-slate-300 rounded p-1 font-semibold text-slate-800"
+                    placeholder="e.g. 0.50 or -0.25"
+                  />
+                </div>
+
                 <div className="flex justify-between items-center text-sm font-bold text-slate-900 pt-3 border-t border-slate-200">
                   <span>Grand Total:</span>
                   <span className="font-mono text-base">₹{(voucherData.grand_total || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span>
@@ -1965,132 +2007,132 @@ ${xmlVouchers}
                       </tr>
                     );
                   })}
-                </tbody>
-              </table>
-            )}
-          </div>
-        )}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
 
-        {/* TAB 2: APPROVED INVOICES */}
-        {purchaseSubTab === "approved" && (
-          <div className="bg-white border border-slate-200 rounded-xl shadow-xs overflow-hidden">
-            {!Array.isArray(approvedBills) || approvedBills.length === 0 ? (
-              <div className="p-16 text-center">
-                <CheckCircle2 className="w-8 h-8 text-emerald-300 mx-auto mb-2" />
-                <p className="text-sm font-semibold text-slate-700">No approved invoices waiting</p>
-              </div>
-            ) : (
-              <table className="w-full text-left text-xs text-slate-600">
-                <thead className="bg-slate-50 border-b border-slate-200 uppercase font-semibold text-slate-500">
-                  <tr>
-                    <th className="px-6 py-3.5">Vendor</th>
-                    <th className="px-6 py-3.5">Invoice No.</th>
-                    <th className="px-6 py-3.5">Ledger Allocation</th>
-                    <th className="px-6 py-3.5">Total Amount (₹)</th>
-                    <th className="px-6 py-3.5 text-right">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {approvedBills.map((b) => (
-                    <tr key={b.id} className="hover:bg-slate-50 transition">
-                      <td className="px-6 py-4">
-                        <p className="font-bold text-slate-900">{b.vendor_name}</p>
-                      </td>
-                      <td className="px-6 py-4 font-mono font-medium text-slate-800">
-                        #{b.supplier_invoice_no || b.invoice_number}
-                      </td>
-                      <td className="px-6 py-4 text-slate-600">
-                        <span className="bg-slate-100 px-2 py-1 rounded text-[11px] font-medium">
-                          {b.accounting_ledgers?.[0]?.ledger_name || dynamicExpenseLedgers[0] || "Purchase: General Goods"}
-                        </span>
-                      </td>
-                      <td className="px-6 py-4 font-mono font-bold text-emerald-700">
-                        ₹{(parseFloat(b.grand_total) || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                      </td>
-                      <td className="px-6 py-4 text-right">
-                        <div className="inline-flex items-center gap-2">
-                          <button
-                            onClick={() => openReviewWorkspace(b)}
-                            className="inline-flex items-center gap-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-[11px] px-2.5 py-1.5 rounded transition"
-                          >
-                            <Edit2 className="w-3.5 h-3.5" /> Edit
-                          </button>
-                          <button
-                            onClick={() => handlePushToTally(b)}
-                            className="inline-flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-[11px] px-3.5 py-1.5 rounded transition shadow-xs"
-                          >
-                            <Send className="w-3.5 h-3.5" /> Push
-                          </button>
-                          <button
-                            onClick={() => handleDeleteApprovedBill(b.id)}
-                            className="inline-flex items-center gap-1 bg-rose-50 hover:bg-rose-100 text-rose-700 font-semibold text-[11px] px-2.5 py-1.5 rounded transition"
-                            title="Delete approved invoice"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </div>
-        )}
-
-        {/* TAB 3: PUSHED TO TALLY */}
-        {purchaseSubTab === "pushed" && (
-          <div className="space-y-4">
-            {groupedPushedBills.length === 0 ? (
-              <div className="bg-white border border-slate-200 rounded-xl shadow-xs p-16 text-center">
-                <FileSpreadsheet className="w-8 h-8 text-blue-300 mx-auto mb-2" />
-                <p className="text-sm font-semibold text-slate-700">No invoices pushed yet</p>
-              </div>
-            ) : (
-              groupedPushedBills.map((group) => {
-                const isExpanded = expandedFolders[group.monthLabel] !== false;
-
-                return (
-                  <div key={group.monthLabel} className="bg-white border border-slate-200 rounded-xl shadow-xs overflow-hidden">
-                    <div
-                      onClick={() => toggleFolder(group.monthLabel)}
-                      className="px-6 py-4 bg-slate-50/80 hover:bg-slate-100/80 border-b border-slate-200 flex items-center justify-between cursor-pointer transition select-none"
-                    >
-                      <div className="flex items-center gap-3">
-                        {isExpanded ? <FolderOpen className="w-5 h-5 text-indigo-600" /> : <Folder className="w-5 h-5 text-slate-400" />}
-                        <div>
-                          <h4 className="text-xs font-bold text-slate-900 tracking-wide uppercase flex items-center gap-2">
-                            {group.monthLabel}
-                            <span className="text-[10px] bg-indigo-50 text-indigo-700 border border-indigo-200 px-2 py-0.5 rounded-full font-mono font-bold lowercase">
-                              {group.bills.length} invoices
-                            </span>
-                          </h4>
-                        </div>
+      {/* TAB 2: APPROVED INVOICES */}
+      {purchaseSubTab === "approved" && (
+        <div className="bg-white border border-slate-200 rounded-xl shadow-xs overflow-hidden">
+          {!Array.isArray(approvedBills) || approvedBills.length === 0 ? (
+            <div className="p-16 text-center">
+              <CheckCircle2 className="w-8 h-8 text-emerald-300 mx-auto mb-2" />
+              <p className="text-sm font-semibold text-slate-700">No approved invoices waiting</p>
+            </div>
+          ) : (
+            <table className="w-full text-left text-xs text-slate-600">
+              <thead className="bg-slate-50 border-b border-slate-200 uppercase font-semibold text-slate-500">
+                <tr>
+                  <th className="px-6 py-3.5">Vendor</th>
+                  <th className="px-6 py-3.5">Invoice No.</th>
+                  <th className="px-6 py-3.5">Ledger Allocation</th>
+                  <th className="px-6 py-3.5">Total Amount (₹)</th>
+                  <th className="px-6 py-3.5 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {approvedBills.map((b) => (
+                  <tr key={b.id} className="hover:bg-slate-50 transition">
+                    <td className="px-6 py-4">
+                      <p className="font-bold text-slate-900">{b.vendor_name}</p>
+                    </td>
+                    <td className="px-6 py-4 font-mono font-medium text-slate-800">
+                      #{b.supplier_invoice_no || b.invoice_number}
+                    </td>
+                    <td className="px-6 py-4 text-slate-600">
+                      <span className="bg-slate-100 px-2 py-1 rounded text-[11px] font-medium">
+                        {b.accounting_ledgers?.[0]?.ledger_name || dynamicExpenseLedgers[0] || "Purchase: General Goods"}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 font-mono font-bold text-emerald-700">
+                      ₹{(parseFloat(b.grand_total) || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                    </td>
+                    <td className="px-6 py-4 text-right">
+                      <div className="inline-flex items-center gap-2">
+                        <button
+                          onClick={() => openReviewWorkspace(b)}
+                          className="inline-flex items-center gap-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-[11px] px-2.5 py-1.5 rounded transition"
+                        >
+                          <Edit2 className="w-3.5 h-3.5" /> Edit
+                        </button>
+                        <button
+                          onClick={() => handlePushToTally(b)}
+                          className="inline-flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-[11px] px-3.5 py-1.5 rounded transition shadow-xs"
+                        >
+                          <Send className="w-3.5 h-3.5" /> Push
+                        </button>
+                        <button
+                          onClick={() => handleDeleteApprovedBill(b.id)}
+                          className="inline-flex items-center gap-1 bg-rose-50 hover:bg-rose-100 text-rose-700 font-semibold text-[11px] px-2.5 py-1.5 rounded transition"
+                          title="Delete approved invoice"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
                       </div>
-                      <div className="text-right">
-                        <span className="text-[10px] uppercase font-bold text-slate-400">Total Purchase</span>
-                        <p className="text-sm font-black font-mono text-slate-900">
-                          ₹{group.totalAmount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                        </p>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+
+      {/* TAB 3: PUSHED TO TALLY */}
+      {purchaseSubTab === "pushed" && (
+        <div className="space-y-4">
+          {groupedPushedBills.length === 0 ? (
+            <div className="bg-white border border-slate-200 rounded-xl shadow-xs p-16 text-center">
+              <FileSpreadsheet className="w-8 h-8 text-blue-300 mx-auto mb-2" />
+              <p className="text-sm font-semibold text-slate-700">No invoices pushed yet</p>
+            </div>
+          ) : (
+            groupedPushedBills.map((group) => {
+              const isExpanded = expandedFolders[group.monthLabel] !== false;
+
+              return (
+                <div key={group.monthLabel} className="bg-white border border-slate-200 rounded-xl shadow-xs overflow-hidden">
+                  <div
+                    onClick={() => toggleFolder(group.monthLabel)}
+                    className="px-6 py-4 bg-slate-50/80 hover:bg-slate-100/80 border-b border-slate-200 flex items-center justify-between cursor-pointer transition select-none"
+                  >
+                    <div className="flex items-center gap-3">
+                      {isExpanded ? <FolderOpen className="w-5 h-5 text-indigo-600" /> : <Folder className="w-5 h-5 text-slate-400" />}
+                      <div>
+                        <h4 className="text-xs font-bold text-slate-900 tracking-wide uppercase flex items-center gap-2">
+                          {group.monthLabel}
+                          <span className="text-[10px] bg-indigo-50 text-indigo-700 border border-indigo-200 px-2 py-0.5 rounded-full font-mono font-bold lowercase">
+                            {group.bills.length} invoices
+                          </span>
+                        </h4>
                       </div>
                     </div>
+                    <div className="text-right">
+                      <span className="text-[10px] uppercase font-bold text-slate-400">Total Purchase</span>
+                      <p className="text-sm font-black font-mono text-slate-900">
+                        ₹{group.totalAmount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                      </p>
+                    </div>
                   </div>
-                );
-              })
-            )}
-          </div>
-        )}
-      </div>
-
-      {notification && (
-        <div className={`fixed bottom-6 right-6 max-w-md px-4 py-3 rounded-lg shadow-xl border text-sm flex items-start gap-3 transition-all z-50 ${
-          notification.type === "error" ? "bg-rose-950 text-rose-100 border-rose-800" : "bg-slate-900 text-white border-slate-800"
-        }`}>
-          <div className="flex-1 font-mono text-xs break-all leading-relaxed">
-            {notification.msg}
-          </div>
+                </div>
+              );
+            })
+          )}
         </div>
       )}
     </div>
-  );
+
+    {notification && (
+      <div className={`fixed bottom-6 right-6 max-w-md px-4 py-3 rounded-lg shadow-xl border text-sm flex items-start gap-3 transition-all z-50 ${
+        notification.type === "error" ? "bg-rose-950 text-rose-100 border-rose-800" : "bg-slate-900 text-white border-slate-800"
+      }`}>
+        <div className="flex-1 font-mono text-xs break-all leading-relaxed">
+          {notification.msg}
+        </div>
+      </div>
+    )}
+  </div>
+);
 }
