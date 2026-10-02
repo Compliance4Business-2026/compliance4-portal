@@ -408,9 +408,9 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
     const cleanVen = (vendorName || "").trim().toLowerCase();
 
     const allBills = [
-      ...pendingBills.map(b => ({ ...b, stage: "Needs Review" })),
-      ...approvedBills.map(b => ({ ...b, stage: "Approved Invoices" })),
-      ...pushedBills.map(b => ({ ...b, stage: "Pushed to Tally" }))
+      ...(Array.isArray(pendingBills) ? pendingBills : []).map(b => ({ ...b, stage: "Needs Review" })),
+      ...(Array.isArray(approvedBills) ? approvedBills : []).map(b => ({ ...b, stage: "Approved Invoices" })),
+      ...(Array.isArray(pushedBills) ? pushedBills : []).map(b => ({ ...b, stage: "Pushed to Tally" }))
     ];
 
     return allBills.find(b => {
@@ -481,6 +481,7 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
     });
   };
 
+  // ROBUST BULK UPLOAD HANDLER WITH SAFE EXTRACTION NORMALIZATION
   const handleMultipleInvoiceUpload = async (e) => {
     const files = Array.from(e.target.files || []);
     if (files.length === 0) return;
@@ -572,7 +573,7 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
     }
 
     if (newExtractedBills.length > 0) {
-      setPendingBills(prev => [...newExtractedBills, ...prev]);
+      setPendingBills(prev => [...(Array.isArray(prev) ? prev : []), ...newExtractedBills]);
       notify(`Successfully loaded ${successCount} bills into Needs Review!`, "success");
       setPurchaseSubTab("needs_review");
     } else {
@@ -652,9 +653,9 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
     setShowAllocationModal(false);
     const approvedVoucher = { ...voucherData, isApproved: true };
 
-    const remainingPending = pendingBills.filter(b => b.id !== activeReviewBill.id);
+    const remainingPending = (pendingBills || []).filter(b => b.id !== activeReviewBill.id);
     setPendingBills(remainingPending);
-    setApprovedBills(prev => [approvedVoucher, ...prev.filter(b => b.id !== approvedVoucher.id)]);
+    setApprovedBills(prev => [approvedVoucher, ...(Array.isArray(prev) ? prev : []).filter(b => b.id !== approvedVoucher.id)]);
 
     try {
       await api.saveBill(activeClient, "approved", approvedVoucher);
@@ -677,9 +678,9 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
   const handleDeleteCurrentReviewBill = async () => {
     if (!activeReviewBill) return;
     const billToDeleteId = activeReviewBill.id;
-    const remainingPending = pendingBills.filter(b => b.id !== billToDeleteId);
+    const remainingPending = (pendingBills || []).filter(b => b.id !== billToDeleteId);
     setPendingBills(remainingPending);
-    setApprovedBills(prev => prev.filter(b => b.id !== billToDeleteId));
+    setApprovedBills(prev => (Array.isArray(prev) ? prev : []).filter(b => b.id !== billToDeleteId));
 
     try {
       await api.deleteBill(activeClient, "needs_review", billToDeleteId);
@@ -709,8 +710,8 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
       if (data.status === "success" || data.status === "dispatched") {
         const pushedRecord = { ...bill, pushed_at: new Date().toLocaleString() };
 
-        setApprovedBills(prev => prev.filter(b => b.id !== bill.id));
-        setPushedBills(prev => [pushedRecord, ...prev]);
+        setApprovedBills(prev => (Array.isArray(prev) ? prev : []).filter(b => b.id !== bill.id));
+        setPushedBills(prev => [pushedRecord, ...(Array.isArray(prev) ? prev : [])]);
 
         await api.saveBill(activeClient, "pushed", pushedRecord).catch(() => null);
         await api.deleteBill(activeClient, "approved", bill.id).catch(() => null);
@@ -725,7 +726,7 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
   };
 
   const handleDownloadExcel = () => {
-    if (approvedBills.length === 0) {
+    if (!Array.isArray(approvedBills) || approvedBills.length === 0) {
       notify("No approved invoices to export.", "error");
       return;
     }
@@ -844,7 +845,7 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
   };
 
   const handleDownloadXML = () => {
-    if (approvedBills.length === 0) {
+    if (!Array.isArray(approvedBills) || approvedBills.length === 0) {
       notify("No approved invoices to export.", "error");
       return;
     }
@@ -881,7 +882,8 @@ ${xmlVouchers}
 
   const groupedPushedBills = useMemo(() => {
     const groups = {};
-    pushedBills.forEach(b => {
+    const safePushed = Array.isArray(pushedBills) ? pushedBills : [];
+    safePushed.forEach(b => {
       const rawDate = b.invoice_date || b.bill_date || b.voucher_date;
       let monthYear = "Other / Undated";
 
@@ -938,8 +940,9 @@ ${xmlVouchers}
     );
     const gstCheck = validateGSTIN(voucherData.vendor_gstin);
 
-    const currentQueueIndex = pendingBills.findIndex(b => b.id === activeReviewBill.id);
-    const hasNextBill = currentQueueIndex !== -1 && currentQueueIndex < pendingBills.length - 1;
+    const safePending = Array.isArray(pendingBills) ? pendingBills : [];
+    const currentQueueIndex = safePending.findIndex(b => b.id === activeReviewBill.id);
+    const hasNextBill = currentQueueIndex !== -1 && currentQueueIndex < safePending.length - 1;
 
     return (
       <div className="flex flex-col h-full bg-[#F8FAFC] text-slate-800 font-sans">
@@ -955,9 +958,9 @@ ${xmlVouchers}
               {voucherData.vendor_name || "Invoice Review"}
             </h2>
             <span className="text-xs text-slate-400">| #{voucherData.supplier_invoice_no}</span>
-            {pendingBills.length > 0 && currentQueueIndex !== -1 && (
+            {safePending.length > 0 && currentQueueIndex !== -1 && (
               <span className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded font-mono font-medium">
-                {currentQueueIndex + 1} of {pendingBills.length}
+                {currentQueueIndex + 1} of {safePending.length}
               </span>
             )}
             {duplicateMatch && (
@@ -1572,7 +1575,7 @@ ${xmlVouchers}
           </div>
         </div>
         <div className="flex items-center gap-3">
-          {purchaseSubTab === "approved" && approvedBills.length > 0 && (
+          {purchaseSubTab === "approved" && Array.isArray(approvedBills) && approvedBills.length > 0 && (
             <>
               <button
                 onClick={handleDownloadExcel}
@@ -1622,7 +1625,7 @@ ${xmlVouchers}
             <span className={`text-xs px-2 py-0.5 rounded-full ${
               purchaseSubTab === "needs_review" ? "bg-slate-900 text-white" : "bg-slate-200 text-slate-600"
             }`}>
-              {pendingBills.length}
+              {Array.isArray(pendingBills) ? pendingBills.length : 0}
             </span>
           </button>
 
@@ -1638,7 +1641,7 @@ ${xmlVouchers}
             <span className={`text-xs px-2 py-0.5 rounded-full ${
               purchaseSubTab === "approved" ? "bg-emerald-600 text-white" : "bg-slate-200 text-slate-600"
             }`}>
-              {approvedBills.length}
+              {Array.isArray(approvedBills) ? approvedBills.length : 0}
             </span>
           </button>
 
@@ -1654,7 +1657,7 @@ ${xmlVouchers}
             <span className={`text-xs px-2 py-0.5 rounded-full ${
               purchaseSubTab === "pushed" ? "bg-blue-600 text-white" : "bg-slate-200 text-slate-600"
             }`}>
-              {pushedBills.length}
+              {Array.isArray(pushedBills) ? pushedBills.length : 0}
             </span>
           </button>
         </div>
@@ -1662,7 +1665,7 @@ ${xmlVouchers}
         {/* TAB 1: NEEDS REVIEW */}
         {purchaseSubTab === "needs_review" && (
           <div className="bg-white border border-slate-200 rounded-xl shadow-xs overflow-hidden">
-            {pendingBills.length === 0 ? (
+            {!Array.isArray(pendingBills) || pendingBills.length === 0 ? (
               <div className="p-16 text-center">
                 <Upload className="w-8 h-8 text-slate-300 mx-auto mb-2" />
                 <p className="text-sm font-semibold text-slate-700">No invoices needing review</p>
@@ -1729,7 +1732,7 @@ ${xmlVouchers}
         {/* TAB 2: APPROVED INVOICES */}
         {purchaseSubTab === "approved" && (
           <div className="bg-white border border-slate-200 rounded-xl shadow-xs overflow-hidden">
-            {approvedBills.length === 0 ? (
+            {!Array.isArray(approvedBills) || approvedBills.length === 0 ? (
               <div className="p-16 text-center">
                 <CheckCircle2 className="w-8 h-8 text-emerald-300 mx-auto mb-2" />
                 <p className="text-sm font-semibold text-slate-700">No approved invoices waiting</p>
