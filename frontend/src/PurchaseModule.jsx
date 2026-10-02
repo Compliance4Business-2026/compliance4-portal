@@ -347,12 +347,12 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
     );
   }, [clientCoa]);
 
-  // SAFE STORAGE HELPER TO PREVENT QUOTA EXCEEDED ERRORS
+  // SAFE STORAGE HELPER (Omit preview base64 specifically for storage quota safety)
   const saveWithoutPreviews = (storageKey, billsArray) => {
     try {
       const stripped = (Array.isArray(billsArray) ? billsArray : []).map(b => ({
         ...b,
-        file_preview_url: "" // Strips only for disk storage to avoid QuotaExceededError
+        file_preview_url: "" 
       }));
       localStorage.setItem(storageKey, JSON.stringify(stripped));
     } catch (e) {
@@ -491,7 +491,7 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
     });
   };
 
-  // ROBUST BULK UPLOAD HANDLER
+  // ROBUST BULK UPLOAD HANDLER WITH IN-MEMORY PREVIEW RETENTION
   const handleMultipleInvoiceUpload = async (e) => {
     const files = Array.from(e.target.files || []);
     if (files.length === 0) return;
@@ -550,9 +550,8 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
         igst: igstVal,
         round_off: roundVal,
         grand_total: grandTotalVal > 0 ? grandTotalVal : taxable,
-        file_preview_url: persistentPreview, // Keeps the active image preview in memory
-        items: Array.isArray(extracted.items) && extracted.items.length > 0 ? extracted.items : []
-      };
+        file_preview_url: persistentPreview, // Retained in active memory so preview renders correctly
+        items: Array.isArray(extracted.items) && extracted.items.length > 0 ? extracted.items : [
           {
             item_name: "General Purchase Item",
             description: cleanFileName,
@@ -574,7 +573,6 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
         };
       });
 
-      // Check against existing pending/approved/pushed bills AND newly added batch items
       const duplicate = checkDuplicateInvoice(safeBill.supplier_invoice_no, safeBill.vendor_name) || 
         newExtractedBills.find(b => 
           (b.supplier_invoice_no || "").trim().toUpperCase() === safeBill.supplier_invoice_no.trim().toUpperCase() &&
@@ -612,6 +610,7 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
     setUploadProgress("");
     if (invoiceInputRef.current) invoiceInputRef.current.value = "";
   };
+
   const updateTotals = (updated) => {
     if (!updated) return;
     let subtotal = 0;
