@@ -511,60 +511,66 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
 
       let extracted = null;
       try {
-        extracted = await api.extractInvoice(file, activeClient);
+        const res = await api.extractInvoice(file, activeClient);
+        extracted = res || {};
       } catch (err) {
-        console.warn(`AI Extraction failed for ${file.name}, creating fallback entry:`, err);
-        // Fallback object so manual entry is still possible if AI extraction endpoint hiccups
-        extracted = {
-          id: `inv_fallback_${Date.now()}_${i}`,
-          vendor_name: file.name.replace(/\.[^/.]+$/, ""),
-          vendor_gstin: "",
-          supplier_invoice_no: `INV-${Math.floor(1000 + Math.random() * 9000)}`,
-          invoice_date: new Date().toISOString().split("T")[0],
-          taxable_amount: 0,
-          grand_total: 0,
-          cgst: 0,
-          sgst: 0,
-          igst: 0,
-          items: []
-        };
+        console.warn(`AI Extraction failed for ${file.name}, using safe fallback:`, err);
+        extracted = {};
       }
 
-      extracted.id = extracted.id || `inv_${Date.now()}_${i}`;
-      extracted.file_preview_url = persistentPreview;
+      // Safe normalization to prevent any undefined or zero-value crashes
+      const safeBill = {
+        id: extracted.id || `inv_${Date.now()}_${i}_${Math.random().toString(36).substr(2, 4)}`,
+        vendor_name: extracted.vendor_name || file.name.replace(/\.[^/.]+$/, ""),
+        vendor_gstin: extracted.vendor_gstin || "",
+        supplier_invoice_no: extracted.supplier_invoice_no || extracted.invoice_number || `INV-${Math.floor(1000 + Math.random() * 9000)}`,
+        invoice_number: extracted.invoice_number || extracted.supplier_invoice_no || `INV-${Math.floor(1000 + Math.random() * 9000)}`,
+        invoice_date: extracted.invoice_date || extracted.bill_date || new Date().toISOString().split("T")[0],
+        bill_date: extracted.bill_date || extracted.invoice_date || new Date().toISOString().split("T")[0],
+        voucher_type: extracted.voucher_type || "Purchase",
+        source_of_supply: extracted.source_of_supply || extracted.place_of_supply || "Gujarat",
+        taxable_amount: parseFloat(extracted.taxable_amount) || 0,
+        cgst: parseFloat(extracted.cgst) || 0,
+        sgst: parseFloat(extracted.sgst) || 0,
+        igst: parseFloat(extracted.igst) || 0,
+        round_off: parseFloat(extracted.round_off) || 0,
+        grand_total: parseFloat(extracted.grand_total || extracted.taxable_amount) || 0,
+        file_preview_url: persistentPreview,
+        items: Array.isArray(extracted.items) ? extracted.items : []
+      };
 
-      if (extracted.items && extracted.items.length > 0) {
-        extracted.accounting_ledgers = extracted.items.map(it => {
+      if (safeBill.items.length > 0) {
+        safeBill.accounting_ledgers = safeBill.items.map(it => {
           const cleanKey = (it.item_name || it.description || "").trim().toLowerCase();
           const memorized = itemRules[cleanKey];
           return {
             description: it.description || it.item_name || "Supplies",
             ledger_name: memorized || defaultLedger,
-            amount: it.amount || 0,
+            amount: parseFloat(it.amount) || 0,
             isAutoMatched: Boolean(memorized)
           };
         });
       } else {
-        extracted.accounting_ledgers = [{
+        safeBill.accounting_ledgers = [{
           description: "General Purchase",
           ledger_name: defaultLedger,
-          amount: extracted.grand_total || extracted.taxable_amount || 0,
+          amount: safeBill.grand_total || safeBill.taxable_amount || 0,
           isAutoMatched: false
         }];
       }
 
-      const invNo = extracted.supplier_invoice_no || extracted.invoice_number;
-      const duplicate = checkDuplicateInvoice(invNo, extracted.vendor_name);
+      const invNo = safeBill.supplier_invoice_no;
+      const duplicate = checkDuplicateInvoice(invNo, safeBill.vendor_name);
       if (duplicate) {
-        extracted.duplicateWarning = `Already present in ${duplicate.stage}`;
+        safeBill.duplicateWarning = `Already present in ${duplicate.stage}`;
         duplicateWarningsCount++;
       }
 
-      await api.saveBill(activeClient, "needs_review", extracted).catch(err => {
+      await api.saveBill(activeClient, "needs_review", safeBill).catch(err => {
         console.warn("Failed saving bill to Firestore during upload:", err);
       });
 
-      newExtractedBills.push(extracted);
+      newExtractedBills.push(safeBill);
       successCount++;
     }
 
