@@ -33,6 +33,9 @@ const API_BASE_URL =
   import.meta.env.VITE_BACKEND_URL || 
   "https://compliance4-backend-1021821620394.asia-south1.run.app";
 
+// In-memory session store for heavy preview URLs to protect localStorage quota
+const previewMemoryCache = new Map();
+
 const FALLBACK_EXPENSE_LEDGERS = [
   "Purchase: Beverages",
   "Purchase: Dairy Products",
@@ -226,7 +229,11 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
   const [pendingBills, setPendingBills] = useState(() => {
     try {
       const saved = localStorage.getItem(`c4_pending_bills_${activeClient}`);
-      return saved ? JSON.parse(saved) : [];
+      const parsed = saved ? JSON.parse(saved) : [];
+      return parsed.map(b => ({
+        ...b,
+        file_preview_url: b.file_preview_url || previewMemoryCache.get(b.id) || ""
+      }));
     } catch {
       return [];
     }
@@ -235,7 +242,11 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
   const [approvedBills, setApprovedBills] = useState(() => {
     try {
       const saved = localStorage.getItem(`c4_approved_bills_${activeClient}`);
-      return saved ? JSON.parse(saved) : [];
+      const parsed = saved ? JSON.parse(saved) : [];
+      return parsed.map(b => ({
+        ...b,
+        file_preview_url: b.file_preview_url || previewMemoryCache.get(b.id) || ""
+      }));
     } catch {
       return [];
     }
@@ -244,7 +255,11 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
   const [pushedBills, setPushedBills] = useState(() => {
     try {
       const saved = localStorage.getItem(`c4_pushed_bills_${activeClient}`);
-      return saved ? JSON.parse(saved) : [];
+      const parsed = saved ? JSON.parse(saved) : [];
+      return parsed.map(b => ({
+        ...b,
+        file_preview_url: b.file_preview_url || previewMemoryCache.get(b.id) || ""
+      }));
     } catch {
       return [];
     }
@@ -283,13 +298,22 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
         if (!isMounted) return;
 
         if (Array.isArray(cloudNeedsReview)) {
-          setPendingBills(cloudNeedsReview);
+          setPendingBills(cloudNeedsReview.map(b => {
+            if (b.file_preview_url) previewMemoryCache.set(b.id, b.file_preview_url);
+            return { ...b, file_preview_url: b.file_preview_url || previewMemoryCache.get(b.id) || "" };
+          }));
         }
         if (Array.isArray(cloudApproved)) {
-          setApprovedBills(cloudApproved);
+          setApprovedBills(cloudApproved.map(b => {
+            if (b.file_preview_url) previewMemoryCache.set(b.id, b.file_preview_url);
+            return { ...b, file_preview_url: b.file_preview_url || previewMemoryCache.get(b.id) || "" };
+          }));
         }
         if (Array.isArray(cloudPushed)) {
-          setPushedBills(cloudPushed);
+          setPushedBills(cloudPushed.map(b => {
+            if (b.file_preview_url) previewMemoryCache.set(b.id, b.file_preview_url);
+            return { ...b, file_preview_url: b.file_preview_url || previewMemoryCache.get(b.id) || "" };
+          }));
         }
         if (Array.isArray(coaData) && coaData.length > 0) {
           setClientCoa(coaData);
@@ -347,13 +371,18 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
     );
   }, [clientCoa]);
 
-  // SAFE STORAGE HELPER (Omit preview base64 specifically for storage quota safety)
+  // SAFE STORAGE HELPER (Omit preview base64 for localStorage quota, keeping it in memory cache)
   const saveWithoutPreviews = (storageKey, billsArray) => {
     try {
-      const stripped = (Array.isArray(billsArray) ? billsArray : []).map(b => ({
-        ...b,
-        file_preview_url: "" 
-      }));
+      const stripped = (Array.isArray(billsArray) ? billsArray : []).map(b => {
+        if (b.file_preview_url) {
+          previewMemoryCache.set(b.id, b.file_preview_url);
+        }
+        return {
+          ...b,
+          file_preview_url: "" // Omit from localStorage to prevent QuotaExceededError
+        };
+      });
       localStorage.setItem(storageKey, JSON.stringify(stripped));
     } catch (e) {
       console.warn("Storage quota limit reached.");
@@ -442,6 +471,8 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
     const defaultSgstLedger = isNonItcClient ? "GST Expense on Purchase" : "Input SGST";
     const defaultIgstLedger = isNonItcClient ? "GST Expense on Purchase" : "Input IGST";
 
+    const resolvedPreview = bill.file_preview_url || previewMemoryCache.get(bill.id) || "";
+
     const items = Array.isArray(bill.items) && bill.items.length > 0 ? bill.items : [
       {
         item_name: bill.vendor_name ? "General Purchase" : "Bakery Raw Material",
@@ -467,7 +498,7 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
 
     setVoucherData({
       ...bill,
-      file_preview_url: bill.file_preview_url || activeReviewBill?.file_preview_url || "",
+      file_preview_url: resolvedPreview,
       voucher_type: bill.voucher_type || "Purchase",
       voucher_date: bill.voucher_date || bill.invoice_date || bill.bill_date || new Date().toISOString().split("T")[0],
       supplier_invoice_no: bill.supplier_invoice_no || bill.invoice_number || "",
@@ -492,7 +523,7 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
     });
   };
 
-  // ROBUST BULK UPLOAD HANDLER WITH IN-MEMORY PREVIEW RETENTION
+  // ROBUST BULK UPLOAD HANDLER WITH SESSION MEMORY CACHING
   const handleMultipleInvoiceUpload = async (e) => {
     const files = Array.from(e.target.files || []);
     if (files.length === 0) return;
@@ -535,8 +566,14 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
       const roundVal = parseFloat(extracted.round_off || extracted.roundOff || 0);
       const grandTotalVal = parseFloat(extracted.grand_total || extracted.grandTotal || (taxable + cgstVal + sgstVal + igstVal) || taxable);
 
+      const generatedId = extracted.id || `inv_${Date.now()}_${i}_${Math.random().toString(36).substr(2, 4)}`;
+
+      if (persistentPreview) {
+        previewMemoryCache.set(generatedId, persistentPreview);
+      }
+
       const safeBill = {
-        id: extracted.id || `inv_${Date.now()}_${i}_${Math.random().toString(36).substr(2, 4)}`,
+        id: generatedId,
         vendor_name: vName,
         vendor_gstin: vGstin,
         supplier_invoice_no: invNo,
@@ -551,7 +588,7 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
         igst: igstVal,
         round_off: roundVal,
         grand_total: grandTotalVal > 0 ? grandTotalVal : taxable,
-        file_preview_url: persistentPreview, // Retained in active memory so preview renders correctly
+        file_preview_url: persistentPreview,
         items: Array.isArray(extracted.items) && extracted.items.length > 0 ? extracted.items : [
           {
             item_name: "General Purchase Item",
