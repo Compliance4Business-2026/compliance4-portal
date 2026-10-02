@@ -41,7 +41,18 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
     };
   }, [activeClient]);
 
-  // STRICT CLIENT DATA EXTRACTION (ONLY from activeClient)
+  // STRICT CLIENT DATA EXTRACTION & ITC ELIGIBILITY PROFILE
+  const clientProfile = useMemo(() => {
+    try {
+      const profiles = JSON.parse(localStorage.getItem("c4_client_profiles") || "{}");
+      return profiles[activeClient] || { isItcEligible: true };
+    } catch {
+      return { isItcEligible: true };
+    }
+  }, [activeClient]);
+
+  const isClientItcEligible = clientProfile.isItcEligible !== false;
+
   const clientCoa = useMemo(() => {
     try {
       const data = localStorage.getItem(`c4_coa_${activeClient}`);
@@ -255,7 +266,7 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
     return "Administrative & General Expenses";
   };
 
-  // 2. SCHEDULE BREAKDOWN
+  // 2. SCHEDULE BREAKDOWN (Respecting ITC Rules for GST Expenses)
   const plBreakdown = useMemo(() => {
     let directCogs = 0;
     let otherIncomeTotal = 0;
@@ -277,8 +288,48 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
           }
         });
       } else {
-        const bAmt = parseFloat(bill.taxableAmount) || 0;
+        const bAmt = parseFloat(bill.taxable_amount || bill.taxableAmount) || 0;
         directCogs += bAmt;
+      }
+
+      // ONLY ADD GST TO EXPENSES IF CLIENT IS NON-ITC ELIGIBLE OR BILL SPECIFIES IT AS EXPENSE
+      const treatTaxAsExp = !isClientItcEligible || bill.treatTaxAsExpense;
+      if (treatTaxAsExp) {
+        const cgstAmt = parseFloat(bill.cgst) || 0;
+        if (cgstAmt > 0) {
+          const taxLedger = bill.cgst_ledger || "GST Expense on Purchase";
+          const nature = getLedgerPlNature(taxLedger, clientCoa);
+          if (nature === "Indirect") {
+            const cat = getCategoryForLedger(taxLedger, clientCoa);
+            indirectCategories[cat] = (indirectCategories[cat] || 0) + cgstAmt;
+          } else {
+            directCogs += cgstAmt;
+          }
+        }
+
+        const sgstAmt = parseFloat(bill.sgst) || 0;
+        if (sgstAmt > 0) {
+          const taxLedger = bill.sgst_ledger || "GST Expense on Purchase";
+          const nature = getLedgerPlNature(taxLedger, clientCoa);
+          if (nature === "Indirect") {
+            const cat = getCategoryForLedger(taxLedger, clientCoa);
+            indirectCategories[cat] = (indirectCategories[cat] || 0) + sgstAmt;
+          } else {
+            directCogs += sgstAmt;
+          }
+        }
+
+        const igstAmt = parseFloat(bill.igst) || 0;
+        if (igstAmt > 0) {
+          const taxLedger = bill.igst_ledger || "GST Expense on Purchase";
+          const nature = getLedgerPlNature(taxLedger, clientCoa);
+          if (nature === "Indirect") {
+            const cat = getCategoryForLedger(taxLedger, clientCoa);
+            indirectCategories[cat] = (indirectCategories[cat] || 0) + igstAmt;
+          } else {
+            directCogs += igstAmt;
+          }
+        }
       }
     });
 
@@ -304,7 +355,7 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
       totalIndirect,
       otherIncomeTotal
     };
-  }, [filteredPurchases, filteredOverheads, clientCoa]);
+  }, [filteredPurchases, filteredOverheads, clientCoa, isClientItcEligible]);
 
   // 3. TOP 4 KPI CALCULATIONS WITH STRICT COA SUNDRY CREDITOR MATCHING
   const kpiData = useMemo(() => {
@@ -323,7 +374,6 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
     // Filter purchases strictly where vendor name matches a Sundry Creditor / Vendor in client COA
     const validCreditorPurchases = filteredPurchases.filter((b) => {
       const vName = (b.vendor_name || "").toLowerCase().trim();
-      // If found in COA sundry creditors or if fallback list contains it
       return sundryCreditorNames.length === 0 || sundryCreditorNames.includes(vName) || Boolean(vName);
     });
 
