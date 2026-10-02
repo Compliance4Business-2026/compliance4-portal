@@ -44,6 +44,7 @@ except Exception as e:
 UPLOAD_DIR = "/tmp/compliance4_uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 STORAGE_BUCKET_NAME = os.getenv("STORAGE_BUCKET_NAME", "")
+
 # ----------------- DATA MODELS ----------------- #
 class TallyPushRequest(BaseModel):
     bill: Dict[str, Any]
@@ -98,13 +99,14 @@ async def extract_invoice(
             f.write(file_bytes)
         file_url = f"/api/files/{unique_filename}"
 
-    # 2. Extract data via Gemini AI
+    # 2. Extract data via Gemini AI with enhanced header and item parsing prompt
     prompt = """
-    Extract accounting details from this invoice accurately. Return ONLY a valid raw JSON object without markdown or code fences:
+    CRITICAL: Extract the actual vendor/supplier name printed at the very top header of this document (e.g., SHREE CHAMUNDA VEGETABLE & FRUIT SUPPLIERS). DO NOT use file names or mock names.
+    Extract all line items, quantities, rates, and amounts accurately. Return ONLY a valid raw JSON object without markdown or code fences:
     {
-      "vendor_name": "String (Supplier / Party name)",
-      "vendor_gstin": "String (15-character GSTIN)",
-      "invoice_number": "String (Supplier Invoice No)",
+      "vendor_name": "String (Exact vendor name from document header)",
+      "vendor_gstin": "String (15-character GSTIN if present)",
+      "invoice_number": "String (Invoice No or Bill No)",
       "invoice_date": "YYYY-MM-DD",
       "place_of_supply": "String (e.g. Gujarat)",
       "taxable_amount": Float,
@@ -114,7 +116,7 @@ async def extract_invoice(
       "grand_total": Float,
       "items": [
         {
-          "item_name": "String (Product / Material Name)",
+          "item_name": "String (Product / Item Name)",
           "description": "String",
           "qty": Float,
           "rate": Float,
