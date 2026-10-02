@@ -9,11 +9,12 @@ from typing import Optional, List, Dict, Any
 
 from fastapi import FastAPI, UploadFile, File, Form, Body, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 import httpx
 import openpyxl
 import pandas as pd
-from google.cloud import firestore
+from google.cloud import firestore, storage
 
 # Initialize FastAPI App
 app = FastAPI(title="Compliance4 Accounting Portal API", version="2.0.0")
@@ -26,8 +27,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Initialize Google Cloud Firestore (uses default credentials from Cloud Run)
+# Initialize Google Cloud Firestore and Storage (uses default credentials from Cloud Run)
 db = firestore.Client()
+storage_client = storage.Client()
+
+# Local or Cloud Storage configuration for uploaded files
+UPLOAD_DIR = "/tmp/compliance4_uploads"
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+STORAGE_BUCKET_NAME = os.getenv("STORAGE_BUCKET_NAME", "") # Optional GCS bucket name
 
 # ----------------- DATA MODELS ----------------- #
 class TallyPushRequest(BaseModel):
@@ -47,7 +54,7 @@ def health_check():
     }
 
 # ==============================================================================
-# ROUTE 1: INVOICE EXTRACTION (GEMINI 3.6-FLASH)
+# ROUTE 1: INVOICE EXTRACTION (GEMINI 3.6-FLASH) + PERMANENT FILE STORAGE
 # ==============================================================================
 @app.post("/api/invoices/upload")
 async def extract_invoice(
@@ -60,7 +67,26 @@ async def extract_invoice(
 
     file_bytes = await file.read()
     mime_type = file.content_type or "application/pdf"
+    file_extension = os.path.splitext(file.filename)[1] or ".pdf"
+    unique_filename = f"inv_{int(time.time() * 1000)}_{os.urandom(4).hex()}{file_extension}"
 
+    # 1. Save file permanently to server storage / GCS bucket
+    file_url = ""
+    try:
+        if STORAGE_BUCKET_NAME:
+            bucket = storage_client.bucket(STORAGE_BUCKET_NAME)
+            blob = bucket.blob(f"invoices/{company_name}/{unique_filename}")
+            blob.upload_from_string(file_bytes, content_type=mime_type)
+            file_url = blob.public_url
+        else:
+            local_path = os.path.join(UPLOAD_DIR, unique_filename)
+            with open(local_path, "wb") as f:
+                f.write(file_bytes)
+            file_url = f"/api/files/{unique_filename}"
+    except Exception as storage_err:
+        print(f"Warning: Permanent file storage failed: {storage_err}")
+
+    # 2. Extract data via Gemini AI
     prompt = """
     Extract accounting details from this invoice accurately. Return ONLY a valid raw JSON object without markdown or code fences:
     {
@@ -107,11 +133,20 @@ async def extract_invoice(
         data["voucher_type"] = "Purchase"
         data["supplier_invoice_no"] = data.get("invoice_number", "")
         data["bill_date"] = data.get("invoice_date", datetime.now().strftime("%Y-%m-%d"))
+        data["file_preview_url"] = file_url  # Permanent file reference URL
 
         return data
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Gemini invoice extraction failed: {str(e)}")
+
+@app.get("/api/files/{filename}")
+async def serve_uploaded_file(filename: str):
+    """Serve locally stored invoice files permanently."""
+    file_path = os.path.join(UPLOAD_DIR, filename)
+    if os.path.exists(file_path):
+        return FileResponse(file_path)
+    raise HTTPException(status_code=404, detail="File not found")
 
 # ==============================================================================
 # ROUTE 2: STANDARD EXCEL / CSV BANK STATEMENT PARSER
@@ -526,13 +561,11 @@ def delete_bill(client_name: str, stage: str, bill_id: str):
 # --- 5.5 Banking & Reconciliation Persistence ---
 @app.get("/api/clients/{client_name}/bank-txns")
 def get_bank_transactions(client_name: str, status: str = "pending"):
-    """Fetch bank transactions by status (pending / reconciled / pushed)."""
     docs = db.collection("banking").document(client_name.strip()).collection(status).stream()
     return [doc.to_dict() for doc in docs]
 
 @app.post("/api/clients/{client_name}/bank-txns")
 def save_bank_transactions(client_name: str, status: str = "pending", payload: Dict[str, Any] = Body(...)):
-    """Save or batch update bank transactions."""
     txns = payload.get("transactions", [])
     batch = db.batch()
     for txn in txns:
@@ -544,20 +577,17 @@ def save_bank_transactions(client_name: str, status: str = "pending", payload: D
 
 @app.delete("/api/clients/{client_name}/bank-txns/{status}/{txn_id}")
 def delete_bank_transaction(client_name: str, status: str, txn_id: str):
-    """Delete a single bank transaction."""
     db.collection("banking").document(client_name.strip()).collection(status).document(str(txn_id)).delete()
     return {"status": "deleted"}
 
 # --- 5.6 Sales & POS Module Persistence ---
 @app.get("/api/clients/{client_name}/sales")
 def get_sales_records(client_name: str, status: str = "approved"):
-    """Fetch sales invoices and daily POS records by status (draft / approved / pushed)."""
     docs = db.collection("sales").document(client_name.strip()).collection(status).stream()
     return [doc.to_dict() for doc in docs]
 
 @app.post("/api/clients/{client_name}/sales")
 def save_sales_record(client_name: str, status: str = "approved", payload: Dict[str, Any] = Body(...)):
-    """Save or update sales records (supports single record or {records: [...]})."""
     records = payload.get("records")
     if records is not None and isinstance(records, list):
         batch = db.batch()
@@ -574,20 +604,17 @@ def save_sales_record(client_name: str, status: str = "approved", payload: Dict[
 
 @app.delete("/api/clients/{client_name}/sales/{status}/{record_id}")
 def delete_sales_record(client_name: str, status: str, record_id: str):
-    """Delete a single sales record."""
     db.collection("sales").document(client_name.strip()).collection(status).document(str(record_id)).delete()
     return {"status": "deleted"}
 
 # --- 5.7 Other Expenses Module Persistence ---
 @app.get("/api/clients/{client_name}/expenses")
 def get_expense_records(client_name: str, status: str = "approved"):
-    """Fetch other expense vouchers by status (draft / approved / pushed)."""
     docs = db.collection("other_expenses").document(client_name.strip()).collection(status).stream()
     return [doc.to_dict() for doc in docs]
 
 @app.post("/api/clients/{client_name}/expenses")
 def save_expense_record(client_name: str, status: str = "approved", payload: Dict[str, Any] = Body(...)):
-    """Save or update expense records (supports single voucher or {expenses: [...]})."""
     expenses = payload.get("expenses")
     if expenses is not None and isinstance(expenses, list):
         batch = db.batch()
@@ -604,17 +631,14 @@ def save_expense_record(client_name: str, status: str = "approved", payload: Dic
 
 @app.delete("/api/clients/{client_name}/expenses/{status}/{expense_id}")
 def delete_expense_record(client_name: str, status: str, expense_id: str):
-    """Delete a single expense voucher."""
     db.collection("other_expenses").document(client_name.strip()).collection(status).document(str(expense_id)).delete()
     return {"status": "deleted"}
 
 # --- 5.8 Bulk Seeder (Browser localStorage to Firestore) ---
 @app.post("/api/system/seed-from-backup")
 def seed_from_backup(payload: Dict[str, Any] = Body(...)):
-    """Receives your full exported browser backup and writes it directly to Firestore."""
     batch = db.batch()
 
-    # 1. Seed Client Profiles
     if "c4_client_profiles" in payload:
         raw_profiles = payload["c4_client_profiles"]
         profiles = json.loads(raw_profiles) if isinstance(raw_profiles, str) else raw_profiles
@@ -622,7 +646,6 @@ def seed_from_backup(payload: Dict[str, Any] = Body(...)):
             ref = db.collection("client_profiles").document(cname.strip())
             batch.set(ref, pdata)
 
-    # 2. Seed Users
     if "c4_user_accounts" in payload:
         raw_users = payload["c4_user_accounts"]
         users = json.loads(raw_users) if isinstance(raw_users, str) else raw_users
@@ -632,7 +655,6 @@ def seed_from_backup(payload: Dict[str, Any] = Body(...)):
                 ref = db.collection("users").document(uname)
                 batch.set(ref, u)
 
-    # 3. Seed Chart of Accounts (COAs)
     for key, val in payload.items():
         if key.startswith("c4_coa_"):
             cname = key.replace("c4_coa_", "").strip()
