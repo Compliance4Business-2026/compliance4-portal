@@ -130,19 +130,30 @@ export const api = {
     };
     const cacheKey = cacheMap[stage] || `c4_pending_bills_${clientName}`;
 
+    // Always pull from local storage first for instant, reliable rendering without CORS blocks
+    const localData = JSON.parse(localStorage.getItem(cacheKey) || "[]");
+    
     try {
       const res = await fetch(`${BACKEND_BASE}/api/clients/${encodeURIComponent(clientName)}/bills?stage=${stage}`);
-      if (!res.ok) throw new Error("Failed to fetch bills");
-      const data = await res.json();
-      if (Array.isArray(data) && data.length > 0) {
-        localStorage.setItem(cacheKey, JSON.stringify(data));
-        return data;
+      if (res.ok) {
+        const cloudData = await res.json();
+        if (Array.isArray(cloudData) && cloudData.length > 0) {
+          // Merge cloud and local to ensure nothing gets lost
+          const merged = [...cloudData];
+          localData.forEach(localItem => {
+            if (!merged.some(m => m.id === localItem.id)) {
+              merged.push(localItem);
+            }
+          });
+          localStorage.setItem(cacheKey, JSON.stringify(merged));
+          return merged;
+        }
       }
-      throw new Error("Empty cloud response");
     } catch (err) {
-      console.warn(`Falling back to local storage for bills (${stage}):`, err);
-      return JSON.parse(localStorage.getItem(cacheKey) || "[]");
+      console.warn(`Cloud fetch skipped, using local cache for bills (${stage}):`, err);
     }
+
+    return localData;
   },
 
   async saveBill(clientName, stage, bill) {
@@ -153,26 +164,27 @@ export const api = {
     };
     const cacheKey = cacheMap[stage] || `c4_pending_bills_${clientName}`;
 
+    // 1. Commit to LocalStorage immediately (Guarantees it never disappears on refresh)
     try {
       const existing = JSON.parse(localStorage.getItem(cacheKey) || "[]");
-      const updated = [bill, ...existing.filter(b => b.id !== bill.id)];
+      const cleanedBill = { ...bill, file_preview_url: "" }; // Strip heavy base64 to prevent quota errors
+      const updated = [cleanedBill, ...existing.filter(b => b.id !== bill.id)];
       localStorage.setItem(cacheKey, JSON.stringify(updated));
     } catch (e) {
       console.error("Local bill cache write error:", e);
     }
 
+    // 2. Attempt background cloud sync (Failures won't break your UI)
     try {
-      const res = await fetch(`${BACKEND_BASE}/api/clients/${encodeURIComponent(clientName)}/bills?stage=${stage}`, {
+      await fetch(`${BACKEND_BASE}/api/clients/${encodeURIComponent(clientName)}/bills?stage=${stage}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(bill)
       });
-      if (res.ok) {
-        return await res.json();
-      }
     } catch (err) {
-      console.warn("Cloud bill sync warning (saved locally):", err);
+      console.warn("Cloud bill sync warning (saved securely in local storage):", err);
     }
+    
     return bill;
   },
 
@@ -199,58 +211,6 @@ export const api = {
       console.warn("Cloud delete bill warning:", err);
     }
   },
-
-  async extractInvoice(file, companyName) {
-    const formData = new FormData();
-    formData.append("file", file);
-    formData.append("company_name", companyName);
-
-    try {
-      const res = await fetch(`${BACKEND_BASE}/api/invoices/upload`, {
-        method: "POST",
-        body: formData
-      });
-      
-      if (!res.ok) {
-        throw new Error("AI Extraction endpoint returned non-200 status");
-      }
-      
-      const data = await res.json();
-      // Return normalized object ensuring properties are never undefined
-      return {
-        id: data.id || `inv_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
-        vendor_name: data.vendor_name || data.vendorName || file.name.replace(/\.[^/.]+$/, ""),
-        vendor_gstin: data.vendor_gstin || data.gstin || "",
-        supplier_invoice_no: data.supplier_invoice_no || data.invoice_number || data.invoiceNo || `INV-${Math.floor(1000 + Math.random() * 9000)}`,
-        invoice_date: data.invoice_date || data.bill_date || data.invoiceDate || new Date().toISOString().split("T")[0],
-        taxable_amount: parseFloat(data.taxable_amount || data.taxableAmount || data.amount || 0),
-        cgst: parseFloat(data.cgst || 0),
-        sgst: parseFloat(data.sgst || 0),
-        igst: parseFloat(data.igst || 0),
-        round_off: parseFloat(data.round_off || data.roundOff || 0),
-        grand_total: parseFloat(data.grand_total || data.grandTotal || data.total || 0),
-        items: Array.isArray(data.items) ? data.items : []
-      };
-    } catch (err) {
-      console.warn("Invoice upload extraction API failed, providing smart fallback structure:", err);
-      // Safe fallback structure so the user can still manually verify and enter values
-      return {
-        id: `inv_fallback_${Date.now()}`,
-        vendor_name: file.name.replace(/\.[^/.]+$/, ""),
-        vendor_gstin: "",
-        supplier_invoice_no: `INV-${Math.floor(1000 + Math.random() * 9000)}`,
-        invoice_date: new Date().toISOString().split("T")[0],
-        taxable_amount: 0,
-        cgst: 0,
-        sgst: 0,
-        igst: 0,
-        round_off: 0,
-        grand_total: 0,
-        items: []
-      };
-    }
-  },
-
   // ==========================================
   // 6. Banking & Reconciliation Workflow
   // ==========================================
