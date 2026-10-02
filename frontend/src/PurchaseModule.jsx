@@ -702,14 +702,24 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
     let rawTotal = subtotal + cgst + sgst + igst;
     let finalTotal = Math.round(rawTotal);
     
-    // Support manual positive or negative round-off adjustment, or compute auto round-off
-    let roundOff = manualRoundOff !== null ? parseFloat(manualRoundOff) || 0 : parseFloat((finalTotal - rawTotal).toFixed(2));
-    let grandTotal = rawTotal + roundOff;
+    // If manualRoundOff is passed as string like "-" or "-0.5", handle it safely
+    let roundOffNum = 0;
+    if (manualRoundOff !== null && manualRoundOff !== undefined) {
+      if (manualRoundOff === "-" || manualRoundOff === "-.") {
+        roundOffNum = 0; // Keep temporary keystroke safe
+      } else {
+        roundOffNum = parseFloat(manualRoundOff) || 0;
+      }
+    } else {
+      roundOffNum = parseFloat((finalTotal - rawTotal).toFixed(2));
+    }
+
+    let grandTotal = rawTotal + roundOffNum;
 
     setVoucherData({
       ...updated,
       taxable_amount: subtotal,
-      round_off: roundOff,
+      round_off: manualRoundOff === "-" ? "-" : roundOffNum, // preserve typing state if user just typed minus
       grand_total: parseFloat(grandTotal.toFixed(2)),
       party_ledger: {
         ledger_name: updated.vendor_name || "Sundry Creditor",
