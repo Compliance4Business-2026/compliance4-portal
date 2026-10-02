@@ -25,7 +25,9 @@ import {
   ShieldAlert, 
   AlertTriangle, 
   Sparkles,
-  Search
+  Search,
+  SkipForward,
+  UserPlus
 } from "lucide-react";
 import { api } from "./api";
 
@@ -33,7 +35,6 @@ const API_BASE_URL =
   import.meta.env.VITE_BACKEND_URL || 
   "https://compliance4-backend-1021821620394.asia-south1.run.app";
 
-// In-memory session store for heavy preview URLs to protect localStorage quota
 const previewMemoryCache = new Map();
 
 const FALLBACK_EXPENSE_LEDGERS = [
@@ -112,32 +113,56 @@ function validateGSTIN(gstin) {
 function SearchableLedgerSelect({ value, onChange, coaList = [], fallbackOptions = [], placeholder = "Type ledger name..." }) {
   const [isOpen, setIsOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
+  const [selectedIndex, setSelectedIndex] = useState(0);
   const dropdownRef = useRef(null);
 
-  const filteredGroups = useMemo(() => {
+  const allFilteredItems = useMemo(() => {
     const term = searchTerm.toLowerCase().trim();
-    const groups = {};
-
+    const list = [];
     if (coaList && coaList.length > 0) {
       coaList.forEach((l) => {
         const name = l.name || "";
         const cat = l.category || "General Accounts";
         if (!term || name.toLowerCase().includes(term) || cat.toLowerCase().includes(term)) {
-          if (!groups[cat]) groups[cat] = [];
-          groups[cat].push(l);
+          list.push({ ...l, group: cat });
         }
       });
     }
-
-    if (Object.keys(groups).length === 0) {
-      const defaultGroup = "Standard Accounts";
-      groups[defaultGroup] = fallbackOptions
+    if (list.length === 0) {
+      fallbackOptions
         .filter((name) => !term || name.toLowerCase().includes(term))
-        .map((name) => ({ name, category: defaultGroup }));
+        .forEach((name) => list.push({ name, group: "Standard Accounts" }));
+    }
+    return list;
+  }, [coaList, fallbackOptions, searchTerm]);
+
+  const handleKeyDown = (e) => {
+    if (!isOpen) {
+      if (e.key === "ArrowDown" || e.key === "Enter") {
+        setIsOpen(true);
+        e.preventDefault();
+      }
+      return;
     }
 
-    return groups;
-  }, [coaList, fallbackOptions, searchTerm]);
+    if (e.key === "ArrowDown") {
+      setSelectedIndex((prev) => (prev < allFilteredItems.length - 1 ? prev + 1 : prev));
+      e.preventDefault();
+    } else if (e.key === "ArrowUp") {
+      setSelectedIndex((prev) => (prev > 0 ? prev - 1 : 0));
+      e.preventDefault();
+    } else if (e.key === "Enter" && allFilteredItems[selectedIndex]) {
+      onChange(allFilteredItems[selectedIndex].name);
+      setIsOpen(false);
+      e.preventDefault();
+    } else if (e.key === "Escape") {
+      setIsOpen(false);
+    }
+  };
+
+  useEffect(() => {
+    setSelectedIndex(0);
+  }, [searchTerm]);
 
   useEffect(() => {
     const handleOutsideClick = (e) => {
@@ -164,6 +189,8 @@ function SearchableLedgerSelect({ value, onChange, coaList = [], fallbackOptions
             setSearchTerm(e.target.value);
             setIsOpen(true);
           }}
+          onKeyDown={handleKeyDown}
+          tabIndex={0}
           className="w-full text-xs font-semibold border border-slate-300 rounded p-1.5 bg-white text-slate-800 pr-7 focus:outline-none focus:ring-1 focus:ring-slate-900"
         />
         <Search className="w-3.5 h-3.5 text-slate-400 absolute right-2 top-2.5 pointer-events-none" />
@@ -174,36 +201,28 @@ function SearchableLedgerSelect({ value, onChange, coaList = [], fallbackOptions
           className="absolute left-0 top-full mt-1 w-[320px] max-h-64 bg-white border border-slate-200 rounded-xl shadow-2xl overflow-y-auto z-[999] divide-y divide-slate-100"
           style={{ minWidth: "100%" }}
         >
-          {Object.keys(filteredGroups).length === 0 ? (
+          {allFilteredItems.length === 0 ? (
             <div className="p-3 text-xs text-slate-400 text-center italic">
               No matching ledger in Client COA
             </div>
           ) : (
-            Object.entries(filteredGroups).map(([groupName, ledgers]) => (
-              <div key={groupName} className="py-1">
-                <div className="px-3 py-1 text-[10px] font-bold text-slate-500 uppercase tracking-wider bg-slate-50 flex items-center justify-between">
-                  <span>{groupName}</span>
-                  <span className="font-mono text-[9px] text-slate-400">{ledgers.length}</span>
-                </div>
-                {ledgers.map((l) => (
-                  <button
-                    key={l.id || l.name}
-                    type="button"
-                    onClick={() => {
-                      onChange(l.name);
-                      setIsOpen(false);
-                    }}
-                    className={`w-full text-left px-3 py-2 text-xs transition flex items-center justify-between hover:bg-slate-100 ${
-                      value === l.name ? "bg-indigo-50 text-indigo-700 font-bold" : "text-slate-800 font-medium"
-                    }`}
-                  >
-                    <span className="truncate pr-2">{l.name}</span>
-                    <span className="shrink-0 text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-100 text-slate-500">
-                      {l.statementType === "Balance Sheet" ? "B/S" : (l.cogsClassification === "COGS" ? "COGS" : "P&L")}
-                    </span>
-                  </button>
-                ))}
-              </div>
+            allFilteredItems.map((l, idx) => (
+              <button
+                key={l.id || l.name + idx}
+                type="button"
+                onClick={() => {
+                  onChange(l.name);
+                  setIsOpen(false);
+                }}
+                className={`w-full text-left px-3 py-2 text-xs transition flex items-center justify-between ${
+                  selectedIndex === idx ? "bg-slate-100 font-bold" : ""
+                } ${value === l.name ? "bg-indigo-50 text-indigo-700 font-bold" : "text-slate-800 font-medium"}`}
+              >
+                <span className="truncate pr-2">{l.name}</span>
+                <span className="shrink-0 text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-100 text-slate-500">
+                  {l.group}
+                </span>
+              </button>
             ))
           )}
         </div>
@@ -371,7 +390,6 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
     );
   }, [clientCoa]);
 
-  // SAFE STORAGE HELPER (Omit preview base64 for localStorage quota, keeping it in memory cache)
   const saveWithoutPreviews = (storageKey, billsArray) => {
     try {
       const stripped = (Array.isArray(billsArray) ? billsArray : []).map(b => {
@@ -380,7 +398,7 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
         }
         return {
           ...b,
-          file_preview_url: "" // Omit from localStorage to prevent QuotaExceededError
+          file_preview_url: ""
         };
       });
       localStorage.setItem(storageKey, JSON.stringify(stripped));
@@ -414,6 +432,12 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
   const [zoomLevel, setZoomLevel] = useState(1);
   const [showAllocationModal, setShowAllocationModal] = useState(false);
   const [voucherData, setVoucherData] = useState(null);
+
+  // PANNING STATE FOR ZOOMED IMAGE PREVIEW
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
+  const [scrollPos, setScrollPos] = useState({ left: 0, top: 0 });
+  const previewContainerRef = useRef(null);
 
   const [expandedFolders, setExpandedFolders] = useState({});
 
@@ -483,6 +507,9 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
       }
     ];
 
+    const grandTotal = parseFloat(bill.grand_total || bill.taxable_amount) || 0;
+    const vendorName = bill.vendor_name || "Sundry Creditor";
+
     const mappedAccountingLedgers = Array.isArray(bill.accounting_ledgers) && bill.accounting_ledgers.length > 0
       ? bill.accounting_ledgers
       : items.map(it => {
@@ -511,19 +538,24 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
       igst_ledger: bill.igst_ledger || defaultIgstLedger,
       round_off: parseFloat(bill.round_off) || 0.00,
       taxable_amount: parseFloat(bill.taxable_amount || bill.grand_total) || 0,
-      grand_total: parseFloat(bill.grand_total || bill.taxable_amount) || 0,
+      grand_total: grandTotal,
+      vendor_name: vendorName,
+      accounting_ledgers: mappedAccountingLedgers,
+      party_ledger: {
+        ledger_name: vendorName,
+        amount: grandTotal,
+        type: "Credit"
+      },
       items: items.map(it => ({
         item_name: it.item_name || it.description || "General Item",
         description: it.description || "",
         qty: parseFloat(it.qty) || 1,
         rate: parseFloat(it.rate || it.amount) || 0,
         amount: parseFloat(it.amount) || 0
-      })),
-      accounting_ledgers: mappedAccountingLedgers
+      }))
     });
   };
 
-  // ROBUST BULK UPLOAD HANDLER WITH SESSION MEMORY CACHING
   const handleMultipleInvoiceUpload = async (e) => {
     const files = Array.from(e.target.files || []);
     if (files.length === 0) return;
@@ -589,6 +621,11 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
         round_off: roundVal,
         grand_total: grandTotalVal > 0 ? grandTotalVal : taxable,
         file_preview_url: persistentPreview,
+        party_ledger: {
+          ledger_name: vName,
+          amount: grandTotalVal > 0 ? grandTotalVal : taxable,
+          type: "Credit"
+        },
         items: Array.isArray(extracted.items) && extracted.items.length > 0 ? extracted.items : [
           {
             item_name: "General Purchase Item",
@@ -667,7 +704,12 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
     setVoucherData({
       ...updated,
       taxable_amount: subtotal,
-      grand_total: parseFloat(grandTotal.toFixed(2))
+      grand_total: parseFloat(grandTotal.toFixed(2)),
+      party_ledger: {
+        ledger_name: updated.vendor_name || "Sundry Creditor",
+        amount: parseFloat(grandTotal.toFixed(2)),
+        type: "Credit"
+      }
     });
   };
 
@@ -715,7 +757,15 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
   const handleApproveInvoice = async () => {
     if (!activeReviewBill || !voucherData) return;
     setShowAllocationModal(false);
-    const approvedVoucher = { ...voucherData, isApproved: true };
+    const approvedVoucher = { 
+      ...voucherData, 
+      isApproved: true,
+      party_ledger: {
+        ledger_name: voucherData.vendor_name || "Sundry Creditor",
+        amount: voucherData.grand_total,
+        type: "Credit"
+      }
+    };
 
     const remainingPending = (pendingBills || []).filter(b => b.id !== activeReviewBill.id);
     setPendingBills(remainingPending);
@@ -759,6 +809,21 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
     } else {
       setActiveReviewBill(null);
       setVoucherData(null);
+    }
+  };
+
+  const handleSkipReviewBill = () => {
+    if (!activeReviewBill) return;
+    const safePending = Array.isArray(pendingBills) ? pendingBills : [];
+    const currentIndex = safePending.findIndex(b => b.id === activeReviewBill.id);
+    if (currentIndex !== -1 && currentIndex < safePending.length - 1) {
+      openReviewWorkspace(safePending[currentIndex + 1]);
+      notify("Skipped to next invoice.", "info");
+    } else if (safePending.length > 1) {
+      openReviewWorkspace(safePending[0]);
+      notify("Wrapped around to first invoice in queue.", "info");
+    } else {
+      notify("No other invoices in queue to skip to.", "info");
     }
   };
 
@@ -892,6 +957,7 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
             <LEDGERFROMITEM>No</LEDGERFROMITEM>
             <REMOVEZEROENTRIES>No</REMOVEZEROENTRIES>
             <ISPARTYLEDGER>No</ISPARTYLEDGER>
+            <ISPARTYLEDGER>No</ISPARTYLEDGER>
             <AMOUNT>-${sgst.toFixed(2)}</AMOUNT>
           </ALLLEDGERENTRIES.LIST>` : ""}
 
@@ -989,7 +1055,7 @@ ${xmlVouchers}
     return Object.values(groups);
   }, [pushedBills]);
 
-  // FULL SCREEN SIDE-BY-SIDE REVIEW WORKSPACE WITH NULL-GUARDS
+  // FULL SCREEN SIDE-BY-SIDE REVIEW WORKSPACE WITH NULL-GUARDS & UPGRADED FEATURES
   if (activeReviewBill && voucherData) {
     if (!voucherData || typeof voucherData !== 'object') {
       setActiveReviewBill(null);
@@ -1003,6 +1069,12 @@ ${xmlVouchers}
       activeReviewBill.id
     );
     const gstCheck = validateGSTIN(voucherData.vendor_gstin);
+
+    // Vendor matching check against COA Sundry Creditors
+    const matchedSundryCreditor = sundryCreditors.find(
+      c => c.name.toLowerCase().trim() === (voucherData.vendor_name || "").toLowerCase().trim()
+    );
+    const isVendorNotFound = Boolean(voucherData.vendor_name) && !matchedSundryCreditor;
 
     const safePending = Array.isArray(pendingBills) ? pendingBills : [];
     const currentQueueIndex = safePending.findIndex(b => b.id === activeReviewBill.id);
@@ -1035,7 +1107,14 @@ ${xmlVouchers}
             )}
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleSkipReviewBill}
+              className="flex items-center gap-1 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded-lg transition"
+              title="Skip this invoice and move to next"
+            >
+              <SkipForward className="w-3.5 h-3.5" /> Skip
+            </button>
             <button
               onClick={handleDeleteCurrentReviewBill}
               className="text-xs font-medium text-rose-600 hover:bg-rose-50 px-3 py-1.5 rounded-lg transition"
@@ -1064,11 +1143,35 @@ ${xmlVouchers}
         )}
 
         <div className="flex-1 flex overflow-hidden">
-          {/* LEFT: PREVIEW */}
-          <div className="w-1/2 bg-slate-200 border-r border-slate-300 relative overflow-hidden flex flex-col">
+          {/* LEFT: ZOOMABLE & PANNABLE IMAGE PREVIEW */}
+          <div 
+            ref={previewContainerRef}
+            onMouseDown={(e) => {
+              setIsDragging(true);
+              setDragStart({ x: e.clientX, y: e.clientY });
+              if (previewContainerRef.current) {
+                setScrollPos({
+                  left: previewContainerRef.current.scrollLeft,
+                  top: previewContainerRef.current.scrollTop
+                });
+              }
+            }}
+            onMouseMove={(e) => {
+              if (!isDragging || !previewContainerRef.current) return;
+              const dx = e.clientX - dragStart.x;
+              const dy = e.clientY - dragStart.y;
+              previewContainerRef.current.scrollLeft = scrollPos.left - dx;
+              previewContainerRef.current.scrollTop = scrollPos.top - dy;
+            }}
+            onMouseUp={() => setIsDragging(false)}
+            onMouseLeave={() => setIsDragging(false)}
+            className={`w-1/2 bg-slate-200 border-r border-slate-300 relative overflow-auto flex flex-col select-none ${
+              zoomLevel > 1 ? (isDragging ? "cursor-grabbing" : "cursor-grab") : "cursor-default"
+            }`}
+          >
             <div className="absolute top-4 right-4 z-20 flex items-center gap-1 bg-white/95 backdrop-blur-sm border border-slate-300 shadow-xs rounded-lg p-1">
               <button 
-                onClick={() => setZoomLevel(prev => Math.min(prev + 0.2, 2.5))}
+                onClick={() => setZoomLevel(prev => Math.min(prev + 0.2, 3.0))}
                 className="p-1.5 hover:bg-slate-100 rounded text-slate-600"
                 title="Zoom In"
               >
@@ -1091,7 +1194,7 @@ ${xmlVouchers}
               </button>
             </div>
 
-            <div className="flex-1 overflow-auto p-4 flex justify-center items-start">
+            <div className="flex-1 p-4 flex justify-center items-start min-h-full">
               {voucherData.file_preview_url ? (
                 <img
                   src={voucherData.file_preview_url}
@@ -1099,10 +1202,11 @@ ${xmlVouchers}
                   style={{
                     transform: `scale(${zoomLevel})`,
                     transformOrigin: "top center",
-                    maxWidth: "96%",
-                    marginTop: "8px"
+                    maxWidth: zoomLevel === 1 ? "96%" : "none",
+                    marginTop: "8px",
+                    transition: isDragging ? "none" : "transform 0.1s ease-out"
                   }}
-                  className="bg-white shadow-xl rounded border border-slate-300 transition-transform duration-100"
+                  className="bg-white shadow-xl rounded border border-slate-300 pointer-events-none"
                 />
               ) : (
                 <div className="text-center p-12 bg-white/70 border border-dashed border-slate-400 rounded-xl mt-12">
@@ -1120,6 +1224,7 @@ ${xmlVouchers}
               <div className="flex items-center gap-6">
                 <button
                   onClick={() => setVoucherMode("item")}
+                  tabIndex={-1}
                   className={`pb-3 text-xs font-bold transition border-b-2 ${
                     voucherMode === "item"
                       ? "border-slate-900 text-slate-900"
@@ -1130,6 +1235,7 @@ ${xmlVouchers}
                 </button>
                 <button
                   onClick={() => setVoucherMode("accounting")}
+                  tabIndex={-1}
                   className={`pb-3 text-xs font-bold transition border-b-2 ${
                     voucherMode === "accounting"
                       ? "border-slate-900 text-slate-900"
@@ -1158,6 +1264,7 @@ ${xmlVouchers}
                   <input
                     type="text"
                     disabled
+                    tabIndex={-1}
                     value={voucherData.voucher_type}
                     className="w-full text-xs border border-slate-200 bg-slate-50 rounded-lg p-2 font-medium"
                   />
@@ -1168,7 +1275,8 @@ ${xmlVouchers}
                     type="date"
                     value={voucherData.voucher_date}
                     onChange={(e) => setVoucherData({ ...voucherData, voucher_date: e.target.value })}
-                    className="w-full text-xs border border-slate-300 rounded-lg p-2"
+                    tabIndex={1}
+                    className="w-full text-xs border border-slate-300 rounded-lg p-2 focus:ring-1 focus:ring-slate-900"
                   />
                 </div>
                 <div>
@@ -1177,7 +1285,8 @@ ${xmlVouchers}
                     type="text"
                     value={voucherData.supplier_invoice_no}
                     onChange={(e) => setVoucherData({ ...voucherData, supplier_invoice_no: e.target.value })}
-                    className="w-full text-xs border border-slate-300 rounded-lg p-2 font-mono"
+                    tabIndex={2}
+                    className="w-full text-xs border border-slate-300 rounded-lg p-2 font-mono focus:ring-1 focus:ring-slate-900"
                   />
                 </div>
                 <div>
@@ -1186,24 +1295,50 @@ ${xmlVouchers}
                     type="date"
                     value={voucherData.bill_date}
                     onChange={(e) => setVoucherData({ ...voucherData, bill_date: e.target.value })}
-                    className="w-full text-xs border border-slate-300 rounded-lg p-2"
+                    tabIndex={3}
+                    className="w-full text-xs border border-slate-300 rounded-lg p-2 focus:ring-1 focus:ring-slate-900"
                   />
                 </div>
               </div>
 
-              {/* VENDOR DETAILS */}
+              {/* VENDOR DETAILS & AUTO-MATCHING WITH COA */}
               <div className="border-t border-slate-100 pt-4 space-y-3">
-                <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400">Vendor Details</h4>
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400">Vendor Details</h4>
+                  <button
+                    type="button"
+                    tabIndex={-1}
+                    onClick={() => {
+                      notify("Go to Chart of Accounts to create a new Sundry Creditor ledger.", "info");
+                    }}
+                    className="inline-flex items-center gap-1 text-[11px] font-semibold text-indigo-600 hover:text-indigo-800"
+                  >
+                    <UserPlus className="w-3.5 h-3.5" /> + Add New Vendor
+                  </button>
+                </div>
+
                 <div className="grid grid-cols-2 gap-4">
                   <div className="col-span-2">
-                    <label className="block text-xs font-bold text-slate-600 mb-1">Vendor Name (Sundry Creditor)</label>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-xs font-bold text-slate-600">Vendor Name (Sundry Creditor)</label>
+                      {isVendorNotFound ? (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-bold text-rose-700 bg-rose-50 px-2 py-0.5 rounded border border-rose-200">
+                          <AlertCircle className="w-3 h-3 text-rose-600" /> Supplier/Vendor Not found in COA
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded">
+                          <CheckCircle2 className="w-3 h-3 text-emerald-600" /> Matched in COA
+                        </span>
+                      )}
+                    </div>
                     <input
                       list="vendor-creditors-datalist"
                       type="text"
                       placeholder="Type or pick Sundry Creditor from COA..."
                       value={voucherData.vendor_name || ""}
                       onChange={(e) => setVoucherData({ ...voucherData, vendor_name: e.target.value })}
-                      className="w-full text-xs border border-slate-300 rounded-lg p-2 font-semibold bg-white"
+                      tabIndex={4}
+                      className="w-full text-xs border border-slate-300 rounded-lg p-2 font-semibold bg-white focus:ring-1 focus:ring-slate-900"
                     />
                     <datalist id="vendor-creditors-datalist">
                       {sundryCreditors.map((cred) => (
@@ -1213,6 +1348,7 @@ ${xmlVouchers}
                       ))}
                     </datalist>
                   </div>
+
                   <div>
                     <div className="flex items-center justify-between mb-1">
                       <label className="text-xs font-bold text-slate-600">GSTIN</label>
@@ -1234,7 +1370,8 @@ ${xmlVouchers}
                       type="text"
                       value={voucherData.vendor_gstin || ""}
                       onChange={(e) => setVoucherData({ ...voucherData, vendor_gstin: e.target.value })}
-                      className={`w-full text-xs font-mono border rounded-lg p-2 ${
+                      tabIndex={5}
+                      className={`w-full text-xs font-mono border rounded-lg p-2 focus:ring-1 focus:ring-slate-900 ${
                         gstCheck.isValid 
                           ? "border-slate-300 bg-white" 
                           : "border-rose-300 bg-rose-50/50"
@@ -1247,7 +1384,8 @@ ${xmlVouchers}
                       type="text"
                       value={voucherData.source_of_supply || ""}
                       onChange={(e) => setVoucherData({ ...voucherData, source_of_supply: e.target.value })}
-                      className="w-full text-xs border border-slate-300 rounded-lg p-2"
+                      tabIndex={6}
+                      className="w-full text-xs border border-slate-300 rounded-lg p-2 focus:ring-1 focus:ring-slate-900"
                     />
                   </div>
                 </div>
@@ -1259,6 +1397,8 @@ ${xmlVouchers}
                   <div className="flex items-center justify-between">
                     <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400">Inventory Items</h4>
                     <button
+                      type="button"
+                      tabIndex={-1}
                       onClick={() => {
                         const newItems = [...(voucherData.items || []), {
                           item_name: "General Bakery Item",
@@ -1349,6 +1489,7 @@ ${xmlVouchers}
                             </td>
                             <td className="p-2 text-right">
                               <button
+                                type="button"
                                 onClick={() => {
                                   const updated = voucherData.items.filter((_, i) => i !== idx);
                                   updateTotals({ ...voucherData, items: updated });
@@ -1375,6 +1516,8 @@ ${xmlVouchers}
                       <span className="text-[10px] text-slate-400">Reading from Client Chart of Accounts</span>
                     </div>
                     <button
+                      type="button"
+                      tabIndex={-1}
                       onClick={() => {
                         const newLedgers = [...(voucherData.accounting_ledgers || []), {
                           description: "Additional Charge",
@@ -1445,6 +1588,7 @@ ${xmlVouchers}
                             </td>
                             <td className="p-2 text-right">
                               <button
+                                type="button"
                                 onClick={() => {
                                   const updated = voucherData.accounting_ledgers.filter((_, i) => i !== idx);
                                   updateTotals({ ...voucherData, accounting_ledgers: updated });
