@@ -352,12 +352,11 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
     try {
       const stripped = (Array.isArray(billsArray) ? billsArray : []).map(b => ({
         ...b,
-        file_preview_url: "" // Omit bulky base64 string from local storage quota
+        file_preview_url: "" // Strips only for disk storage to avoid QuotaExceededError
       }));
       localStorage.setItem(storageKey, JSON.stringify(stripped));
     } catch (e) {
-      console.warn("Storage quota limit reached, clearing local bill cache safely.");
-      localStorage.setItem(storageKey, JSON.stringify([]));
+      console.warn("Storage quota limit reached.");
     }
   };
 
@@ -551,8 +550,9 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
         igst: igstVal,
         round_off: roundVal,
         grand_total: grandTotalVal > 0 ? grandTotalVal : taxable,
-        file_preview_url: persistentPreview,
-        items: Array.isArray(extracted.items) && extracted.items.length > 0 ? extracted.items : [
+        file_preview_url: persistentPreview, // Keeps the active image preview in memory
+        items: Array.isArray(extracted.items) && extracted.items.length > 0 ? extracted.items : []
+      };
           {
             item_name: "General Purchase Item",
             description: cleanFileName,
