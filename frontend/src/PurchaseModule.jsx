@@ -1732,17 +1732,21 @@ ${xmlVouchers}
                 </div>
 
                 <div className="flex items-center justify-between pt-2">
-                  <label className="text-xs text-slate-500">Round Off Adjustment (+ / - ₹):</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={voucherData.round_off || 0}
-                    onChange={(e) => updateTotals(voucherData, e.target.value)}
-                    className="w-28 text-right text-xs font-mono border border-slate-300 rounded p-1 font-semibold text-slate-800"
-                    placeholder="e.g. 0.50 or -0.25"
-                  />
-                </div>
-
+  <label className="text-xs text-slate-500">Round Off Adjustment (+ / - ₹):</label>
+  <input
+    type="text" 
+    value={voucherData.round_off ?? ""}
+    onChange={(e) => {
+      const val = e.target.value;
+      // Allow typing negative signs, decimals, and numbers smoothly
+      if (val === "" || val === "-" || !isNaN(val)) {
+        updateTotals(voucherData, val === "-" ? "-" : (parseFloat(val) || 0));
+      }
+    }}
+    className="w-28 text-right text-xs font-mono border border-slate-300 rounded p-1 font-semibold text-slate-800"
+    placeholder="e.g. 0.50 or -0.25"
+  />
+</div>
                 <div className="flex justify-between items-center text-sm font-bold text-slate-900 pt-3 border-t border-slate-200">
                   <span>Grand Total:</span>
                   <span className="font-mono text-base">₹{(voucherData.grand_total || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span>
