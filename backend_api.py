@@ -14,6 +14,7 @@ from pydantic import BaseModel
 import httpx
 import openpyxl
 import pandas as pd
+from PIL import Image
 from google.cloud import firestore, storage
 
 # Initialize FastAPI App
@@ -99,7 +100,7 @@ async def extract_invoice(
             f.write(file_bytes)
         file_url = f"/api/files/{unique_filename}"
 
-    # 2. Extract data via Gemini AI with structured invoice breakdown
+    # 2. Extract data via Gemini AI with structured invoice breakdown and smart two-tier resolution
     prompt = """
     You are an expert accountant processing purchase bills and supplier invoices. Carefully examine the image layout.
     1. VENDOR NAME: Find the main business/supplier name printed at the top center or header (e.g., 'SHREE CHAMUNDA VEGETABLE & FRUIT SUPPLIERS'). Ignore file names.
@@ -135,25 +136,54 @@ async def extract_invoice(
         from google import genai
         from google.genai import types
 
-        client = genai.Client(api_key=gemini_key)
-        response = client.models.generate_content(
-            model='gemini-3.6-flash',
-            contents=[
-                types.Part.from_bytes(data=file_bytes, mime_type=mime_type),
-                prompt
-            ]
-        )
+        def call_gemini(data_bytes, m_type):
+            client = genai.Client(api_key=gemini_key)
+            response = client.models.generate_content(
+                model='gemini-3.6-flash',
+                contents=[
+                    types.Part.from_bytes(data=data_bytes, mime_type=m_type),
+                    prompt
+                ]
+            )
+            clean_text = response.text.replace("```json", "").replace("```", "").strip()
+            return json.loads(clean_text)
 
-        clean_text = response.text.replace("```json", "").replace("```", "").strip()
-        data = json.loads(clean_text)
+        extracted_data = {}
+        try:
+            compressed_bytes = file_bytes
+            comp_mime = mime_type
+            if mime_type.startswith("image/"):
+                img = Image.open(io.BytesIO(file_bytes))
+                if img.mode in ("RGBA", "P"):
+                    img = img.convert("RGB")
+                
+                max_width = 1200
+                if img.width > max_width:
+                    ratio = max_width / float(img.width)
+                    new_height = int(float(img.height) * ratio)
+                    img = img.resize((max_width, new_height), Image.Resampling.LANCZOS)
+                
+                output_io = io.BytesIO()
+                img.save(output_io, format="JPEG", quality=80)
+                compressed_bytes = output_io.getvalue()
+                comp_mime = "image/jpeg"
 
-        data["id"] = f"inv_{int(datetime.now().timestamp() * 1000)}"
-        data["voucher_type"] = "Purchase"
-        data["supplier_invoice_no"] = data.get("invoice_number", "")
-        data["bill_date"] = data.get("invoice_date", datetime.now().strftime("%Y-%m-%d"))
-        data["file_preview_url"] = file_url  # Permanent file reference URL
+            extracted_data = call_gemini(compressed_bytes, comp_mime)
 
-        return data
+            if not extracted_data.get("vendor_name") or extracted_data.get("vendor_name") in ["", "Unknown"]:
+                raise ValueError("Low-res extraction missed vendor name, triggering high-res fallback.")
+
+        except Exception as low_res_err:
+            print(f"Low-res extraction attempt failed or insufficient, falling back to original HD: {low_res_err}")
+            extracted_data = call_gemini(file_bytes, mime_type)
+
+        extracted_data["id"] = f"inv_{int(datetime.now().timestamp() * 1000)}"
+        extracted_data["voucher_type"] = "Purchase"
+        extracted_data["supplier_invoice_no"] = extracted_data.get("invoice_number", "")
+        extracted_data["bill_date"] = extracted_data.get("invoice_date", datetime.now().strftime("%Y-%m-%d"))
+        extracted_data["file_preview_url"] = file_url  # Permanent file reference URL
+
+        return extracted_data
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Gemini invoice extraction failed: {str(e)}")
