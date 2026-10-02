@@ -686,7 +686,7 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
     if (invoiceInputRef.current) invoiceInputRef.current.value = "";
   };
 
-  const updateTotals = (updated) => {
+  const updateTotals = (updated, manualRoundOff = null) => {
     if (!updated) return;
     let subtotal = 0;
     if (voucherMode === "item") {
@@ -698,12 +698,18 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
     const cgst = parseFloat(updated.cgst) || 0;
     const sgst = parseFloat(updated.sgst) || 0;
     const igst = parseFloat(updated.igst) || 0;
-    const roundOff = parseFloat(updated.round_off) || 0;
-    const grandTotal = subtotal + cgst + sgst + igst + roundOff;
+    
+    let rawTotal = subtotal + cgst + sgst + igst;
+    let finalTotal = Math.round(rawTotal);
+    
+    // Support manual positive or negative round-off adjustment, or compute auto round-off
+    let roundOff = manualRoundOff !== null ? parseFloat(manualRoundOff) || 0 : parseFloat((finalTotal - rawTotal).toFixed(2));
+    let grandTotal = rawTotal + roundOff;
 
     setVoucherData({
       ...updated,
       taxable_amount: subtotal,
+      round_off: roundOff,
       grand_total: parseFloat(grandTotal.toFixed(2)),
       party_ledger: {
         ledger_name: updated.vendor_name || "Sundry Creditor",
@@ -809,6 +815,20 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
     } else {
       setActiveReviewBill(null);
       setVoucherData(null);
+    }
+  };
+
+  const handleDeleteApprovedBill = async (billId) => {
+    const updatedApproved = (approvedBills || []).filter(b => b.id !== billId);
+    setApprovedBills(updatedApproved);
+    saveWithoutPreviews(`c4_approved_bills_${activeClient}`, updatedApproved);
+
+    try {
+      await api.deleteBill(activeClient, "approved", billId);
+      notify("Approved invoice deleted successfully.", "info");
+    } catch (err) {
+      console.error(err);
+      notify("Deleted locally from approved list.", "info");
     }
   };
 
@@ -956,7 +976,6 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
             <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
             <LEDGERFROMITEM>No</LEDGERFROMITEM>
             <REMOVEZEROENTRIES>No</REMOVEZEROENTRIES>
-            <ISPARTYLEDGER>No</ISPARTYLEDGER>
             <ISPARTYLEDGER>No</ISPARTYLEDGER>
             <AMOUNT>-${sgst.toFixed(2)}</AMOUNT>
           </ALLLEDGERENTRIES.LIST>` : ""}
@@ -1713,13 +1732,14 @@ ${xmlVouchers}
                 </div>
 
                 <div className="flex items-center justify-between pt-2">
-                  <label className="text-xs text-slate-500">Round Off Adjustment (₹):</label>
+                  <label className="text-xs text-slate-500">Round Off Adjustment (+ / - ₹):</label>
                   <input
                     type="number"
                     step="0.01"
                     value={voucherData.round_off || 0}
-                    onChange={(e) => updateTotals({ ...voucherData, round_off: parseFloat(e.target.value) || 0 })}
-                    className="w-24 text-right text-xs font-mono border border-slate-300 rounded p-1"
+                    onChange={(e) => updateTotals(voucherData, e.target.value)}
+                    className="w-28 text-right text-xs font-mono border border-slate-300 rounded p-1 font-semibold text-slate-800"
+                    placeholder="e.g. 0.50 or -0.25"
                   />
                 </div>
 
@@ -1986,6 +2006,13 @@ ${xmlVouchers}
                             className="inline-flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-[11px] px-3.5 py-1.5 rounded transition shadow-xs"
                           >
                             <Send className="w-3.5 h-3.5" /> Push
+                          </button>
+                          <button
+                            onClick={() => handleDeleteApprovedBill(b.id)}
+                            className="inline-flex items-center gap-1 bg-rose-50 hover:bg-rose-100 text-rose-700 font-semibold text-[11px] px-2.5 py-1.5 rounded transition"
+                            title="Delete approved invoice"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
                           </button>
                         </div>
                       </td>
