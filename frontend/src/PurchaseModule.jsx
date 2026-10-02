@@ -917,8 +917,14 @@ ${xmlVouchers}
     return Object.values(groups);
   }, [pushedBills]);
 
-  // FULL SCREEN SIDE-BY-SIDE REVIEW WORKSPACE
+  // FULL SCREEN SIDE-BY-SIDE REVIEW WORKSPACE (WITH SAFE GUARDS)
   if (activeReviewBill && voucherData) {
+    // Safety check to prevent blank screen crashes if voucherData loses reference
+    if (!voucherData || typeof voucherData !== 'object') {
+      setActiveReviewBill(null);
+      return null;
+    }
+
     const duplicateMatch = checkDuplicateInvoice(
       voucherData.supplier_invoice_no, 
       voucherData.vendor_name, 
@@ -928,7 +934,8 @@ ${xmlVouchers}
 
     const currentQueueIndex = pendingBills.findIndex(b => b.id === activeReviewBill.id);
     const hasNextBill = currentQueueIndex !== -1 && currentQueueIndex < pendingBills.length - 1;
-
+    
+    // ... rest of your review workspace return JSX
     return (
       <div className="flex flex-col h-full bg-[#F8FAFC] text-slate-800 font-sans">
         <header className="h-14 bg-white border-b border-slate-200 px-6 flex items-center justify-between shadow-xs z-10 shrink-0">
