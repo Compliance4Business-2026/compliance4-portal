@@ -31,13 +31,8 @@ export const api = {
       console.warn("Cloud client fetch skipped, relying on local profiles:", err);
     }
 
-    // Load local storage fallback profiles
     const localClients = JSON.parse(localStorage.getItem("c4_client_profiles") || "{}");
-
-    // Merge both: Local profiles take precedence so newly added clients never vanish on refresh
     const mergedClients = { ...cloudClients, ...localClients };
-
-    // Keep local storage synchronized
     localStorage.setItem("c4_client_profiles", JSON.stringify(mergedClients));
 
     return mergedClients;
@@ -130,7 +125,6 @@ export const api = {
     };
     const cacheKey = cacheMap[stage] || `c4_pending_bills_${clientName}`;
 
-    // Always pull from local storage first for instant, reliable rendering without CORS blocks
     const localData = JSON.parse(localStorage.getItem(cacheKey) || "[]");
     
     try {
@@ -138,7 +132,6 @@ export const api = {
       if (res.ok) {
         const cloudData = await res.json();
         if (Array.isArray(cloudData) && cloudData.length > 0) {
-          // Merge cloud and local to ensure nothing gets lost
           const merged = [...cloudData];
           localData.forEach(localItem => {
             if (!merged.some(m => m.id === localItem.id)) {
@@ -164,17 +157,15 @@ export const api = {
     };
     const cacheKey = cacheMap[stage] || `c4_pending_bills_${clientName}`;
 
-    // 1. Commit to LocalStorage immediately (Guarantees it never disappears on refresh)
     try {
       const existing = JSON.parse(localStorage.getItem(cacheKey) || "[]");
-      const cleanedBill = { ...bill, file_preview_url: "" }; // Strip heavy base64 to prevent quota errors
+      const cleanedBill = { ...bill, file_preview_url: "" };
       const updated = [cleanedBill, ...existing.filter(b => b.id !== bill.id)];
       localStorage.setItem(cacheKey, JSON.stringify(updated));
     } catch (e) {
       console.error("Local bill cache write error:", e);
     }
 
-    // 2. Attempt background cloud sync (Failures won't break your UI)
     try {
       await fetch(`${BACKEND_BASE}/api/clients/${encodeURIComponent(clientName)}/bills?stage=${stage}`, {
         method: "POST",
@@ -211,6 +202,25 @@ export const api = {
       console.warn("Cloud delete bill warning:", err);
     }
   },
+
+  async extractInvoice(file, companyName) {
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("company_name", companyName);
+
+    const res = await fetch(`${BACKEND_BASE}/api/invoices/upload`, {
+      method: "POST",
+      body: formData
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: "Invoice extraction failed" }));
+      throw new Error(err.detail || "Invoice extraction failed");
+    }
+
+    return await res.json();
+  },
+
   // ==========================================
   // 6. Banking & Reconciliation Workflow
   // ==========================================
@@ -281,7 +291,6 @@ export const api = {
       const res = await fetch(`${BACKEND_BASE}/api/clients/${encodeURIComponent(clientName)}/expenses?status=${status}`);
       if (!res.ok) throw new Error("Failed to fetch expense records");
       const data = await res.json();
-      // Filter out VOID entries locally if fetched
       return Array.isArray(data) ? data.filter(item => item.status !== "VOID") : [];
     } catch (err) {
       console.warn(`Falling back to local storage for expenses (${status}):`, err);
@@ -309,7 +318,6 @@ export const api = {
 
   async voidExpenseVoucher(clientName, expenseId, userEmail, reason) {
     try {
-      // Attempt backend call
       await fetch(`${BACKEND_BASE}/api/clients/${encodeURIComponent(clientName)}/expenses/void/${expenseId}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -319,7 +327,6 @@ export const api = {
       console.warn("Backend void endpoint not active, cleaning local cache.");
     }
 
-    // Clean up local storage caches so they don't reappear on refresh
     try {
       const pushedKey = `c4_other_expenses_pushed_${clientName}`;
       const approvedKey = `c4_other_expenses_${clientName}`;
@@ -335,6 +342,7 @@ export const api = {
 
     return { success: true };
   },
+
   // ==========================================
   // 10. Dashboard & Financial Analytics Summary
   // ==========================================
