@@ -99,14 +99,18 @@ async def extract_invoice(
             f.write(file_bytes)
         file_url = f"/api/files/{unique_filename}"
 
-    # 2. Extract data via Gemini AI with enhanced header and item parsing prompt
+    # 2. Extract data via Gemini AI with structured invoice breakdown
     prompt = """
-    CRITICAL: Extract the actual vendor/supplier name printed at the very top header of this document (e.g., SHREE CHAMUNDA VEGETABLE & FRUIT SUPPLIERS). DO NOT use file names or mock names.
-    Extract all line items, quantities, rates, and amounts accurately. Return ONLY a valid raw JSON object without markdown or code fences:
+    You are an expert accountant processing purchase bills and supplier invoices. Carefully examine the image layout.
+    1. VENDOR NAME: Find the main business/supplier name printed at the top center or header (e.g., 'SHREE CHAMUNDA VEGETABLE & FRUIT SUPPLIERS'). Ignore file names.
+    2. INVOICE NUMBER: Look for bill no, invoice no, or reference code (e.g., 'GB/2504').
+    3. ITEMS & TOTALS: Extract every line item with its description, quantity, rate, and amount. Sum up to the correct grand total.
+    
+    Return ONLY a valid raw JSON object without markdown or code fences:
     {
-      "vendor_name": "String (Exact vendor name from document header)",
-      "vendor_gstin": "String (15-character GSTIN if present)",
-      "invoice_number": "String (Invoice No or Bill No)",
+      "vendor_name": "String",
+      "vendor_gstin": "String (15-char GSTIN if available, else '')",
+      "invoice_number": "String",
       "invoice_date": "YYYY-MM-DD",
       "place_of_supply": "String (e.g. Gujarat)",
       "taxable_amount": Float,
@@ -116,7 +120,7 @@ async def extract_invoice(
       "grand_total": Float,
       "items": [
         {
-          "item_name": "String (Product / Item Name)",
+          "item_name": "String",
           "description": "String",
           "qty": Float,
           "rate": Float,
