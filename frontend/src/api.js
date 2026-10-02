@@ -123,47 +123,83 @@ export const api = {
   // 5. Purchases Workflow & Gemini AI Extraction
   // ==========================================
   async getBills(clientName, stage = "needs_review") {
+    const cacheMap = {
+      needs_review: `c4_pending_bills_${clientName}`,
+      approved: `c4_approved_bills_${clientName}`,
+      pushed: `c4_pushed_bills_${clientName}`
+    };
+    const cacheKey = cacheMap[stage] || `c4_pending_bills_${clientName}`;
+
     try {
       const res = await fetch(`${BACKEND_BASE}/api/clients/${encodeURIComponent(clientName)}/bills?stage=${stage}`);
       if (!res.ok) throw new Error("Failed to fetch bills");
-      return await res.json();
+      const data = await res.json();
+      if (Array.isArray(data) && data.length > 0) {
+        localStorage.setItem(cacheKey, JSON.stringify(data));
+        return data;
+      }
+      throw new Error("Empty cloud response");
     } catch (err) {
       console.warn(`Falling back to local storage for bills (${stage}):`, err);
-      const cacheKey = `c4_bills_${clientName}_${stage}`;
       return JSON.parse(localStorage.getItem(cacheKey) || "[]");
     }
   },
 
   async saveBill(clientName, stage, bill) {
-    const res = await fetch(`${BACKEND_BASE}/api/clients/${encodeURIComponent(clientName)}/bills?stage=${stage}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(bill)
-    });
-    if (!res.ok) throw new Error("Failed to save bill to Firestore");
-    return await res.json();
+    const cacheMap = {
+      needs_review: `c4_pending_bills_${clientName}`,
+      approved: `c4_approved_bills_${clientName}`,
+      pushed: `c4_pushed_bills_${clientName}`
+    };
+    const cacheKey = cacheMap[stage] || `c4_pending_bills_${clientName}`;
+
+    // Always update local storage first so data never drops on refresh
+    try {
+      const existing = JSON.parse(localStorage.getItem(cacheKey) || "[]");
+      const updated = [bill, ...existing.filter(b => b.id !== bill.id)];
+      localStorage.setItem(cacheKey, JSON.stringify(updated));
+    } catch (e) {
+      console.error("Local bill cache write error:", e);
+    }
+
+    // Try syncing to cloud backend
+    try {
+      const res = await fetch(`${BACKEND_BASE}/api/clients/${encodeURIComponent(clientName)}/bills?stage=${stage}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(bill)
+      });
+      if (res.ok) {
+        return await res.json();
+      }
+    } catch (err) {
+      console.warn("Cloud bill sync warning (saved locally):", err);
+    }
+    return bill;
   },
 
   async deleteBill(clientName, stage, billId) {
-    await fetch(`${BACKEND_BASE}/api/clients/${encodeURIComponent(clientName)}/bills/${stage}/${billId}`, {
-      method: "DELETE"
-    });
-  },
+    const cacheMap = {
+      needs_review: `c4_pending_bills_${clientName}`,
+      approved: `c4_approved_bills_${clientName}`,
+      pushed: `c4_pushed_bills_${clientName}`
+    };
+    const cacheKey = cacheMap[stage] || `c4_pending_bills_${clientName}`;
 
-  async extractInvoice(file, companyName) {
-    const formData = new FormData();
-    formData.append("file", file);
-    formData.append("company_name", companyName);
-
-    const res = await fetch(`${BACKEND_BASE}/api/invoices/upload`, {
-      method: "POST",
-      body: formData
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ detail: "Extraction failed" }));
-      throw new Error(err.detail || "Invoice extraction failed");
+    try {
+      const existing = JSON.parse(localStorage.getItem(cacheKey) || "[]");
+      localStorage.setItem(cacheKey, JSON.stringify(existing.filter(b => b.id !== billId)));
+    } catch (e) {
+      console.error("Local bill cache delete error:", e);
     }
-    return await res.json();
+
+    try {
+      await fetch(`${BACKEND_BASE}/api/clients/${encodeURIComponent(clientName)}/bills/${stage}/${billId}`, {
+        method: "DELETE"
+      });
+    } catch (err) {
+      console.warn("Cloud delete bill warning:", err);
+    }
   },
 
   // ==========================================
