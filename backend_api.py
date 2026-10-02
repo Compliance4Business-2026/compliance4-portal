@@ -27,15 +27,23 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Initialize Google Cloud Firestore and Storage (uses default credentials from Cloud Run)
-db = firestore.Client()
-storage_client = storage.Client()
+# Initialize Google Cloud Firestore and Storage safely
+try:
+    db = firestore.Client()
+except Exception as e:
+    print(f"Firestore Client init warning: {e}")
+    db = None
+
+try:
+    storage_client = storage.Client()
+except Exception as e:
+    print(f"Storage Client init warning: {e}")
+    storage_client = None
 
 # Local or Cloud Storage configuration for uploaded files
 UPLOAD_DIR = "/tmp/compliance4_uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
-STORAGE_BUCKET_NAME = os.getenv("STORAGE_BUCKET_NAME", "") # Optional GCS bucket name
-
+STORAGE_BUCKET_NAME = os.getenv("STORAGE_BUCKET_NAME", "")
 # ----------------- DATA MODELS ----------------- #
 class TallyPushRequest(BaseModel):
     bill: Dict[str, Any]
@@ -73,7 +81,7 @@ async def extract_invoice(
     # 1. Save file permanently to server storage / GCS bucket
     file_url = ""
     try:
-        if STORAGE_BUCKET_NAME:
+        if STORAGE_BUCKET_NAME and storage_client:
             bucket = storage_client.bucket(STORAGE_BUCKET_NAME)
             blob = bucket.blob(f"invoices/{company_name}/{unique_filename}")
             blob.upload_from_string(file_bytes, content_type=mime_type)
@@ -85,6 +93,10 @@ async def extract_invoice(
             file_url = f"/api/files/{unique_filename}"
     except Exception as storage_err:
         print(f"Warning: Permanent file storage failed: {storage_err}")
+        local_path = os.path.join(UPLOAD_DIR, unique_filename)
+        with open(local_path, "wb") as f:
+            f.write(file_bytes)
+        file_url = f"/api/files/{unique_filename}"
 
     # 2. Extract data via Gemini AI
     prompt = """
