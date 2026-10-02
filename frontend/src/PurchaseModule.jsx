@@ -481,7 +481,6 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
     });
   };
 
-  // ROBUST BULK UPLOAD HANDLER WITH SAFE EXTRACTION NORMALIZATION
   const handleMultipleInvoiceUpload = async (e) => {
     const files = Array.from(e.target.files || []);
     if (files.length === 0) return;
@@ -586,6 +585,7 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
   };
 
   const updateTotals = (updated) => {
+    if (!updated) return;
     let subtotal = 0;
     if (voucherMode === "item") {
       subtotal = (updated.items || []).reduce((acc, it) => acc + (parseFloat(it.amount) || 0), 0);
@@ -607,6 +607,7 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
   };
 
   const handleToggleTaxAsExpense = (checked) => {
+    if (!voucherData) return;
     const taxLedger = checked ? "GST Expense on Purchase" : "Input CGST";
     const sgstTaxLedger = checked ? "GST Expense on Purchase" : "Input SGST";
     const igstTaxLedger = checked ? "GST Expense on Purchase" : "Input IGST";
@@ -628,9 +629,12 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
   };
 
   const handleLedgerSelection = (idx, newLedger, descriptionOrItemName) => {
+    if (!voucherData || !voucherData.accounting_ledgers) return;
     const updated = [...voucherData.accounting_ledgers];
-    updated[idx].ledger_name = newLedger;
-    updated[idx].isAutoMatched = true;
+    if (updated[idx]) {
+      updated[idx].ledger_name = newLedger;
+      updated[idx].isAutoMatched = true;
+    }
     setVoucherData({ ...voucherData, accounting_ledgers: updated });
 
     if (descriptionOrItemName) {
