@@ -500,6 +500,7 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
     setIsUploadingBill(true);
     let successCount = 0;
     let newExtractedBills = [];
+    let duplicateWarningsCount = 0;
     const defaultLedger = dynamicExpenseLedgers[0] || "Purchase: General Goods";
 
     for (let i = 0; i < files.length; i++) {
@@ -573,6 +574,18 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
         };
       });
 
+      // Check against existing pending/approved/pushed bills AND newly added batch items
+      const duplicate = checkDuplicateInvoice(safeBill.supplier_invoice_no, safeBill.vendor_name) || 
+        newExtractedBills.find(b => 
+          (b.supplier_invoice_no || "").trim().toUpperCase() === safeBill.supplier_invoice_no.trim().toUpperCase() &&
+          (b.vendor_name || "").trim().toLowerCase() === safeBill.vendor_name.trim().toLowerCase()
+        );
+
+      if (duplicate) {
+        safeBill.duplicateWarning = `Already present in ${duplicate.stage || "Needs Review Batch"}`;
+        duplicateWarningsCount++;
+      }
+
       try {
         await api.saveBill(activeClient, "needs_review", safeBill);
       } catch (err) {
@@ -585,7 +598,11 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
 
     if (newExtractedBills.length > 0) {
       setPendingBills(prev => [...(Array.isArray(prev) ? prev : []), ...newExtractedBills]);
-      notify(`Successfully loaded ${successCount} bills into Needs Review!`, "success");
+      if (duplicateWarningsCount > 0) {
+        notify(`Loaded ${successCount} bills (${duplicateWarningsCount} duplicate warnings detected)!`, "info");
+      } else {
+        notify(`Successfully loaded ${successCount} bills into Needs Review!`, "success");
+      }
       setPurchaseSubTab("needs_review");
     } else {
       notify("Failed to process the selected bills.", "error");
@@ -595,7 +612,6 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
     setUploadProgress("");
     if (invoiceInputRef.current) invoiceInputRef.current.value = "";
   };
-
   const updateTotals = (updated) => {
     if (!updated) return;
     let subtotal = 0;
