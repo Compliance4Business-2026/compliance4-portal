@@ -433,6 +433,11 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
   const [showAllocationModal, setShowAllocationModal] = useState(false);
   const [voucherData, setVoucherData] = useState(null);
 
+  // ADD NEW VENDOR MODAL STATE
+  const [showAddVendorModal, setShowAddVendorModal] = useState(false);
+  const [newVendorName, setNewVendorName] = useState("");
+  const [newVendorCategory, setNewVendorCategory] = useState("Sundry Creditors");
+
   // PANNING STATE FOR ZOOMED IMAGE PREVIEW
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
@@ -465,6 +470,38 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
       reader.onerror = (error) => reject(error);
     });
 
+  // FUZZY CORE NAME EXTRACTOR FOR INTELLIGENT RECURRING ITEM MATCHING
+  const extractCoreItemName = (fullName) => {
+    if (!fullName) return "";
+    let clean = fullName.toLowerCase();
+    // Strip HSN digits, percentages (3%, 5%), units (ltr, kg, pkt, ml), and numbers
+    clean = clean.replace(/\b\d+([.,]\d+)?(%)?(\s*)?(ltr|ml|kg|pkt|pcs|gm|g|l)?\b/g, "");
+    clean = clean.replace(/[^a-z\s]/g, " ");
+    return clean.split(/\s+/).filter(w => w.length > 2).slice(0, 3).join(" ").trim();
+  };
+
+  const getMemorizedLedgerForItem = (itemNameOrDesc) => {
+    if (!itemNameOrDesc) return null;
+    const cleanKey = itemNameOrDesc.trim().toLowerCase();
+    
+    // 1. Exact Match
+    if (itemRules[cleanKey]) return itemRules[cleanKey];
+
+    // 2. Core Name Fuzzy Match (e.g. "Milk Jain")
+    const coreName = extractCoreItemName(itemNameOrDesc);
+    if (coreName && itemRules[coreName]) return itemRules[coreName];
+
+    for (const [ruleKey, ledgerName] of Object.entries(itemRules)) {
+      if (cleanKey.includes(ruleKey) || ruleKey.includes(cleanKey)) {
+        return ledgerName;
+      }
+      if (coreName && (coreName.includes(ruleKey) || ruleKey.includes(coreName))) {
+        return ledgerName;
+      }
+    }
+    return null;
+  };
+
   const checkDuplicateInvoice = (invoiceNo, vendorName, currentId = null) => {
     if (!invoiceNo) return null;
     const cleanInv = invoiceNo.trim().toUpperCase();
@@ -491,9 +528,12 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
 
     const defaultLedger = dynamicExpenseLedgers[0] || "Purchase: General Goods";
     const isNonItcClient = !isClientItcEligible;
-    const defaultTaxLedger = isNonItcClient ? "GST Expense on Purchase" : "Input CGST";
-    const defaultSgstLedger = isNonItcClient ? "GST Expense on Purchase" : "Input SGST";
-    const defaultIgstLedger = isNonItcClient ? "GST Expense on Purchase" : "Input IGST";
+    
+    // Dynamically fetch GST Tax Ledger from COA instead of hardcoding
+    const coaTaxDefault = dynamicGstLedgers[0] || (isNonItcClient ? "GST Expense on Purchase" : "Input CGST");
+    const defaultTaxLedger = bill.cgst_ledger || coaTaxDefault;
+    const defaultSgstLedger = bill.sgst_ledger || coaTaxDefault;
+    const defaultIgstLedger = bill.igst_ledger || coaTaxDefault;
 
     const resolvedPreview = bill.file_preview_url || previewMemoryCache.get(bill.id) || "";
 
@@ -513,8 +553,8 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
     const mappedAccountingLedgers = Array.isArray(bill.accounting_ledgers) && bill.accounting_ledgers.length > 0
       ? bill.accounting_ledgers
       : items.map(it => {
-          const cleanKey = (it.item_name || it.description || "").trim().toLowerCase();
-          const memorized = itemRules[cleanKey];
+          const matchName = it.item_name || it.description || "";
+          const memorized = getMemorizedLedgerForItem(matchName);
           return {
             description: it.description || it.item_name || "Raw Material",
             ledger_name: memorized || it.ledger_name || defaultLedger,
@@ -533,9 +573,9 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
       source_of_supply: bill.source_of_supply || bill.place_of_supply || "Gujarat",
       destination_of_supply: bill.destination_of_supply || "Gujarat",
       treatTaxAsExpense: isNonItcClient,
-      cgst_ledger: bill.cgst_ledger || defaultTaxLedger,
-      sgst_ledger: bill.sgst_ledger || defaultSgstLedger,
-      igst_ledger: bill.igst_ledger || defaultIgstLedger,
+      cgst_ledger: defaultTaxLedger,
+      sgst_ledger: defaultSgstLedger,
+      igst_ledger: defaultIgstLedger,
       round_off: parseFloat(bill.round_off) || 0.00,
       taxable_amount: parseFloat(bill.taxable_amount || bill.grand_total) || 0,
       grand_total: grandTotal,
@@ -591,12 +631,32 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
       const vGstin = extracted.vendor_gstin || extracted.gstin || "";
       const invNo = extracted.supplier_invoice_no || extracted.invoice_number || extracted.invoiceNo || `INV-${Math.floor(1000 + Math.random() * 9000)}`;
       const invDate = extracted.invoice_date || extracted.bill_date || extracted.invoiceDate || new Date().toISOString().split("T")[0];
-      const taxable = parseFloat(extracted.taxable_amount || extracted.taxableAmount || extracted.amount || 1000.00);
+      
+      let taxable = parseFloat(extracted.taxable_amount || extracted.taxableAmount || extracted.amount || 1000.00);
       const cgstVal = parseFloat(extracted.cgst || 0);
       const sgstVal = parseFloat(extracted.sgst || 0);
       const igstVal = parseFloat(extracted.igst || 0);
       const roundVal = parseFloat(extracted.round_off || extracted.roundOff || 0);
-      const grandTotalVal = parseFloat(extracted.grand_total || extracted.grandTotal || (taxable + cgstVal + sgstVal + igstVal) || taxable);
+      let grandTotalVal = parseFloat(extracted.grand_total || extracted.grandTotal || (taxable + cgstVal + sgstVal + igstVal) || taxable);
+
+      // Sanitize item descriptions to filter out pure HSN numbers if grabbed incorrectly
+      let rawItems = Array.isArray(extracted.items) && extracted.items.length > 0 ? extracted.items : [
+        {
+          item_name: "General Purchase Item",
+          description: cleanFileName,
+          qty: 1,
+          rate: taxable,
+          amount: taxable
+        }
+      ];
+
+      rawItems = rawItems.map(it => {
+        let desc = it.description || it.item_name || "Supplies";
+        if (/^\d{4,8}$/.test(desc.trim())) {
+          desc = "Bakery Raw Material / Item";
+        }
+        return { ...it, description: desc };
+      });
 
       const generatedId = extracted.id || `inv_${Date.now()}_${i}_${Math.random().toString(36).substr(2, 4)}`;
 
@@ -626,20 +686,12 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
           amount: grandTotalVal > 0 ? grandTotalVal : taxable,
           type: "Credit"
         },
-        items: Array.isArray(extracted.items) && extracted.items.length > 0 ? extracted.items : [
-          {
-            item_name: "General Purchase Item",
-            description: cleanFileName,
-            qty: 1,
-            rate: taxable,
-            amount: taxable
-          }
-        ]
+        items: rawItems
       };
 
       safeBill.accounting_ledgers = safeBill.items.map(it => {
-        const cleanKey = (it.item_name || it.description || "").trim().toLowerCase();
-        const memorized = itemRules[cleanKey];
+        const matchName = it.item_name || it.description || "";
+        const memorized = getMemorizedLedgerForItem(matchName);
         return {
           description: it.description || it.item_name || "Supplies",
           ledger_name: memorized || defaultLedger,
@@ -710,7 +762,13 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
         roundOffNum = parseFloat(manualRoundOff) || 0;
       }
     } else {
-      roundOffNum = parseFloat((finalTotal - rawTotal).toFixed(2));
+      // Auto round off within ±₹2.00 threshold
+      let autoDiff = parseFloat((finalTotal - rawTotal).toFixed(2));
+      if (Math.abs(autoDiff) <= 2.00) {
+        roundOffNum = autoDiff;
+      } else {
+        roundOffNum = parseFloat(updated.round_off) || 0;
+      }
     }
 
     let grandTotal = rawTotal + roundOffNum;
@@ -749,16 +807,18 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
     let adjustedDr = totalDr + roundOff;
 
     const diff = Math.abs(adjustedDr - totalCr);
-    const isBalanced = diff < 0.05;
+    // Allow ±2.00 tolerance for automatic rounding discrepancies
+    const isBalanced = diff <= 2.05;
 
     return { isBalanced, totalDr: adjustedDr, totalCr, diff };
   };
 
   const handleToggleTaxAsExpense = (checked) => {
     if (!voucherData) return;
-    const taxLedger = checked ? "GST Expense on Purchase" : "Input CGST";
-    const sgstTaxLedger = checked ? "GST Expense on Purchase" : "Input SGST";
-    const igstTaxLedger = checked ? "GST Expense on Purchase" : "Input IGST";
+    const coaDefault = dynamicGstLedgers[0] || "GST Expense on Purchase";
+    const taxLedger = checked ? coaDefault : "Input CGST";
+    const sgstTaxLedger = checked ? coaDefault : "Input SGST";
+    const igstTaxLedger = checked ? coaDefault : "Input IGST";
 
     setVoucherData((prev) => ({
       ...prev,
@@ -786,13 +846,44 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
     setVoucherData({ ...voucherData, accounting_ledgers: updated });
 
     if (descriptionOrItemName) {
-      const cleanKey = descriptionOrItemName.trim().toLowerCase();
+      const coreKey = extractCoreItemName(descriptionOrItemName) || descriptionOrItemName.trim().toLowerCase();
       setItemRules(prev => ({
         ...prev,
-        [cleanKey]: newLedger
+        [coreKey]: newLedger
       }));
-      notify(`Memorized "${descriptionOrItemName}" → ${newLedger}`, "info");
+      notify(`Memorized rule for "${descriptionOrItemName}" → ${newLedger}`, "info");
     }
+  };
+
+  // ADD NEW VENDOR CREATOR HANDLER
+  const handleCreateNewVendor = () => {
+    if (!newVendorName.trim()) {
+      notify("Please enter a valid vendor name.", "error");
+      return;
+    }
+    const cleanName = newVendorName.trim();
+    const newCreditorLedger = {
+      id: `ledger_${Date.now()}`,
+      name: cleanName,
+      category: newVendorCategory || "Sundry Creditors",
+      statementType: "Balance Sheet"
+    };
+
+    const updatedCoa = [...clientCoa, newCreditorLedger];
+    setClientCoa(updatedCoa);
+    localStorage.setItem(`c4_coa_${activeClient}`, JSON.stringify(updatedCoa));
+
+    if (voucherData) {
+      setVoucherData({
+        ...voucherData,
+        vendor_name: cleanName,
+        party_ledger: { ...voucherData.party_ledger, ledger_name: cleanName }
+      });
+    }
+
+    setShowAddVendorModal(false);
+    setNewVendorName("");
+    notify(`Created new Sundry Creditor ledger: "${cleanName}"`, "success");
   };
 
   const handlePreApproveCheck = () => {
@@ -1162,7 +1253,7 @@ ${xmlVouchers}
             {safePending.length > 0 && currentQueueIndex !== -1 && (
               <span className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded font-mono font-medium">
                 {currentQueueIndex + 1} of {safePending.length}
-            </span>
+              </span>
             )}
             {!voucherBalanceCheck.isBalanced && (
               <span className="flex items-center gap-1 text-[11px] font-bold text-rose-800 bg-rose-100 px-2 py-0.5 rounded border border-rose-300">
@@ -1174,7 +1265,7 @@ ${xmlVouchers}
               <span className="flex items-center gap-1 text-[11px] font-bold text-amber-800 bg-amber-100 px-2 py-0.5 rounded border border-amber-300">
                 <AlertTriangle className="w-3 h-3 text-amber-700" />
                 Duplicate: In {duplicateMatch.stage}
-            </span>
+              </span>
             )}
           </div>
 
@@ -1379,9 +1470,7 @@ ${xmlVouchers}
                   <button
                     type="button"
                     tabIndex={-1}
-                    onClick={() => {
-                      notify("Go to Chart of Accounts to create a new Sundry Creditor ledger.", "info");
-                    }}
+                    onClick={() => setShowAddVendorModal(true)}
                     className="inline-flex items-center gap-1 text-[11px] font-semibold text-indigo-600 hover:text-indigo-800"
                   >
                     <UserPlus className="w-3.5 h-3.5" /> + Add New Vendor
@@ -1808,6 +1897,57 @@ ${xmlVouchers}
           </div>
         </div>
 
+        {/* ADD NEW VENDOR MODAL */}
+        {showAddVendorModal && (
+          <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6 space-y-4">
+              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                <h3 className="text-sm font-bold text-slate-900">Add New Sundry Creditor</h3>
+                <button onClick={() => setShowAddVendorModal(false)} className="text-slate-400 hover:text-slate-600">
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="space-y-3 text-xs">
+                <div>
+                  <label className="block font-bold text-slate-600 mb-1">Vendor/Supplier Name</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Jain Dairy Products Pvt. Ltd."
+                    value={newVendorName}
+                    onChange={(e) => setNewVendorName(e.target.value)}
+                    className="w-full border border-slate-300 rounded p-2 text-xs font-semibold"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-600 mb-1">Account Category</label>
+                  <input
+                    type="text"
+                    value={newVendorCategory}
+                    onChange={(e) => setNewVendorCategory(e.target.value)}
+                    className="w-full border border-slate-300 rounded p-2 text-xs bg-slate-50"
+                  />
+                </div>
+              </div>
+
+              <div className="pt-3 flex items-center justify-end gap-2 border-t border-slate-100 text-xs">
+                <button
+                  onClick={() => setShowAddVendorModal(false)}
+                  className="px-3 py-1.5 rounded text-slate-600 hover:bg-slate-100"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleCreateNewVendor}
+                  className="px-4 py-1.5 rounded font-semibold bg-indigo-600 hover:bg-indigo-700 text-white"
+                >
+                  Create & Assign
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* APPROVE BILL MODAL */}
         {showAllocationModal && (
           <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
@@ -2007,132 +2147,132 @@ ${xmlVouchers}
                       </tr>
                     );
                   })}
-              </tbody>
-            </table>
-          )}
-        </div>
-      )}
+                </tbody>
+              </table>
+            )}
+          </div>
+        )}
 
-      {/* TAB 2: APPROVED INVOICES */}
-      {purchaseSubTab === "approved" && (
-        <div className="bg-white border border-slate-200 rounded-xl shadow-xs overflow-hidden">
-          {!Array.isArray(approvedBills) || approvedBills.length === 0 ? (
-            <div className="p-16 text-center">
-              <CheckCircle2 className="w-8 h-8 text-emerald-300 mx-auto mb-2" />
-              <p className="text-sm font-semibold text-slate-700">No approved invoices waiting</p>
-            </div>
-          ) : (
-            <table className="w-full text-left text-xs text-slate-600">
-              <thead className="bg-slate-50 border-b border-slate-200 uppercase font-semibold text-slate-500">
-                <tr>
-                  <th className="px-6 py-3.5">Vendor</th>
-                  <th className="px-6 py-3.5">Invoice No.</th>
-                  <th className="px-6 py-3.5">Ledger Allocation</th>
-                  <th className="px-6 py-3.5">Total Amount (₹)</th>
-                  <th className="px-6 py-3.5 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {approvedBills.map((b) => (
-                  <tr key={b.id} className="hover:bg-slate-50 transition">
-                    <td className="px-6 py-4">
-                      <p className="font-bold text-slate-900">{b.vendor_name}</p>
-                    </td>
-                    <td className="px-6 py-4 font-mono font-medium text-slate-800">
-                      #{b.supplier_invoice_no || b.invoice_number}
-                    </td>
-                    <td className="px-6 py-4 text-slate-600">
-                      <span className="bg-slate-100 px-2 py-1 rounded text-[11px] font-medium">
-                        {b.accounting_ledgers?.[0]?.ledger_name || dynamicExpenseLedgers[0] || "Purchase: General Goods"}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 font-mono font-bold text-emerald-700">
-                      ₹{(parseFloat(b.grand_total) || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                    </td>
-                    <td className="px-6 py-4 text-right">
-                      <div className="inline-flex items-center gap-2">
-                        <button
-                          onClick={() => openReviewWorkspace(b)}
-                          className="inline-flex items-center gap-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-[11px] px-2.5 py-1.5 rounded transition"
-                        >
-                          <Edit2 className="w-3.5 h-3.5" /> Edit
-                        </button>
-                        <button
-                          onClick={() => handlePushToTally(b)}
-                          className="inline-flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-[11px] px-3.5 py-1.5 rounded transition shadow-xs"
-                        >
-                          <Send className="w-3.5 h-3.5" /> Push
-                        </button>
-                        <button
-                          onClick={() => handleDeleteApprovedBill(b.id)}
-                          className="inline-flex items-center gap-1 bg-rose-50 hover:bg-rose-100 text-rose-700 font-semibold text-[11px] px-2.5 py-1.5 rounded transition"
-                          title="Delete approved invoice"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </td>
+        {/* TAB 2: APPROVED INVOICES */}
+        {purchaseSubTab === "approved" && (
+          <div className="bg-white border border-slate-200 rounded-xl shadow-xs overflow-hidden">
+            {!Array.isArray(approvedBills) || approvedBills.length === 0 ? (
+              <div className="p-16 text-center">
+                <CheckCircle2 className="w-8 h-8 text-emerald-300 mx-auto mb-2" />
+                <p className="text-sm font-semibold text-slate-700">No approved invoices waiting</p>
+              </div>
+            ) : (
+              <table className="w-full text-left text-xs text-slate-600">
+                <thead className="bg-slate-50 border-b border-slate-200 uppercase font-semibold text-slate-500">
+                  <tr>
+                    <th className="px-6 py-3.5">Vendor</th>
+                    <th className="px-6 py-3.5">Invoice No.</th>
+                    <th className="px-6 py-3.5">Ledger Allocation</th>
+                    <th className="px-6 py-3.5">Total Amount (₹)</th>
+                    <th className="px-6 py-3.5 text-right">Actions</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
-      )}
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {approvedBills.map((b) => (
+                    <tr key={b.id} className="hover:bg-slate-50 transition">
+                      <td className="px-6 py-4">
+                        <p className="font-bold text-slate-900">{b.vendor_name}</p>
+                      </td>
+                      <td className="px-6 py-4 font-mono font-medium text-slate-800">
+                        #{b.supplier_invoice_no || b.invoice_number}
+                      </td>
+                      <td className="px-6 py-4 text-slate-600">
+                        <span className="bg-slate-100 px-2 py-1 rounded text-[11px] font-medium">
+                          {b.accounting_ledgers?.[0]?.ledger_name || dynamicExpenseLedgers[0] || "Purchase: General Goods"}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 font-mono font-bold text-emerald-700">
+                        ₹{(parseFloat(b.grand_total) || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                      </td>
+                      <td className="px-6 py-4 text-right">
+                        <div className="inline-flex items-center gap-2">
+                          <button
+                            onClick={() => openReviewWorkspace(b)}
+                            className="inline-flex items-center gap-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-[11px] px-2.5 py-1.5 rounded transition"
+                          >
+                            <Edit2 className="w-3.5 h-3.5" /> Edit
+                          </button>
+                          <button
+                            onClick={() => handlePushToTally(b)}
+                            className="inline-flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-[11px] px-3.5 py-1.5 rounded transition shadow-xs"
+                          >
+                            <Send className="w-3.5 h-3.5" /> Push
+                          </button>
+                          <button
+                            onClick={() => handleDeleteApprovedBill(b.id)}
+                            className="inline-flex items-center gap-1 bg-rose-50 hover:bg-rose-100 text-rose-700 font-semibold text-[11px] px-2.5 py-1.5 rounded transition"
+                            title="Delete approved invoice"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        )}
 
-      {/* TAB 3: PUSHED TO TALLY */}
-      {purchaseSubTab === "pushed" && (
-        <div className="space-y-4">
-          {groupedPushedBills.length === 0 ? (
-            <div className="bg-white border border-slate-200 rounded-xl shadow-xs p-16 text-center">
-              <FileSpreadsheet className="w-8 h-8 text-blue-300 mx-auto mb-2" />
-              <p className="text-sm font-semibold text-slate-700">No invoices pushed yet</p>
-            </div>
-          ) : (
-            groupedPushedBills.map((group) => {
-              const isExpanded = expandedFolders[group.monthLabel] !== false;
+        {/* TAB 3: PUSHED TO TALLY */}
+        {purchaseSubTab === "pushed" && (
+          <div className="space-y-4">
+            {groupedPushedBills.length === 0 ? (
+              <div className="bg-white border border-slate-200 rounded-xl shadow-xs p-16 text-center">
+                <FileSpreadsheet className="w-8 h-8 text-blue-300 mx-auto mb-2" />
+                <p className="text-sm font-semibold text-slate-700">No invoices pushed yet</p>
+              </div>
+            ) : (
+              groupedPushedBills.map((group) => {
+                const isExpanded = expandedFolders[group.monthLabel] !== false;
 
-              return (
-                <div key={group.monthLabel} className="bg-white border border-slate-200 rounded-xl shadow-xs overflow-hidden">
-                  <div
-                    onClick={() => toggleFolder(group.monthLabel)}
-                    className="px-6 py-4 bg-slate-50/80 hover:bg-slate-100/80 border-b border-slate-200 flex items-center justify-between cursor-pointer transition select-none"
-                  >
-                    <div className="flex items-center gap-3">
-                      {isExpanded ? <FolderOpen className="w-5 h-5 text-indigo-600" /> : <Folder className="w-5 h-5 text-slate-400" />}
-                      <div>
-                        <h4 className="text-xs font-bold text-slate-900 tracking-wide uppercase flex items-center gap-2">
-                          {group.monthLabel}
-                          <span className="text-[10px] bg-indigo-50 text-indigo-700 border border-indigo-200 px-2 py-0.5 rounded-full font-mono font-bold lowercase">
-                            {group.bills.length} invoices
-                          </span>
-                        </h4>
+                return (
+                  <div key={group.monthLabel} className="bg-white border border-slate-200 rounded-xl shadow-xs overflow-hidden">
+                    <div
+                      onClick={() => toggleFolder(group.monthLabel)}
+                      className="px-6 py-4 bg-slate-50/80 hover:bg-slate-100/80 border-b border-slate-200 flex items-center justify-between cursor-pointer transition select-none"
+                    >
+                      <div className="flex items-center gap-3">
+                        {isExpanded ? <FolderOpen className="w-5 h-5 text-indigo-600" /> : <Folder className="w-5 h-5 text-slate-400" />}
+                        <div>
+                          <h4 className="text-xs font-bold text-slate-900 tracking-wide uppercase flex items-center gap-2">
+                            {group.monthLabel}
+                            <span className="text-[10px] bg-indigo-50 text-indigo-700 border border-indigo-200 px-2 py-0.5 rounded-full font-mono font-bold lowercase">
+                              {group.bills.length} invoices
+                            </span>
+                          </h4>
+                        </div>
                       </div>
-                    </div>
-                    <div className="text-right">
-                      <span className="text-[10px] uppercase font-bold text-slate-400">Total Purchase</span>
-                      <p className="text-sm font-black font-mono text-slate-900">
-                        ₹{group.totalAmount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                      </p>
+                      <div className="text-right">
+                        <span className="text-[10px] uppercase font-bold text-slate-400">Total Purchase</span>
+                        <p className="text-sm font-black font-mono text-slate-900">
+                          ₹{group.totalAmount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                        </p>
+                      </div>
                     </div>
                   </div>
-                </div>
-              );
-            })
-          )}
+                );
+              })
+            )}
+          </div>
+        )}
+      </div>
+
+      {notification && (
+        <div className={`fixed bottom-6 right-6 max-w-md px-4 py-3 rounded-lg shadow-xl border text-sm flex items-start gap-3 transition-all z-50 ${
+          notification.type === "error" ? "bg-rose-950 text-rose-100 border-rose-800" : "bg-slate-900 text-white border-slate-800"
+        }`}>
+          <div className="flex-1 font-mono text-xs break-all leading-relaxed">
+            {notification.msg}
+          </div>
         </div>
       )}
     </div>
-
-    {notification && (
-      <div className={`fixed bottom-6 right-6 max-w-md px-4 py-3 rounded-lg shadow-xl border text-sm flex items-start gap-3 transition-all z-50 ${
-        notification.type === "error" ? "bg-rose-950 text-rose-100 border-rose-800" : "bg-slate-900 text-white border-slate-800"
-      }`}>
-        <div className="flex-1 font-mono text-xs break-all leading-relaxed">
-          {notification.msg}
-        </div>
-      </div>
-    )}
-  </div>
-);
+  );
 }
