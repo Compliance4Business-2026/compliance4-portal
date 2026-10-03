@@ -14,8 +14,8 @@ import { api } from "./api";
 export default function DashboardModule({ activeClient = "Pansuria Confectionery & Food" }) {
   const [cloudSummary, setCloudSummary] = useState(null);
   const [selectedPeriod, setSelectedPeriod] = useState("Current Month");
-  const [customStartDate, setCustomStartDate] = useState("2026-09-01");
-  const [customEndDate, setCustomEndDate] = useState("2026-09-30");
+  const [customStartDate, setCustomStartDate] = useState("2026-10-01");
+  const [customEndDate, setCustomEndDate] = useState("2026-10-31");
 
   // --- FETCH DASHBOARD SUMMARY FROM FIRESTORE ON LOAD / CLIENT SWITCH ---
   useEffect(() => {
@@ -168,7 +168,7 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
     return isNaN(d.getTime()) ? null : d;
   };
 
-  // Date range filter helper based on selectedPeriod
+  // Date range filter helper based on selectedPeriod (Defaulting to ongoing October 2026)
   const isDateInPeriod = (rawDate) => {
     if (selectedPeriod === "All") return true;
     const d = parseToDate(rawDate);
@@ -178,7 +178,7 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
     const mo = d.getMonth() + 1;
 
     if (selectedPeriod === "Current Month") {
-      return yr === 2026 && mo === 9;
+      return yr === 2026 && mo === 10;
     }
     if (selectedPeriod === "FY2026-27") {
       return (yr === 2026 && mo >= 4) || (yr === 2027 && mo <= 3);
@@ -266,7 +266,7 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
     return "Administrative & General Expenses";
   };
 
-  // 2. SCHEDULE BREAKDOWN (Ensuring Non-ITC GST Tax Components are Added as Expenses)
+  // 2. SCHEDULE BREAKDOWN
   const plBreakdown = useMemo(() => {
     let directCogs = 0;
     let otherIncomeTotal = 0;
@@ -292,7 +292,6 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
         directCogs += bAmt;
       }
 
-      // FOR NON-ITC CLIENTS, ADD SEPARATE GST COMPONENTS INTO P&L EXPENSES
       const treatTaxAsExp = !isClientItcEligible || bill.treatTaxAsExpense;
       if (treatTaxAsExp) {
         const cgstAmt = parseFloat(bill.cgst) || 0;
@@ -356,7 +355,8 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
       otherIncomeTotal
     };
   }, [filteredPurchases, filteredOverheads, clientCoa, isClientItcEligible]);
-  // 3. TOP 4 KPI CALCULATIONS WITH STRICT COA SUNDRY CREDITOR MATCHING
+
+  // 3. TOP 4 KPI CALCULATIONS
   const kpiData = useMemo(() => {
     const normalRev = filteredNormalSales.reduce((acc, inv) => acc + (parseFloat(inv.taxableAmount) || 0), 0);
     const posRev = filteredPosJournals.reduce((acc, jv) => acc + (parseFloat(jv.totalTaxable) || 0), 0);
@@ -370,7 +370,6 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
     const netProfit = totalRevenue + plBreakdown.otherIncomeTotal - totalCost;
     const netMargin = totalRevenue > 0 ? (netProfit / totalRevenue) * 100 : 0;
 
-    // Filter purchases strictly where vendor name matches a Sundry Creditor / Vendor in client COA
     const validCreditorPurchases = filteredPurchases.filter((b) => {
       const vName = (b.vendor_name || "").toLowerCase().trim();
       return sundryCreditorNames.length === 0 || sundryCreditorNames.includes(vName) || Boolean(vName);
@@ -406,52 +405,67 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
     };
   }, [filteredNormalSales, filteredPosJournals, filteredPurchases, filteredOverheads, filteredBankTransactions, plBreakdown, sundryCreditorNames]);
 
-  // --- DOWNLOAD HANDLERS FOR P&L, AR, AND AP ---
+  // --- GRANULAR SUPPLIER-WISE & CATEGORY-WISE DOWNLOAD HANDLERS ---
   const handleDownloadDynamicPL = async () => {
     try {
       const coa = await api.getClientCoa(activeClient).catch(() => clientCoa);
-      const revenueLedgers = coa.filter(l => l.statementType === "P&L" && (l.category?.toLowerCase().includes("revenue") || l.category?.toLowerCase().includes("sales")));
-      const cogsLedgers = coa.filter(l => l.statementType === "P&L" && l.cogsClassification === "COGS");
+      
+      const coaCategoryMap = {};
+      coa.forEach(l => {
+        if (l.name) {
+          coaCategoryMap[l.name.toLowerCase().trim()] = {
+            category: l.category || "General Expenses",
+            mainHead: l.statementType === "P&L" ? "Indirect Expenses" : "Operating Expenses"
+          };
+        }
+      });
 
-      const grossProfit = kpiData.totalRevenue - plBreakdown.directCogs;
-      const netProfit = kpiData.netProfit;
+      const ledgerCategoryMap = {};
+      filteredPurchases.forEach(b => {
+        const ledgers = b.accounting_ledgers || [{ ledger_name: dynamicExpenseLedgers[0] || "Purchases", amount: b.taxable_amount || b.grand_total || 0 }];
+        ledgers.forEach(l => {
+          const lName = l.ledger_name || "General Purchase";
+          const amt = parseFloat(l.amount || 0);
+          const meta = coaCategoryMap[lName.toLowerCase().trim()] || { category: "Miscellaneous Expenses", mainHead: "Indirect Expenses" };
+          const catKey = meta.category;
 
+          if (!ledgerCategoryMap[catKey]) {
+            ledgerCategoryMap[catKey] = {
+              mainHead: meta.mainHead,
+              ledgers: {},
+              categoryTotal: 0
+            };
+          }
+          if (!ledgerCategoryMap[catKey].ledgers[lName]) {
+            ledgerCategoryMap[catKey].ledgers[lName] = 0;
+          }
+          ledgerCategoryMap[catKey].ledgers[lName] += amt;
+          ledgerCategoryMap[catKey].categoryTotal += amt;
+        });
+      });
+
+      const headers = ["Main Head", "Category Name", "Ledger Name", "Ledger Amount (₹)", "Category Total (₹)"];
       const rows = [
-        `"${activeClient} - Profit & Loss Statement (${selectedPeriod})"`,
+        `"${activeClient} - Category & Main-Head P&L Statement (${selectedPeriod})"`,
         `"Generated On","${new Date().toLocaleDateString("en-IN")}"`,
         ``,
-        `"PARTICULARS","CATEGORY","AMOUNT (₹)"`,
-        `"REVENUE / INCOME STATEMENTS","",""`
+        headers.join(",")
       ];
 
-      revenueLedgers.forEach(l => {
-        rows.push(`"${l.name}","${l.category || "Revenue"}","0.00"`);
+      Object.entries(ledgerCategoryMap).forEach(([category, catData]) => {
+        rows.push([`"${catData.mainHead}"`, `"${category}"`, `""`, `""`, catData.categoryTotal].join(","));
+        Object.entries(catData.ledgers).forEach(([ledgerName, amount]) => {
+          rows.push([`""`, `""`, `"${ledgerName}"`, amount.toFixed(2), `""`].join(","));
+        });
+        rows.push(``);
       });
-      rows.push(`"Total Revenue","","${kpiData.totalRevenue.toFixed(2)}"`);
-      rows.push(``);
 
-      rows.push(`"COST OF GOODS SOLD (COGS) / PURCHASES","",""`);
-      cogsLedgers.forEach(l => {
-        rows.push(`"${l.name}","${l.category || "COGS"}","0.00"`);
-      });
-      rows.push(`"Total Cost of Sales","","${plBreakdown.directCogs.toFixed(2)}"`);
-      rows.push(``);
-
-      rows.push(`"GROSS PROFIT","","${grossProfit.toFixed(2)}"`);
-      rows.push(``);
-
-      rows.push(`"INDIRECT / OPERATING EXPENSES","",""`);
-      Object.entries(plBreakdown.indirectCategories).forEach(([cat, amt]) => {
-        rows.push(`"${cat}","Operating Expenses","${amt.toFixed(2)}"`);
-      });
-      rows.push(`"Total Expenses","","${plBreakdown.totalIndirect.toFixed(2)}"`);
-      rows.push(``);
-      rows.push(`"NET PROFIT / (LOSS)","","${netProfit.toFixed(2)}"`);
+      rows.push(`"Net Operating Profit / (Loss)","","","","${kpiData.netProfit.toFixed(2)}"`);
 
       const blob = new Blob([rows.join("\n")], { type: "text/csv;charset=utf-8;" });
       const link = document.createElement("a");
       link.href = URL.createObjectURL(blob);
-      link.download = `Profit_Loss_${activeClient.replace(/\s+/g, "_")}_${selectedPeriod}.csv`;
+      link.download = `Profit_Loss_Category_Wise_${activeClient.replace(/\s+/g, "_")}_${selectedPeriod}.csv`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
@@ -463,23 +477,66 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
 
   const handleDownloadARAPReport = (type = "AR") => {
     const isAR = type === "AR";
-    const title = isAR ? `ACCOUNTS RECEIVABLE (AR) REPORT (${selectedPeriod})` : `ACCOUNTS PAYABLE (AP) REPORT (${selectedPeriod})`;
-    const amountVal = isAR ? kpiData.accountsReceivable : kpiData.accountsPayable;
+    
+    if (!isAR) {
+      // SUPPLIER-WISE AP EXPORT WITH INVOICES BELOW EACH VENDOR
+      const vendorMap = {};
+      filteredPurchases.forEach(b => {
+        const vendor = b.vendor_name || "Unassigned Vendor";
+        if (!vendorMap[vendor]) {
+          vendorMap[vendor] = { invoices: [], totalPayable: 0 };
+        }
+        const grandTotal = parseFloat(b.grand_total || 0);
+        vendorMap[vendor].invoices.push({
+          invNo: b.supplier_invoice_no || b.invoice_number || "N/A",
+          date: b.voucher_date || b.invoice_date || "N/A",
+          amount: grandTotal
+        });
+        vendorMap[vendor].totalPayable += grandTotal;
+      });
 
+      const headers = ["Vendor / Supplier Name", "Invoice Number", "Invoice Date", "Invoice Amount (₹)", "Total Vendor Payable (₹)"];
+      const rows = [
+        `"Accounts Payable (AP) Supplier-Wise Report (${selectedPeriod})"`,
+        `"Client","${activeClient}"`,
+        `"Generated On","${new Date().toLocaleDateString("en-IN")}"`,
+        ``,
+        headers.join(",")
+      ];
+
+      Object.entries(vendorMap).forEach(([vendor, data]) => {
+        rows.push([`"${vendor.replace(/"/g, '""')}"`, `""`, `""`, `""`, data.totalPayable.toFixed(2)].join(","));
+        data.invoices.forEach(inv => {
+          rows.push([`""`, `"${inv.invNo}"`, `"${inv.date}"`, inv.amount.toFixed(2), `""`].join(","));
+        });
+        rows.push(``);
+      });
+
+      const blob = new Blob([rows.join("\n")], { type: "text/csv;charset=utf-8;" });
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = `Accounts_Payable_Supplier_Wise_${activeClient.replace(/\s+/g, "_")}_${selectedPeriod}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      return;
+    }
+
+    // AR Report
     const headers = ["Party / Ledger Name", "Reference", "Status", "Amount Due (₹)"];
     const rows = [
-      `"${title}"`,
+      `"ACCOUNTS RECEIVABLE (AR) REPORT (${selectedPeriod})"`,
       `"Client","${activeClient}"`,
       `"Generated On","${new Date().toLocaleDateString("en-IN")}"`,
       ``,
       headers.join(","),
-      `"Outstanding Balance Total","Summary","Active","${amountVal.toFixed(2)}"`
+      `"Outstanding Balance Total","Summary","Active","${kpiData.accountsReceivable.toFixed(2)}"`
     ];
 
     const blob = new Blob([rows.join("\n")], { type: "text/csv;charset=utf-8;" });
     const link = document.createElement("a");
     link.href = URL.createObjectURL(blob);
-    link.download = `${type}_Report_${activeClient.replace(/\s+/g, "_")}_${selectedPeriod}.csv`;
+    link.download = `AR_Report_${activeClient.replace(/\s+/g, "_")}_${selectedPeriod}.csv`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -488,7 +545,7 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
   // 4. LAST 6 MONTHS TREND
   const last6MonthsData = useMemo(() => {
     const months = [];
-    const now = new Date(2026, 8, 28);
+    const now = new Date(2026, 9, 4);
 
     for (let i = 5; i >= 0; i--) {
       const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
@@ -609,7 +666,7 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
                 onChange={(e) => setSelectedPeriod(e.target.value)}
                 className="text-xs font-bold text-slate-800 bg-transparent focus:outline-none cursor-pointer"
               >
-                <option value="Current Month">Current Full Month (Sep 2026)</option>
+                <option value="Current Month">Current Full Month (October 2026)</option>
                 <option value="FY2026-27">Financial Year 2026–27</option>
                 <option value="FY2025-26">Financial Year 2025–26</option>
                 <option value="Q1">Q1 (Apr - Jun 2026)</option>
