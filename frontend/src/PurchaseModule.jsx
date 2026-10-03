@@ -584,7 +584,6 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
     const explicitTaxableProvided = parseFloat(bill.taxable_amount || 0) > 0;
 
     const items = rawItems.map(it => {
-      // Prioritize explicit item taxable amount if provided by AI extraction
       let explicitItemTaxable = parseFloat(it.taxable_amount || it.taxableAmount || 0);
       let amt = explicitItemTaxable > 0 ? explicitItemTaxable : parseFloat(it.amount || it.rate || 0);
       const taxRate = parseFloat(it.tax_rate || 0) || 0;
@@ -1109,45 +1108,120 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
     }
   };
 
-  const handleDownloadExcel = () => {
+  // SUPPLIER-WISE ACCOUNTS PAYABLE EXPORT WITH INVOICES BELOW EACH VENDOR
+  const handleDownloadAccountsPayableSupplierWise = () => {
     if (!Array.isArray(approvedBills) || approvedBills.length === 0) {
-      notify("No approved invoices to export.", "error");
+      notify("No approved invoices available for Accounts Payable breakdown.", "error");
       return;
     }
 
-    const headers = [
-      "Voucher Date", "Supplier Invoice No", "Bill Date", "Vendor Name", "GSTIN",
-      "Place of Supply", "Expense Ledger", "Taxable Value", "CGST Ledger", "CGST Amount",
-      "SGST Ledger", "SGST Amount", "IGST Ledger", "IGST Amount", "Round Off", "Grand Total"
-    ];
+    const vendorMap = {};
+    approvedBills.forEach(b => {
+      const vendor = b.vendor_name || "Unassigned Vendor";
+      if (!vendorMap[vendor]) {
+        vendorMap[vendor] = { invoices: [], totalPayable: 0 };
+      }
+      const grandTotal = parseFloat(b.grand_total || 0);
+      vendorMap[vendor].invoices.push({
+        invNo: b.supplier_invoice_no || b.invoice_number || "N/A",
+        date: b.voucher_date || b.invoice_date || "N/A",
+        amount: grandTotal
+      });
+      vendorMap[vendor].totalPayable += grandTotal;
+    });
 
-    const rows = approvedBills.map(b => [
-      `"${b.voucher_date || b.invoice_date || ""}"`,
-      `"${b.supplier_invoice_no || b.invoice_number || ""}"`,
-      `"${b.bill_date || b.invoice_date || ""}"`,
-      `"${(b.vendor_name || "").replace(/"/g, '""')}"`,
-      `"${b.vendor_gstin || ""}"`,
-      `"${b.source_of_supply || "Gujarat"}"`,
-      `"${b.accounting_ledgers?.[0]?.ledger_name || dynamicExpenseLedgers[0] || "Purchases"}"`,
-      b.taxable_amount || 0,
-      `"${b.cgst_ledger || "Input CGST"}"`,
-      b.cgst || 0,
-      `"${b.sgst_ledger || "Input SGST"}"`,
-      b.sgst || 0,
-      `"${b.igst_ledger || "Input IGST"}"`,
-      b.igst || 0,
-      b.round_off || 0,
-      b.grand_total || 0
-    ]);
+    const headers = ["Vendor / Supplier Name", "Invoice Number", "Invoice Date", "Invoice Amount (₹)", "Total Vendor Payable (₹)"];
+    const rows = [];
+
+    Object.entries(vendorMap).forEach(([vendor, data]) => {
+      // Vendor header summary row
+      rows.push([`"${vendor.replace(/"/g, '""')}"`, `""`, `""`, `""`, data.totalPayable]);
+      // Individual invoices below vendor
+      data.invoices.forEach(inv => {
+        rows.push([`""`, `"${inv.invNo}"`, `"${inv.date}"`, inv.amount, `""`]);
+      });
+      // Blank spacer row
+      rows.push([`""`, `""`, `""`, `""`, `""`]);
+    });
 
     const csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows.map(e => e.join(","))].join("\n");
     const link = document.createElement("a");
     link.href = encodeURI(csvContent);
-    link.download = `Approved_Invoices_${activeClient.replace(/\s+/g, "_")}.csv`;
+    link.download = `Accounts_Payable_Supplier_Wise_${activeClient.replace(/\s+/g, "_")}.csv`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-    notify("Exported Approved Invoices to Excel CSV!", "success");
+    notify("Exported Supplier-Wise Accounts Payable Report!", "success");
+  };
+
+  // PROFIT & LOSS CATEGORY-WISE EXPORT WITH MAIN HEAD CLASSIFICATION
+  const handleDownloadProfitAndLossCategoryWise = () => {
+    if (!Array.isArray(approvedBills) || approvedBills.length === 0) {
+      notify("No approved invoices available for Profit & Loss export.", "error");
+      return;
+    }
+
+    // Map client COA for fast category/head lookup
+    const coaCategoryMap = {};
+    clientCoa.forEach(l => {
+      if (l.name) {
+        coaCategoryMap[l.name.toLowerCase().trim()] = {
+          category: l.category || "General Expenses",
+          mainHead: l.statementType === "P&L" ? "Indirect Expenses" : "Operating Expenses"
+        };
+      }
+    });
+
+    const ledgerCategoryMap = {};
+    approvedBills.forEach(b => {
+      const ledgers = b.accounting_ledgers || [{ ledger_name: dynamicExpenseLedgers[0] || "Purchases", amount: b.taxable_amount || b.grand_total || 0 }];
+      ledgers.forEach(l => {
+        const lName = l.ledger_name || "General Purchase";
+        const amt = parseFloat(l.amount || 0);
+        const meta = coaCategoryMap[lName.toLowerCase().trim()] || { category: "Miscellaneous Expenses", mainHead: "Indirect Expenses" };
+        const catKey = meta.category;
+
+        if (!ledgerCategoryMap[catKey]) {
+          ledgerCategoryMap[catKey] = {
+            mainHead: meta.mainHead,
+            ledgers: {},
+            categoryTotal: 0
+          };
+        }
+
+        if (!ledgerCategoryMap[catKey].ledgers[lName]) {
+          ledgerCategoryMap[catKey].ledgers[lName] = 0;
+        }
+        ledgerCategoryMap[catKey].ledgers[lName] += amt;
+        ledgerCategoryMap[catKey].categoryTotal += amt;
+      });
+    });
+
+    const headers = ["Main Head", "Category", "Ledger Name", "Ledger Amount (₹)", "Category Total (₹)"];
+    const rows = [];
+
+    Object.entries(ledgerCategoryMap).forEach(([category, catData]) => {
+      // Category header row
+      rows.push([`"${catData.mainHead}"`, `"${category}"`, `""`, `""`, catData.categoryTotal]);
+      Object.entries(catData.ledgers).forEach(([ledgerName, amount]) => {
+        rows.push([`""`, `""`, `"${ledgerName}"`, amount, `""`]);
+      });
+      rows.push([`""`, `""`, `""`, `""`, `""`]);
+    });
+
+    const csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows.map(e => e.join(","))].join("\n");
+    const link = document.createElement("a");
+    link.href = encodeURI(csvContent);
+    link.download = `Profit_Loss_Category_Wise_${activeClient.replace(/\s+/g, "_")}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    notify("Exported Category-Wise Profit & Loss Report!", "success");
+  };
+
+  const handleDownloadExcel = () => {
+    handleDownloadAccountsPayableSupplierWise();
+    handleDownloadProfitAndLossCategoryWise();
   };
 
   const buildSingleXmlVoucher = (b) => {
