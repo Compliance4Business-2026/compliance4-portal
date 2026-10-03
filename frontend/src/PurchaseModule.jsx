@@ -293,6 +293,16 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
     }
   });
 
+  // MEMORIZED LAST CHOSEN GST LEDGERS
+  const [lastGstLedgers, setLastGstLedgers] = useState(() => {
+    try {
+      const saved = localStorage.getItem(`c4_last_gst_ledgers_${activeClient}`);
+      return saved ? JSON.parse(saved) : {};
+    } catch {
+      return {};
+    }
+  });
+
   const [clientCoa, setClientCoa] = useState(() => {
     try {
       const saved = localStorage.getItem(`c4_coa_${activeClient}`);
@@ -423,6 +433,10 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
     localStorage.setItem(`c4_purchase_item_rules_${activeClient}`, JSON.stringify(itemRules));
   }, [itemRules, activeClient]);
 
+  useEffect(() => {
+    localStorage.setItem(`c4_last_gst_ledgers_${activeClient}`, JSON.stringify(lastGstLedgers));
+  }, [lastGstLedgers, activeClient]);
+
   const [isUploadingBill, setIsUploadingBill] = useState(false);
   const [uploadProgress, setUploadProgress] = useState("");
   const [notification, setNotification] = useState(null);
@@ -470,11 +484,10 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
       reader.onerror = (error) => reject(error);
     });
 
-  // FUZZY CORE NAME EXTRACTOR FOR INTELLIGENT RECURRING ITEM MATCHING
+  // FUZZY CORE NAME EXTRACTOR FOR RECURRING ITEM MATCHING
   const extractCoreItemName = (fullName) => {
     if (!fullName) return "";
     let clean = fullName.toLowerCase();
-    // Strip HSN digits, percentages (3%, 5%), units (ltr, kg, pkt, ml), and numbers
     clean = clean.replace(/\b\d+([.,]\d+)?(%)?(\s*)?(ltr|ml|kg|pkt|pcs|gm|g|l)?\b/g, "");
     clean = clean.replace(/[^a-z\s]/g, " ");
     return clean.split(/\s+/).filter(w => w.length > 2).slice(0, 3).join(" ").trim();
@@ -484,10 +497,8 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
     if (!itemNameOrDesc) return null;
     const cleanKey = itemNameOrDesc.trim().toLowerCase();
     
-    // 1. Exact Match
     if (itemRules[cleanKey]) return itemRules[cleanKey];
 
-    // 2. Core Name Fuzzy Match (e.g. "Milk Jain")
     const coreName = extractCoreItemName(itemNameOrDesc);
     if (coreName && itemRules[coreName]) return itemRules[coreName];
 
@@ -529,25 +540,39 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
     const defaultLedger = dynamicExpenseLedgers[0] || "Purchase: General Goods";
     const isNonItcClient = !isClientItcEligible;
     
-    // Dynamically fetch GST Tax Ledger from COA instead of hardcoding
-    const coaTaxDefault = dynamicGstLedgers[0] || (isNonItcClient ? "GST Expense on Purchase" : "Input CGST");
-    const defaultTaxLedger = bill.cgst_ledger || coaTaxDefault;
-    const defaultSgstLedger = bill.sgst_ledger || coaTaxDefault;
-    const defaultIgstLedger = bill.igst_ledger || coaTaxDefault;
+    // STRICTLY FETCH MEMORIZED LAST CHOSEN GST LEDGERS
+    const defaultTaxLedger = bill.cgst_ledger || lastGstLedgers.cgst || dynamicGstLedgers[0] || (isNonItcClient ? "GST Expense on Purchase" : "Input CGST");
+    const defaultSgstLedger = bill.sgst_ledger || lastGstLedgers.sgst || dynamicGstLedgers[0] || (isNonItcClient ? "GST Expense on Purchase" : "Input SGST");
+    const defaultIgstLedger = bill.igst_ledger || lastGstLedgers.igst || dynamicGstLedgers[0] || (isNonItcClient ? "GST Expense on Purchase" : "Input IGST");
 
     const resolvedPreview = bill.file_preview_url || previewMemoryCache.get(bill.id) || "";
 
-    const items = Array.isArray(bill.items) && bill.items.length > 0 ? bill.items : [
+    // TAX-INCLUSIVE BACK-CALCULATION FOR ITEMS
+    const rawItems = Array.isArray(bill.items) && bill.items.length > 0 ? bill.items : [
       {
         item_name: bill.vendor_name ? "General Purchase" : "Bakery Raw Material",
         description: bill.vendor_name || "General Supplies",
         qty: 1,
         rate: bill.taxable_amount || bill.grand_total || 0,
-        amount: bill.taxable_amount || bill.grand_total || 0
+        amount: bill.taxable_amount || bill.grand_total || 0,
+        tax_rate: bill.tax_rate || 5
       }
     ];
 
-    const grandTotal = parseFloat(bill.grand_total || bill.taxable_amount) || 0;
+    const items = rawItems.map(it => {
+      let amt = parseFloat(it.amount || it.rate || 0);
+      const taxRate = parseFloat(it.tax_rate || 5) || 0;
+      let netAmount = isNonItcClient && taxRate > 0 ? parseFloat((amt / (1 + taxRate / 100)).toFixed(2)) : amt;
+      return {
+        ...it,
+        qty: parseFloat(it.qty) || 1,
+        rate: parseFloat(it.rate || netAmount) || netAmount,
+        amount: netAmount
+      };
+    });
+
+    const calculatedSubtotal = items.reduce((acc, it) => acc + (parseFloat(it.amount) || 0), 0);
+    const grandTotal = parseFloat(bill.grand_total || bill.taxable_amount || calculatedSubtotal) || 0;
     const vendorName = bill.vendor_name || "Sundry Creditor";
 
     const mappedAccountingLedgers = Array.isArray(bill.accounting_ledgers) && bill.accounting_ledgers.length > 0
@@ -577,7 +602,7 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
       sgst_ledger: defaultSgstLedger,
       igst_ledger: defaultIgstLedger,
       round_off: parseFloat(bill.round_off) || 0.00,
-      taxable_amount: parseFloat(bill.taxable_amount || bill.grand_total) || 0,
+      taxable_amount: calculatedSubtotal,
       grand_total: grandTotal,
       vendor_name: vendorName,
       accounting_ledgers: mappedAccountingLedgers,
@@ -586,13 +611,7 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
         amount: grandTotal,
         type: "Credit"
       },
-      items: items.map(it => ({
-        item_name: it.item_name || it.description || "General Item",
-        description: it.description || "",
-        qty: parseFloat(it.qty) || 1,
-        rate: parseFloat(it.rate || it.amount) || 0,
-        amount: parseFloat(it.amount) || 0
-      }))
+      items: items
     });
   };
 
@@ -605,6 +624,7 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
     let newExtractedBills = [];
     let duplicateWarningsCount = 0;
     const defaultLedger = dynamicExpenseLedgers[0] || "Purchase: General Goods";
+    const isNonItcClient = !isClientItcEligible;
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
@@ -632,21 +652,21 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
       const invNo = extracted.supplier_invoice_no || extracted.invoice_number || extracted.invoiceNo || `INV-${Math.floor(1000 + Math.random() * 9000)}`;
       const invDate = extracted.invoice_date || extracted.bill_date || extracted.invoiceDate || new Date().toISOString().split("T")[0];
       
-      let taxable = parseFloat(extracted.taxable_amount || extracted.taxableAmount || extracted.amount || 1000.00);
+      let rawTaxable = parseFloat(extracted.taxable_amount || extracted.taxableAmount || extracted.amount || 1000.00);
       const cgstVal = parseFloat(extracted.cgst || 0);
       const sgstVal = parseFloat(extracted.sgst || 0);
       const igstVal = parseFloat(extracted.igst || 0);
       const roundVal = parseFloat(extracted.round_off || extracted.roundOff || 0);
-      let grandTotalVal = parseFloat(extracted.grand_total || extracted.grandTotal || (taxable + cgstVal + sgstVal + igstVal) || taxable);
+      let grandTotalVal = parseFloat(extracted.grand_total || extracted.grandTotal || (rawTaxable + cgstVal + sgstVal + igstVal) || rawTaxable);
 
-      // Sanitize item descriptions to filter out pure HSN numbers if grabbed incorrectly
       let rawItems = Array.isArray(extracted.items) && extracted.items.length > 0 ? extracted.items : [
         {
           item_name: "General Purchase Item",
           description: cleanFileName,
           qty: 1,
-          rate: taxable,
-          amount: taxable
+          rate: rawTaxable,
+          amount: rawTaxable,
+          tax_rate: 5
         }
       ];
 
@@ -655,8 +675,19 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
         if (/^\d{4,8}$/.test(desc.trim())) {
           desc = "Bakery Raw Material / Item";
         }
-        return { ...it, description: desc };
+        let amt = parseFloat(it.amount || it.rate || 0);
+        const taxRate = parseFloat(it.tax_rate || 5) || 0;
+        let netAmount = isNonItcClient && taxRate > 0 ? parseFloat((amt / (1 + taxRate / 100)).toFixed(2)) : amt;
+        return {
+          ...it,
+          description: desc,
+          qty: parseFloat(it.qty) || 1,
+          rate: parseFloat(it.rate || netAmount) || netAmount,
+          amount: netAmount
+        };
       });
+
+      const calculatedSubtotal = rawItems.reduce((acc, it) => acc + (parseFloat(it.amount) || 0), 0);
 
       const generatedId = extracted.id || `inv_${Date.now()}_${i}_${Math.random().toString(36).substr(2, 4)}`;
 
@@ -674,16 +705,16 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
         bill_date: invDate,
         voucher_type: "Purchase",
         source_of_supply: extracted.source_of_supply || extracted.placeOfSupply || "Gujarat",
-        taxable_amount: taxable,
+        taxable_amount: calculatedSubtotal,
         cgst: cgstVal,
         sgst: sgstVal,
         igst: igstVal,
         round_off: roundVal,
-        grand_total: grandTotalVal > 0 ? grandTotalVal : taxable,
+        grand_total: grandTotalVal > 0 ? grandTotalVal : calculatedSubtotal,
         file_preview_url: persistentPreview,
         party_ledger: {
           ledger_name: vName,
-          amount: grandTotalVal > 0 ? grandTotalVal : taxable,
+          amount: grandTotalVal > 0 ? grandTotalVal : calculatedSubtotal,
           type: "Credit"
         },
         items: rawItems
@@ -762,7 +793,6 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
         roundOffNum = parseFloat(manualRoundOff) || 0;
       }
     } else {
-      // Auto round off within ±₹2.00 threshold
       let autoDiff = parseFloat((finalTotal - rawTotal).toFixed(2));
       if (Math.abs(autoDiff) <= 2.00) {
         roundOffNum = autoDiff;
@@ -807,7 +837,6 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
     let adjustedDr = totalDr + roundOff;
 
     const diff = Math.abs(adjustedDr - totalCr);
-    // Allow ±2.00 tolerance for automatic rounding discrepancies
     const isBalanced = diff <= 2.05;
 
     return { isBalanced, totalDr: adjustedDr, totalCr, diff };
@@ -815,7 +844,7 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
 
   const handleToggleTaxAsExpense = (checked) => {
     if (!voucherData) return;
-    const coaDefault = dynamicGstLedgers[0] || "GST Expense on Purchase";
+    const coaDefault = lastGstLedgers.cgst || dynamicGstLedgers[0] || "GST Expense on Purchase";
     const taxLedger = checked ? coaDefault : "Input CGST";
     const sgstTaxLedger = checked ? coaDefault : "Input SGST";
     const igstTaxLedger = checked ? coaDefault : "Input IGST";
@@ -855,7 +884,24 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
     }
   };
 
-  // ADD NEW VENDOR CREATOR HANDLER
+  // MEMORIZE GST LEDGERS AND APPLY TO ALL THREE (CGST, SGST, IGST) AUTOMATICALLY
+  const handleGstLedgerChange = (type, ledgerName) => {
+    if (!voucherData) return;
+    
+    // Automatically synchronize across all tax heads so they all match your chosen ledger
+    setVoucherData(prev => ({
+      ...prev,
+      cgst_ledger: ledgerName,
+      sgst_ledger: ledgerName,
+      igst_ledger: ledgerName
+    }));
+
+    const newLastGst = { cgst: ledgerName, sgst: ledgerName, igst: ledgerName };
+    setLastGstLedgers(newLastGst);
+    localStorage.setItem(`c4_last_gst_ledgers_${activeClient}`, JSON.stringify(newLastGst));
+    notify(`Memorized GST Ledger: "${ledgerName}" for future invoices`, "info");
+  };
+
   const handleCreateNewVendor = () => {
     if (!newVendorName.trim()) {
       notify("Please enter a valid vendor name.", "error");
@@ -1806,7 +1852,7 @@ ${xmlVouchers}
                     <label className="block text-[11px] font-semibold text-slate-500 mb-1">CGST Ledger</label>
                     <SearchableLedgerSelect
                       value={voucherData.cgst_ledger}
-                      onChange={(selected) => setVoucherData({ ...voucherData, cgst_ledger: selected })}
+                      onChange={(selected) => handleGstLedgerChange("cgst", selected)}
                       coaList={clientCoa}
                       fallbackOptions={dynamicGstLedgers}
                       placeholder="Select CGST..."
@@ -1830,7 +1876,7 @@ ${xmlVouchers}
                     <label className="block text-[11px] font-semibold text-slate-500 mb-1">SGST Ledger</label>
                     <SearchableLedgerSelect
                       value={voucherData.sgst_ledger}
-                      onChange={(selected) => setVoucherData({ ...voucherData, sgst_ledger: selected })}
+                      onChange={(selected) => handleGstLedgerChange("sgst", selected)}
                       coaList={clientCoa}
                       fallbackOptions={dynamicGstLedgers}
                       placeholder="Select SGST..."
@@ -1854,7 +1900,7 @@ ${xmlVouchers}
                     <label className="block text-[11px] font-semibold text-slate-500 mb-1">IGST Ledger</label>
                     <SearchableLedgerSelect
                       value={voucherData.igst_ledger}
-                      onChange={(selected) => setVoucherData({ ...voucherData, igst_ledger: selected })}
+                      onChange={(selected) => handleGstLedgerChange("igst", selected)}
                       coaList={clientCoa}
                       fallbackOptions={dynamicGstLedgers}
                       placeholder="Select IGST..."
