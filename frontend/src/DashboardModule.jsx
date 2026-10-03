@@ -14,6 +14,8 @@ import { api } from "./api";
 export default function DashboardModule({ activeClient = "Pansuria Confectionery & Food" }) {
   const [cloudSummary, setCloudSummary] = useState(null);
   const [selectedPeriod, setSelectedPeriod] = useState("Current Month");
+  
+  // Default custom range bounds to current ongoing month (October 2026)
   const [customStartDate, setCustomStartDate] = useState("2026-10-01");
   const [customEndDate, setCustomEndDate] = useState("2026-10-31");
 
@@ -151,7 +153,7 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
       .map((l) => l.name.toLowerCase().trim());
   }, [clientCoa]);
 
-  // Date parser
+  // Robust Date parser
   const parseToDate = (raw) => {
     if (!raw) return null;
     const s = String(raw).trim();
@@ -168,17 +170,20 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
     return isNaN(d.getTime()) ? null : d;
   };
 
-  // Date range filter helper based on selectedPeriod (Defaulting to ongoing October 2026)
+  // DYNAMIC PERIOD FILTERING LOGIC
   const isDateInPeriod = (rawDate) => {
     if (selectedPeriod === "All") return true;
     const d = parseToDate(rawDate);
-    if (!d) return true;
+    if (!d) return true; // If unparsed, include to avoid dropping records silently
 
     const yr = d.getFullYear();
-    const mo = d.getMonth() + 1;
+    const mo = d.getMonth() + 1; // 1 to 12
+    const now = new Date();
+    const currentYear = now.getFullYear();
+    const currentMonth = now.getMonth() + 1;
 
     if (selectedPeriod === "Current Month") {
-      return yr === 2026 && mo === 10;
+      return yr === currentYear && mo === currentMonth;
     }
     if (selectedPeriod === "FY2026-27") {
       return (yr === 2026 && mo >= 4) || (yr === 2027 && mo <= 3);
@@ -187,20 +192,20 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
       return (yr === 2025 && mo >= 4) || (yr === 2026 && mo <= 3);
     }
     if (selectedPeriod === "Q1") {
-      return yr === 2026 && mo >= 4 && mo <= 6;
+      return yr === currentYear && mo >= 4 && mo <= 6;
     }
     if (selectedPeriod === "Q2") {
-      return yr === 2026 && mo >= 7 && mo <= 9;
+      return yr === currentYear && mo >= 7 && mo <= 9;
     }
     if (selectedPeriod === "Q3") {
-      return yr === 2026 && mo >= 10 && mo <= 12;
+      return yr === currentYear && mo >= 10 && mo <= 12;
     }
     if (selectedPeriod === "Q4") {
-      return yr === 2027 && mo >= 1 && mo <= 3;
+      return yr === (currentYear + 1) && mo >= 1 && mo <= 3;
     }
     if (selectedPeriod === "Custom") {
       if (!customStartDate || !customEndDate) return true;
-      const targetTime = d.setHours(0,0,0,0);
+      const targetTime = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
       const startTime = new Date(customStartDate).setHours(0,0,0,0);
       const endTime = new Date(customEndDate).setHours(23,59,59,999);
       return targetTime >= startTime && targetTime <= endTime;
@@ -545,7 +550,7 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
   // 4. LAST 6 MONTHS TREND
   const last6MonthsData = useMemo(() => {
     const months = [];
-    const now = new Date(2026, 9, 4);
+    const now = new Date();
 
     for (let i = 5; i >= 0; i--) {
       const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
