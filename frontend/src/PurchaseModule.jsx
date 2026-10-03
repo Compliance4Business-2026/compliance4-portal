@@ -293,7 +293,6 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
     }
   });
 
-  // MEMORIZED LAST CHOSEN GST LEDGERS
   const [lastGstLedgers, setLastGstLedgers] = useState(() => {
     try {
       const saved = localStorage.getItem(`c4_last_gst_ledgers_${activeClient}`);
@@ -447,12 +446,10 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
   const [showAllocationModal, setShowAllocationModal] = useState(false);
   const [voucherData, setVoucherData] = useState(null);
 
-  // ADD NEW VENDOR MODAL STATE
   const [showAddVendorModal, setShowAddVendorModal] = useState(false);
   const [newVendorName, setNewVendorName] = useState("");
   const [newVendorCategory, setNewVendorCategory] = useState("Sundry Creditors");
 
-  // PANNING STATE FOR ZOOMED IMAGE PREVIEW
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   const [scrollPos, setScrollPos] = useState({ left: 0, top: 0 });
@@ -484,7 +481,6 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
       reader.onerror = (error) => reject(error);
     });
 
-  // FUZZY CORE NAME EXTRACTOR FOR RECURRING ITEM MATCHING
   const extractCoreItemName = (fullName) => {
     if (!fullName) return "";
     let clean = fullName.toLowerCase();
@@ -540,14 +536,12 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
     const defaultLedger = dynamicExpenseLedgers[0] || "Purchase: General Goods";
     const isNonItcClient = !isClientItcEligible;
     
-    // STRICTLY FETCH MEMORIZED LAST CHOSEN GST LEDGERS
     const defaultTaxLedger = bill.cgst_ledger || lastGstLedgers.cgst || dynamicGstLedgers[0] || (isNonItcClient ? "GST Expense on Purchase" : "Input CGST");
     const defaultSgstLedger = bill.sgst_ledger || lastGstLedgers.sgst || dynamicGstLedgers[0] || (isNonItcClient ? "GST Expense on Purchase" : "Input SGST");
     const defaultIgstLedger = bill.igst_ledger || lastGstLedgers.igst || dynamicGstLedgers[0] || (isNonItcClient ? "GST Expense on Purchase" : "Input IGST");
 
     const resolvedPreview = bill.file_preview_url || previewMemoryCache.get(bill.id) || "";
 
-    // TAX-INCLUSIVE BACK-CALCULATION FOR ITEMS
     const rawItems = Array.isArray(bill.items) && bill.items.length > 0 ? bill.items : [
       {
         item_name: bill.vendor_name ? "General Purchase" : "Bakery Raw Material",
@@ -555,14 +549,28 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
         qty: 1,
         rate: bill.taxable_amount || bill.grand_total || 0,
         amount: bill.taxable_amount || bill.grand_total || 0,
-        tax_rate: bill.tax_rate || 5
+        tax_rate: bill.tax_rate || 0
       }
     ];
 
+    const cgstTotal = parseFloat(bill.cgst || 0);
+    const sgstTotal = parseFloat(bill.sgst || 0);
+    const igstTotal = parseFloat(bill.igst || 0);
+    const hasAnyTax = (cgstTotal > 0 || sgstTotal > 0 || igstTotal > 0);
+    const explicitTaxableProvided = parseFloat(bill.taxable_amount || 0) > 0;
+
     const items = rawItems.map(it => {
       let amt = parseFloat(it.amount || it.rate || 0);
-      const taxRate = parseFloat(it.tax_rate || 5) || 0;
-      let netAmount = isNonItcClient && taxRate > 0 ? parseFloat((amt / (1 + taxRate / 100)).toFixed(2)) : amt;
+      const taxRate = parseFloat(it.tax_rate || 0) || 0;
+      
+      // RULE APPLIED:
+      // 1. If Explicit Taxable Value is available or No Tax exists, fetch amount as-is.
+      // 2. If Tax-Inclusive amounts exist with active tax, perform reverse calculation.
+      let netAmount = amt;
+      if (!explicitTaxableProvided && hasAnyTax && taxRate > 0) {
+        netAmount = parseFloat((amt / (1 + taxRate / 100)).toFixed(2));
+      }
+
       return {
         ...it,
         qty: parseFloat(it.qty) || 1,
@@ -571,8 +579,11 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
       };
     });
 
-    const calculatedSubtotal = items.reduce((acc, it) => acc + (parseFloat(it.amount) || 0), 0);
-    const grandTotal = parseFloat(bill.grand_total || bill.taxable_amount || calculatedSubtotal) || 0;
+    const calculatedSubtotal = explicitTaxableProvided 
+      ? parseFloat(bill.taxable_amount) 
+      : items.reduce((acc, it) => acc + (parseFloat(it.amount) || 0), 0);
+
+    const grandTotal = parseFloat(bill.grand_total || (calculatedSubtotal + cgstTotal + sgstTotal + igstTotal)) || calculatedSubtotal;
     const vendorName = bill.vendor_name || "Sundry Creditor";
 
     const mappedAccountingLedgers = Array.isArray(bill.accounting_ledgers) && bill.accounting_ledgers.length > 0
@@ -624,7 +635,6 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
     let newExtractedBills = [];
     let duplicateWarningsCount = 0;
     const defaultLedger = dynamicExpenseLedgers[0] || "Purchase: General Goods";
-    const isNonItcClient = !isClientItcEligible;
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
@@ -652,21 +662,21 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
       const invNo = extracted.supplier_invoice_no || extracted.invoice_number || extracted.invoiceNo || `INV-${Math.floor(1000 + Math.random() * 9000)}`;
       const invDate = extracted.invoice_date || extracted.bill_date || extracted.invoiceDate || new Date().toISOString().split("T")[0];
       
-      let rawTaxable = parseFloat(extracted.taxable_amount || extracted.taxableAmount || extracted.amount || 1000.00);
       const cgstVal = parseFloat(extracted.cgst || 0);
       const sgstVal = parseFloat(extracted.sgst || 0);
       const igstVal = parseFloat(extracted.igst || 0);
       const roundVal = parseFloat(extracted.round_off || extracted.roundOff || 0);
-      let grandTotalVal = parseFloat(extracted.grand_total || extracted.grandTotal || (rawTaxable + cgstVal + sgstVal + igstVal) || rawTaxable);
+      const hasAnyTax = (cgstVal > 0 || sgstVal > 0 || igstVal > 0);
+      const explicitTaxable = parseFloat(extracted.taxable_amount || extracted.taxableAmount || 0);
 
       let rawItems = Array.isArray(extracted.items) && extracted.items.length > 0 ? extracted.items : [
         {
           item_name: "General Purchase Item",
           description: cleanFileName,
           qty: 1,
-          rate: rawTaxable,
-          amount: rawTaxable,
-          tax_rate: 5
+          rate: explicitTaxable || parseFloat(extracted.amount || 1000.00),
+          amount: explicitTaxable || parseFloat(extracted.amount || 1000.00),
+          tax_rate: 0
         }
       ];
 
@@ -676,8 +686,12 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
           desc = "Bakery Raw Material / Item";
         }
         let amt = parseFloat(it.amount || it.rate || 0);
-        const taxRate = parseFloat(it.tax_rate || 5) || 0;
-        let netAmount = isNonItcClient && taxRate > 0 ? parseFloat((amt / (1 + taxRate / 100)).toFixed(2)) : amt;
+        const taxRate = parseFloat(it.tax_rate || 0) || 0;
+        
+        let netAmount = (!explicitTaxable && hasAnyTax && taxRate > 0) 
+          ? parseFloat((amt / (1 + taxRate / 100)).toFixed(2)) 
+          : amt;
+
         return {
           ...it,
           description: desc,
@@ -687,7 +701,11 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
         };
       });
 
-      const calculatedSubtotal = rawItems.reduce((acc, it) => acc + (parseFloat(it.amount) || 0), 0);
+      const calculatedSubtotal = explicitTaxable > 0 
+        ? explicitTaxable 
+        : rawItems.reduce((acc, it) => acc + (parseFloat(it.amount) || 0), 0);
+
+      const grandTotalVal = parseFloat(extracted.grand_total || extracted.grandTotal || (calculatedSubtotal + cgstVal + sgstVal + igstVal) || calculatedSubtotal);
 
       const generatedId = extracted.id || `inv_${Date.now()}_${i}_${Math.random().toString(36).substr(2, 4)}`;
 
@@ -884,11 +902,9 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
     }
   };
 
-  // MEMORIZE GST LEDGERS AND APPLY TO ALL THREE (CGST, SGST, IGST) AUTOMATICALLY
   const handleGstLedgerChange = (type, ledgerName) => {
     if (!voucherData) return;
     
-    // Automatically synchronize across all tax heads so they all match your chosen ledger
     setVoucherData(prev => ({
       ...prev,
       cgst_ledger: ledgerName,
@@ -1255,7 +1271,6 @@ ${xmlVouchers}
     return Object.values(groups);
   }, [pushedBills]);
 
-  // FULL SCREEN SIDE-BY-SIDE REVIEW WORKSPACE WITH NULL-GUARDS & UPGRADED FEATURES
   if (activeReviewBill && voucherData) {
     if (!voucherData || typeof voucherData !== 'object') {
       setActiveReviewBill(null);
@@ -1270,7 +1285,6 @@ ${xmlVouchers}
     );
     const gstCheck = validateGSTIN(voucherData.vendor_gstin);
 
-    // Vendor matching check against COA Sundry Creditors
     const matchedSundryCreditor = sundryCreditors.find(
       c => c.name.toLowerCase().trim() === (voucherData.vendor_name || "").toLowerCase().trim()
     );
