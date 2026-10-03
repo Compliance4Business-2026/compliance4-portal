@@ -584,11 +584,13 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
     const explicitTaxableProvided = parseFloat(bill.taxable_amount || 0) > 0;
 
     const items = rawItems.map(it => {
-      let amt = parseFloat(it.amount || it.rate || 0);
+      // Prioritize explicit item taxable amount if provided by AI extraction
+      let explicitItemTaxable = parseFloat(it.taxable_amount || it.taxableAmount || 0);
+      let amt = explicitItemTaxable > 0 ? explicitItemTaxable : parseFloat(it.amount || it.rate || 0);
       const taxRate = parseFloat(it.tax_rate || 0) || 0;
       
       let netAmount = amt;
-      if (!explicitTaxableProvided && hasAnyTax && taxRate > 0) {
+      if (!explicitItemTaxable && explicitTaxableProvided && hasAnyTax && taxRate > 0) {
         netAmount = parseFloat((amt / (1 + taxRate / 100)).toFixed(2));
       }
 
@@ -607,7 +609,6 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
     const targetGrandTotal = parseFloat(bill.grand_total || (calculatedSubtotal + cgstTotal + sgstTotal + igstTotal)) || calculatedSubtotal;
     const rawSum = calculatedSubtotal + cgstTotal + sgstTotal + igstTotal;
 
-    // Automatically compute and absorb round-off if grand total differs slightly from raw sum
     let detectedRoundOff = parseFloat(bill.round_off || 0);
     if (detectedRoundOff === 0 && Math.abs(targetGrandTotal - rawSum) <= 5.00) {
       detectedRoundOff = parseFloat((targetGrandTotal - rawSum).toFixed(2));
@@ -665,7 +666,6 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
     let newExtractedBills = [];
     let duplicateWarningsCount = 0;
     const defaultLedger = dynamicExpenseLedgers[0] || "Purchase: General Goods";
-    const isNonItcClient = !isClientItcEligible;
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
@@ -715,10 +715,11 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
         if (/^\d{4,8}$/.test(desc.trim())) {
           desc = "Bakery Raw Material / Item";
         }
-        let amt = parseFloat(it.amount || it.rate || 0);
+        let explicitItemTaxable = parseFloat(it.taxable_amount || it.taxableAmount || 0);
+        let amt = explicitItemTaxable > 0 ? explicitItemTaxable : parseFloat(it.amount || it.rate || 0);
         const taxRate = parseFloat(it.tax_rate || 0) || 0;
         
-        let netAmount = (!explicitTaxable && hasAnyTax && taxRate > 0) 
+        let netAmount = (!explicitItemTaxable && explicitTaxable > 0 && hasAnyTax && taxRate > 0) 
           ? parseFloat((amt / (1 + taxRate / 100)).toFixed(2)) 
           : amt;
 
@@ -1402,7 +1403,7 @@ ${xmlVouchers}
         )}
 
         <div className="flex-1 flex overflow-hidden">
-          {/* LEFT: ZOOMABLE & PANNABLE IMAGE PREVIEW */}
+          {/* LEFT: ZOOMABLE & PANNABLE IMAGE PREVIEW WITH MOUSE & TOUCH SUPPORT */}
           <div 
             ref={previewContainerRef}
             onMouseDown={(e) => {
@@ -1424,6 +1425,26 @@ ${xmlVouchers}
             }}
             onMouseUp={() => setIsDragging(false)}
             onMouseLeave={() => setIsDragging(false)}
+            onTouchStart={(e) => {
+              if (e.touches.length === 1) {
+                setIsDragging(true);
+                setDragStart({ x: e.touches[0].clientX, y: e.touches[0].clientY });
+                if (previewContainerRef.current) {
+                  setScrollPos({
+                    left: previewContainerRef.current.scrollLeft,
+                    top: previewContainerRef.current.scrollTop
+                  });
+                }
+              }
+            }}
+            onTouchMove={(e) => {
+              if (!isDragging || !previewContainerRef.current || e.touches.length !== 1) return;
+              const dx = e.touches[0].clientX - dragStart.x;
+              const dy = e.touches[0].clientY - dragStart.y;
+              previewContainerRef.current.scrollLeft = scrollPos.left - dx;
+              previewContainerRef.current.scrollTop = scrollPos.top - dy;
+            }}
+            onTouchEnd={() => setIsDragging(false)}
             className={`w-1/2 bg-slate-200 border-r border-slate-300 relative overflow-auto flex flex-col select-none ${
               zoomLevel > 1 ? (isDragging ? "cursor-grabbing" : "cursor-grab") : "cursor-default"
             }`}
@@ -1458,14 +1479,17 @@ ${xmlVouchers}
                 <img
                   src={voucherData.file_preview_url}
                   alt="Original Document"
+                  draggable={false}
+                  onDragStart={(e) => e.preventDefault()}
                   style={{
                     transform: `scale(${zoomLevel})`,
                     transformOrigin: "top center",
                     maxWidth: zoomLevel === 1 ? "96%" : "none",
                     marginTop: "8px",
-                    transition: isDragging ? "none" : "transform 0.1s ease-out"
+                    transition: isDragging ? "none" : "transform 0.1s ease-out",
+                    userSelect: "none"
                   }}
-                  className="bg-white shadow-xl rounded border border-slate-300 pointer-events-none"
+                  className="bg-white shadow-xl rounded border border-slate-300 pointer-events-auto"
                 />
               ) : (
                 <div className="text-center p-12 bg-white/70 border border-dashed border-slate-400 rounded-xl mt-12">
