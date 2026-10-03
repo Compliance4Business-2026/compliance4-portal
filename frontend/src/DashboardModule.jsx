@@ -14,8 +14,6 @@ import { api } from "./api";
 export default function DashboardModule({ activeClient = "Pansuria Confectionery & Food" }) {
   const [cloudSummary, setCloudSummary] = useState(null);
   const [selectedPeriod, setSelectedPeriod] = useState("Current Month");
-  
-  // Default custom range bounds to current ongoing month (October 2026)
   const [customStartDate, setCustomStartDate] = useState("2026-10-01");
   const [customEndDate, setCustomEndDate] = useState("2026-10-31");
 
@@ -153,28 +151,37 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
       .map((l) => l.name.toLowerCase().trim());
   }, [clientCoa]);
 
-  // Robust Date parser
+  // --- BULLETPROOF DATE PARSER ---
   const parseToDate = (raw) => {
     if (!raw) return null;
     const s = String(raw).trim();
+    
+    // Excel serial number check
     if (!isNaN(s) && Number(s) > 20000 && Number(s) < 60000) {
       return new Date(Math.round((Number(s) - 25569) * 86400 * 1000));
     }
+
+    // Standard ISO string or YYYY-MM-DD / DD-MM-YYYY
+    const d = new Date(s);
+    if (!isNaN(d.getTime())) return d;
+
     const parts = s.split(/[\/\-]/);
     if (parts.length === 3) {
-      if (parts[0].length === 4) return new Date(parts[0], parseInt(parts[1]) - 1, parts[2]);
-      const yr = parts[2].length === 2 ? `20${parts[2]}` : parts[2];
-      return new Date(yr, parseInt(parts[1]) - 1, parts[0]);
+      if (parts[0].length === 4) {
+        return new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
+      } else {
+        const yr = parts[2].length === 2 ? `20${parts[2]}` : parts[2];
+        return new Date(parseInt(yr), parseInt(parts[1]) - 1, parseInt(parts[0]));
+      }
     }
-    const d = new Date(raw);
-    return isNaN(d.getTime()) ? null : d;
+    return null;
   };
 
-  // DYNAMIC PERIOD FILTERING LOGIC
+  // --- DYNAMIC PERIOD FILTERING ---
   const isDateInPeriod = (rawDate) => {
     if (selectedPeriod === "All") return true;
     const d = parseToDate(rawDate);
-    if (!d) return true; // If unparsed, include to avoid dropping records silently
+    if (!d || isNaN(d.getTime())) return false; // Strict: if date cannot be parsed, exclude rather than matching all
 
     const yr = d.getFullYear();
     const mo = d.getMonth() + 1; // 1 to 12
@@ -205,7 +212,7 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
     }
     if (selectedPeriod === "Custom") {
       if (!customStartDate || !customEndDate) return true;
-      const targetTime = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+      const targetTime = new Date(yr, mo - 1, d.getDate()).setHours(0,0,0,0);
       const startTime = new Date(customStartDate).setHours(0,0,0,0);
       const endTime = new Date(customEndDate).setHours(23,59,59,999);
       return targetTime >= startTime && targetTime <= endTime;
