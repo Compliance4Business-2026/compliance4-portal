@@ -37,6 +37,20 @@ const API_BASE_URL =
 
 const previewMemoryCache = new Map();
 
+// Helper to safely get preview from sessionStorage or memory cache
+const getCachedPreview = (billId) => {
+  if (!billId) return "";
+  if (previewMemoryCache.has(billId)) return previewMemoryCache.get(billId);
+  try {
+    const sessionSaved = sessionStorage.getItem(`c4_preview_${billId}`);
+    if (sessionSaved) {
+      previewMemoryCache.set(billId, sessionSaved);
+      return sessionSaved;
+    }
+  } catch {}
+  return "";
+};
+
 const FALLBACK_EXPENSE_LEDGERS = [
   "Purchase: Beverages",
   "Purchase: Dairy Products",
@@ -251,7 +265,7 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
       const parsed = saved ? JSON.parse(saved) : [];
       return parsed.map(b => ({
         ...b,
-        file_preview_url: b.file_preview_url || previewMemoryCache.get(b.id) || ""
+        file_preview_url: b.file_preview_url || getCachedPreview(b.id)
       }));
     } catch {
       return [];
@@ -264,7 +278,7 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
       const parsed = saved ? JSON.parse(saved) : [];
       return parsed.map(b => ({
         ...b,
-        file_preview_url: b.file_preview_url || previewMemoryCache.get(b.id) || ""
+        file_preview_url: b.file_preview_url || getCachedPreview(b.id)
       }));
     } catch {
       return [];
@@ -277,7 +291,7 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
       const parsed = saved ? JSON.parse(saved) : [];
       return parsed.map(b => ({
         ...b,
-        file_preview_url: b.file_preview_url || previewMemoryCache.get(b.id) || ""
+        file_preview_url: b.file_preview_url || getCachedPreview(b.id)
       }));
     } catch {
       return [];
@@ -327,20 +341,29 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
 
         if (Array.isArray(cloudNeedsReview)) {
           setPendingBills(cloudNeedsReview.map(b => {
-            if (b.file_preview_url) previewMemoryCache.set(b.id, b.file_preview_url);
-            return { ...b, file_preview_url: b.file_preview_url || previewMemoryCache.get(b.id) || "" };
+            if (b.file_preview_url) {
+              previewMemoryCache.set(b.id, b.file_preview_url);
+              try { sessionStorage.setItem(`c4_preview_${b.id}`, b.file_preview_url); } catch {}
+            }
+            return { ...b, file_preview_url: b.file_preview_url || getCachedPreview(b.id) };
           }));
         }
         if (Array.isArray(cloudApproved)) {
           setApprovedBills(cloudApproved.map(b => {
-            if (b.file_preview_url) previewMemoryCache.set(b.id, b.file_preview_url);
-            return { ...b, file_preview_url: b.file_preview_url || previewMemoryCache.get(b.id) || "" };
+            if (b.file_preview_url) {
+              previewMemoryCache.set(b.id, b.file_preview_url);
+              try { sessionStorage.setItem(`c4_preview_${b.id}`, b.file_preview_url); } catch {}
+            }
+            return { ...b, file_preview_url: b.file_preview_url || getCachedPreview(b.id) };
           }));
         }
         if (Array.isArray(cloudPushed)) {
           setPushedBills(cloudPushed.map(b => {
-            if (b.file_preview_url) previewMemoryCache.set(b.id, b.file_preview_url);
-            return { ...b, file_preview_url: b.file_preview_url || previewMemoryCache.get(b.id) || "" };
+            if (b.file_preview_url) {
+              previewMemoryCache.set(b.id, b.file_preview_url);
+              try { sessionStorage.setItem(`c4_preview_${b.id}`, b.file_preview_url); } catch {}
+            }
+            return { ...b, file_preview_url: b.file_preview_url || getCachedPreview(b.id) };
           }));
         }
         if (Array.isArray(coaData) && coaData.length > 0) {
@@ -404,6 +427,7 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
       const stripped = (Array.isArray(billsArray) ? billsArray : []).map(b => {
         if (b.file_preview_url) {
           previewMemoryCache.set(b.id, b.file_preview_url);
+          try { sessionStorage.setItem(`c4_preview_${b.id}`, b.file_preview_url); } catch {}
         }
         return {
           ...b,
@@ -540,7 +564,7 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
     const defaultSgstLedger = bill.sgst_ledger || lastGstLedgers.sgst || dynamicGstLedgers[0] || (isNonItcClient ? "GST Expense on Purchase" : "Input SGST");
     const defaultIgstLedger = bill.igst_ledger || lastGstLedgers.igst || dynamicGstLedgers[0] || (isNonItcClient ? "GST Expense on Purchase" : "Input IGST");
 
-    const resolvedPreview = bill.file_preview_url || previewMemoryCache.get(bill.id) || "";
+    const resolvedPreview = bill.file_preview_url || getCachedPreview(bill.id);
 
     const rawItems = Array.isArray(bill.items) && bill.items.length > 0 ? bill.items : [
       {
@@ -563,9 +587,6 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
       let amt = parseFloat(it.amount || it.rate || 0);
       const taxRate = parseFloat(it.tax_rate || 0) || 0;
       
-      // RULE APPLIED:
-      // 1. If Explicit Taxable Value is available or No Tax exists, fetch amount as-is.
-      // 2. If Tax-Inclusive amounts exist with active tax, perform reverse calculation.
       let netAmount = amt;
       if (!explicitTaxableProvided && hasAnyTax && taxRate > 0) {
         netAmount = parseFloat((amt / (1 + taxRate / 100)).toFixed(2));
@@ -635,6 +656,7 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
     let newExtractedBills = [];
     let duplicateWarningsCount = 0;
     const defaultLedger = dynamicExpenseLedgers[0] || "Purchase: General Goods";
+    const isNonItcClient = !isClientItcEligible;
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
@@ -711,6 +733,7 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
 
       if (persistentPreview) {
         previewMemoryCache.set(generatedId, persistentPreview);
+        try { sessionStorage.setItem(`c4_preview_${generatedId}`, persistentPreview); } catch {}
       }
 
       const safeBill = {
