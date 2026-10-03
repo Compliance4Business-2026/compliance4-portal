@@ -604,7 +604,16 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
       ? parseFloat(bill.taxable_amount) 
       : items.reduce((acc, it) => acc + (parseFloat(it.amount) || 0), 0);
 
-    const grandTotal = parseFloat(bill.grand_total || (calculatedSubtotal + cgstTotal + sgstTotal + igstTotal)) || calculatedSubtotal;
+    const targetGrandTotal = parseFloat(bill.grand_total || (calculatedSubtotal + cgstTotal + sgstTotal + igstTotal)) || calculatedSubtotal;
+    const rawSum = calculatedSubtotal + cgstTotal + sgstTotal + igstTotal;
+
+    // Automatically compute and absorb round-off if grand total differs slightly from raw sum
+    let detectedRoundOff = parseFloat(bill.round_off || 0);
+    if (detectedRoundOff === 0 && Math.abs(targetGrandTotal - rawSum) <= 5.00) {
+      detectedRoundOff = parseFloat((targetGrandTotal - rawSum).toFixed(2));
+    }
+
+    const finalGrandTotal = rawSum + detectedRoundOff;
     const vendorName = bill.vendor_name || "Sundry Creditor";
 
     const mappedAccountingLedgers = Array.isArray(bill.accounting_ledgers) && bill.accounting_ledgers.length > 0
@@ -633,14 +642,14 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
       cgst_ledger: defaultTaxLedger,
       sgst_ledger: defaultSgstLedger,
       igst_ledger: defaultIgstLedger,
-      round_off: parseFloat(bill.round_off) || 0.00,
+      round_off: detectedRoundOff,
       taxable_amount: calculatedSubtotal,
-      grand_total: grandTotal,
+      grand_total: parseFloat(finalGrandTotal.toFixed(2)),
       vendor_name: vendorName,
       accounting_ledgers: mappedAccountingLedgers,
       party_ledger: {
         ledger_name: vendorName,
-        amount: grandTotal,
+        amount: parseFloat(finalGrandTotal.toFixed(2)),
         type: "Credit"
       },
       items: items
@@ -687,7 +696,6 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
       const cgstVal = parseFloat(extracted.cgst || 0);
       const sgstVal = parseFloat(extracted.sgst || 0);
       const igstVal = parseFloat(extracted.igst || 0);
-      const roundVal = parseFloat(extracted.round_off || extracted.roundOff || 0);
       const hasAnyTax = (cgstVal > 0 || sgstVal > 0 || igstVal > 0);
       const explicitTaxable = parseFloat(extracted.taxable_amount || extracted.taxableAmount || 0);
 
@@ -727,7 +735,13 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
         ? explicitTaxable 
         : rawItems.reduce((acc, it) => acc + (parseFloat(it.amount) || 0), 0);
 
-      const grandTotalVal = parseFloat(extracted.grand_total || extracted.grandTotal || (calculatedSubtotal + cgstVal + sgstVal + igstVal) || calculatedSubtotal);
+      const targetGrandTotalVal = parseFloat(extracted.grand_total || extracted.grandTotal || (calculatedSubtotal + cgstVal + sgstVal + igstVal) || calculatedSubtotal);
+      const rawSumVal = calculatedSubtotal + cgstVal + sgstVal + igstVal;
+      let detectedRoundOffVal = parseFloat(extracted.round_off || extracted.roundOff || 0);
+      if (detectedRoundOffVal === 0 && Math.abs(targetGrandTotalVal - rawSumVal) <= 5.00) {
+        detectedRoundOffVal = parseFloat((targetGrandTotalVal - rawSumVal).toFixed(2));
+      }
+      const finalGrandTotalVal = rawSumVal + detectedRoundOffVal;
 
       const generatedId = extracted.id || `inv_${Date.now()}_${i}_${Math.random().toString(36).substr(2, 4)}`;
 
@@ -750,12 +764,12 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
         cgst: cgstVal,
         sgst: sgstVal,
         igst: igstVal,
-        round_off: roundVal,
-        grand_total: grandTotalVal > 0 ? grandTotalVal : calculatedSubtotal,
+        round_off: detectedRoundOffVal,
+        grand_total: parseFloat(finalGrandTotalVal.toFixed(2)),
         file_preview_url: persistentPreview,
         party_ledger: {
           ledger_name: vName,
-          amount: grandTotalVal > 0 ? grandTotalVal : calculatedSubtotal,
+          amount: parseFloat(finalGrandTotalVal.toFixed(2)),
           type: "Credit"
         },
         items: rawItems
