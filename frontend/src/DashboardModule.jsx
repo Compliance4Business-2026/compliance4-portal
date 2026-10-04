@@ -13,9 +13,9 @@ import { api } from "./api";
 
 export default function DashboardModule({ activeClient = "Pansuria Confectionery & Food" }) {
   const [cloudSummary, setCloudSummary] = useState(null);
-  const [selectedPeriod, setSelectedPeriod] = useState("Current Month");
-  const [customStartDate, setCustomStartDate] = useState("2026-10-01");
-  const [customEndDate, setCustomEndDate] = useState("2026-10-31");
+  const [selectedPeriod, setSelectedPeriod] = useState("September 2026");
+  const [customStartDate, setCustomStartDate] = useState("2026-09-01");
+  const [customEndDate, setCustomEndDate] = useState("2026-09-30");
 
   // --- FETCH DASHBOARD SUMMARY FROM FIRESTORE ON LOAD / CLIENT SWITCH ---
   useEffect(() => {
@@ -155,13 +155,9 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
   const parseToDate = (raw) => {
     if (!raw) return null;
     const s = String(raw).trim();
-    
-    // Excel serial number check
     if (!isNaN(s) && Number(s) > 20000 && Number(s) < 60000) {
       return new Date(Math.round((Number(s) - 25569) * 86400 * 1000));
     }
-
-    // Standard ISO string or YYYY-MM-DD / DD-MM-YYYY
     const d = new Date(s);
     if (!isNaN(d.getTime())) return d;
 
@@ -177,38 +173,38 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
     return null;
   };
 
-  // --- DYNAMIC PERIOD FILTERING ---
+  // --- DASHBOARD-ONLY PERIOD FILTERING (Month-wise, Year-wise, Custom, All) ---
   const isDateInPeriod = (rawDate) => {
     if (selectedPeriod === "All") return true;
     const d = parseToDate(rawDate);
-    if (!d || isNaN(d.getTime())) return false; // Strict: if date cannot be parsed, exclude rather than matching all
+    if (!d || isNaN(d.getTime())) return false;
 
     const yr = d.getFullYear();
     const mo = d.getMonth() + 1; // 1 to 12
-    const now = new Date();
-    const currentYear = now.getFullYear();
-    const currentMonth = now.getMonth() + 1;
 
-    if (selectedPeriod === "Current Month") {
-      return yr === currentYear && mo === currentMonth;
+    if (selectedPeriod === "September 2026") {
+      return yr === 2026 && mo === 9;
+    }
+    if (selectedPeriod === "August 2026") {
+      return yr === 2026 && mo === 8;
+    }
+    if (selectedPeriod === "July 2026") {
+      return yr === 2026 && mo === 7;
+    }
+    if (selectedPeriod === "June 2026") {
+      return yr === 2026 && mo === 6;
+    }
+    if (selectedPeriod === "May 2026") {
+      return yr === 2026 && mo === 5;
+    }
+    if (selectedPeriod === "April 2026") {
+      return yr === 2026 && mo === 4;
     }
     if (selectedPeriod === "FY2026-27") {
       return (yr === 2026 && mo >= 4) || (yr === 2027 && mo <= 3);
     }
     if (selectedPeriod === "FY2025-26") {
       return (yr === 2025 && mo >= 4) || (yr === 2026 && mo <= 3);
-    }
-    if (selectedPeriod === "Q1") {
-      return yr === currentYear && mo >= 4 && mo <= 6;
-    }
-    if (selectedPeriod === "Q2") {
-      return yr === currentYear && mo >= 7 && mo <= 9;
-    }
-    if (selectedPeriod === "Q3") {
-      return yr === currentYear && mo >= 10 && mo <= 12;
-    }
-    if (selectedPeriod === "Q4") {
-      return yr === (currentYear + 1) && mo >= 1 && mo <= 3;
     }
     if (selectedPeriod === "Custom") {
       if (!customStartDate || !customEndDate) return true;
@@ -663,7 +659,7 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
     <div className="flex-1 flex flex-col h-full bg-[#F8FAFC] overflow-y-auto p-6 font-sans">
       <div className="max-w-7xl mx-auto w-full flex flex-col gap-4">
         
-        {/* REPORT DOWNLOAD ACTION BAR & PERIOD SELECTOR */}
+        {/* REPORT DOWNLOAD ACTION BAR & MONTH/YEAR PERIOD SELECTOR */}
         <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex items-center justify-between shrink-0 flex-wrap gap-3">
           <div>
             <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider">Financial Statements & Reports</h4>
@@ -678,13 +674,14 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
                 onChange={(e) => setSelectedPeriod(e.target.value)}
                 className="text-xs font-bold text-slate-800 bg-transparent focus:outline-none cursor-pointer"
               >
-                <option value="Current Month">Current Full Month (October 2026)</option>
+                <option value="September 2026">September 2026</option>
+                <option value="August 2026">August 2026</option>
+                <option value="July 2026">July 2026</option>
+                <option value="June 2026">June 2026</option>
+                <option value="May 2026">May 2026</option>
+                <option value="April 2026">April 2026</option>
                 <option value="FY2026-27">Financial Year 2026–27</option>
                 <option value="FY2025-26">Financial Year 2025–26</option>
-                <option value="Q1">Q1 (Apr - Jun 2026)</option>
-                <option value="Q2">Q2 (Jul - Sep 2026)</option>
-                <option value="Q3">Q3 (Oct - Dec 2026)</option>
-                <option value="Q4">Q4 (Jan - Mar 2027)</option>
                 <option value="Custom">Custom Date Range...</option>
                 <option value="All">All-Time / Lifetime</option>
               </select>
