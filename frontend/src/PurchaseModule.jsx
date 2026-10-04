@@ -257,7 +257,7 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
 
   const isClientItcEligible = clientProfile.isItcEligible !== false;
 
-  // --- STRICT CLOUD DATA LOADING FROM FIRESTORE ---
+  // --- STRICT QUOTA-SAFE CLOUD DATA LOADING FROM FIRESTORE ---
   useEffect(() => {
     let isMounted = true;
 
@@ -986,7 +986,6 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
     }
   };
 
-  // SUPPLIER-WISE ACCOUNTS PAYABLE EXPORT WITH INVOICES BELOW EACH VENDOR
   const handleDownloadAccountsPayableSupplierWise = () => {
     if (!Array.isArray(approvedBills) || approvedBills.length === 0) {
       notify("No approved invoices available for Accounts Payable breakdown.", "error");
@@ -1029,7 +1028,6 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
     notify("Exported Supplier-Wise Accounts Payable Report!", "success");
   };
 
-  // PROFIT & LOSS CATEGORY-WISE EXPORT WITH MAIN HEAD CLASSIFICATION
   const handleDownloadProfitAndLossCategoryWise = () => {
     if (!Array.isArray(approvedBills) || approvedBills.length === 0) {
       notify("No approved invoices available for Profit & Loss export.", "error");
@@ -1350,7 +1348,6 @@ ${xmlVouchers}
         )}
 
         <div className="flex-1 flex overflow-hidden">
-          {/* LEFT: ZOOMABLE & PANNABLE IMAGE PREVIEW WITH MOUSE & TOUCH SUPPORT */}
           <div 
             ref={previewContainerRef}
             onMouseDown={(e) => {
@@ -1448,7 +1445,6 @@ ${xmlVouchers}
             </div>
           </div>
 
-          {/* RIGHT: VOUCHER FORM */}
           <div className="w-1/2 bg-white flex flex-col overflow-y-auto">
             <div className="border-b border-slate-200 px-8 pt-4 pb-0 flex items-center justify-between">
               <div className="flex items-center gap-6">
@@ -1531,7 +1527,6 @@ ${xmlVouchers}
                 </div>
               </div>
 
-              {/* VENDOR DETAILS & AUTO-MATCHING WITH COA */}
               <div className="border-t border-slate-100 pt-4 space-y-3">
                 <div className="flex items-center justify-between">
                   <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400">Vendor Details</h4>
@@ -1619,7 +1614,6 @@ ${xmlVouchers}
                 </div>
               </div>
 
-              {/* ITEM MODE */}
               {voucherMode === "item" && (
                 <div className="border-t border-slate-100 pt-4 space-y-3">
                   <div className="flex items-center justify-between">
@@ -1735,7 +1729,6 @@ ${xmlVouchers}
                 </div>
               )}
 
-              {/* ACCOUNTING MODE */}
               {voucherMode === "accounting" && (
                 <div className="border-t border-slate-100 pt-4 space-y-3">
                   <div className="flex items-center justify-between">
@@ -1834,7 +1827,6 @@ ${xmlVouchers}
                 </div>
               )}
 
-              {/* GST ROW & TOTALS */}
               <div className="border-t border-slate-100 pt-4 space-y-3">
                 <div className="flex items-center justify-between pb-1">
                   <span className="text-xs text-slate-600 font-medium">Sub Total (Taxable Value):</span>
@@ -1868,7 +1860,6 @@ ${xmlVouchers}
                   </span>
                 </div>
 
-                {/* CGST */}
                 <div className="grid grid-cols-3 gap-3 items-center overflow-visible">
                   <div className="relative overflow-visible">
                     <label className="block text-[11px] font-semibold text-slate-500 mb-1">CGST Ledger</label>
@@ -1892,7 +1883,6 @@ ${xmlVouchers}
                   </div>
                 </div>
 
-                {/* SGST */}
                 <div className="grid grid-cols-3 gap-3 items-center overflow-visible">
                   <div className="relative overflow-visible">
                     <label className="block text-[11px] font-semibold text-slate-500 mb-1">SGST Ledger</label>
@@ -1916,7 +1906,6 @@ ${xmlVouchers}
                   </div>
                 </div>
 
-                {/* IGST */}
                 <div className="grid grid-cols-3 gap-3 items-center overflow-visible">
                   <div className="relative overflow-visible">
                     <label className="block text-[11px] font-semibold text-slate-500 mb-1">IGST Ledger</label>
@@ -1965,7 +1954,6 @@ ${xmlVouchers}
           </div>
         </div>
 
-        {/* ADD NEW VENDOR MODAL */}
         {showAddVendorModal && (
           <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
             <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6 space-y-4">
@@ -2016,7 +2004,6 @@ ${xmlVouchers}
           </div>
         )}
 
-        {/* APPROVE BILL MODAL */}
         {showAllocationModal && (
           <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
             <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full p-6 space-y-4">
@@ -2154,7 +2141,6 @@ ${xmlVouchers}
           </button>
         </div>
 
-        {/* TAB 1: NEEDS REVIEW */}
         {purchaseSubTab === "needs_review" && (
           <div className="bg-white border border-slate-200 rounded-xl shadow-xs overflow-hidden">
             {!Array.isArray(pendingBills) || pendingBills.length === 0 ? (
@@ -2221,7 +2207,6 @@ ${xmlVouchers}
           </div>
         )}
 
-        {/* TAB 2: APPROVED INVOICES */}
         {purchaseSubTab === "approved" && (
           <div className="bg-white border border-slate-200 rounded-xl shadow-xs overflow-hidden">
             {!Array.isArray(approvedBills) || approvedBills.length === 0 ? (
@@ -2288,7 +2273,6 @@ ${xmlVouchers}
           </div>
         )}
 
-        {/* TAB 3: PUSHED TO TALLY */}
         {purchaseSubTab === "pushed" && (
           <div className="space-y-4">
             {groupedPushedBills.length === 0 ? (
