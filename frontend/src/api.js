@@ -138,7 +138,15 @@ export const api = {
               merged.push(localItem);
             }
           });
-          localStorage.setItem(cacheKey, JSON.stringify(merged));
+
+          // FIX: Strip heavy preview base64 strings before caching locally to prevent QuotaExceededError
+          try {
+            const lightweightMerged = merged.map(b => ({ ...b, file_preview_url: "" }));
+            localStorage.setItem(cacheKey, JSON.stringify(lightweightMerged));
+          } catch (e) {
+            console.warn("Local storage quota reached, skipping local cache update:", e);
+          }
+
           return merged;
         }
       }
@@ -161,7 +169,8 @@ export const api = {
       const existing = JSON.parse(localStorage.getItem(cacheKey) || "[]");
       const cleanedBill = { ...bill, file_preview_url: "" };
       const updated = [cleanedBill, ...existing.filter(b => b.id !== bill.id)];
-      localStorage.setItem(cacheKey, JSON.stringify(updated));
+      const lightweightUpdated = updated.map(b => ({ ...b, file_preview_url: "" }));
+      localStorage.setItem(cacheKey, JSON.stringify(lightweightUpdated));
     } catch (e) {
       console.error("Local bill cache write error:", e);
     }
