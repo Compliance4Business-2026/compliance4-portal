@@ -37,17 +37,9 @@ const API_BASE_URL =
 
 const previewMemoryCache = new Map();
 
-// Helper to safely get preview from sessionStorage or memory cache
 const getCachedPreview = (billId) => {
   if (!billId) return "";
   if (previewMemoryCache.has(billId)) return previewMemoryCache.get(billId);
-  try {
-    const sessionSaved = sessionStorage.getItem(`c4_preview_${billId}`);
-    if (sessionSaved) {
-      previewMemoryCache.set(billId, sessionSaved);
-      return sessionSaved;
-    }
-  } catch {}
   return "";
 };
 
@@ -247,6 +239,12 @@ function SearchableLedgerSelect({ value, onChange, coaList = [], fallbackOptions
 
 export default function PurchaseModule({ activeClient = "Pansuria Confectionery & Food" }) {
   const [purchaseSubTab, setPurchaseSubTab] = useState("needs_review");
+  const [pendingBills, setPendingBills] = useState([]);
+  const [approvedBills, setApprovedBills] = useState([]);
+  const [pushedBills, setPushedBills] = useState([]);
+  const [itemRules, setItemRules] = useState({});
+  const [lastGstLedgers, setLastGstLedgers] = useState({});
+  const [clientCoa, setClientCoa] = useState([]);
 
   const clientProfile = useMemo(() => {
     try {
@@ -259,119 +257,44 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
 
   const isClientItcEligible = clientProfile.isItcEligible !== false;
 
-  const [pendingBills, setPendingBills] = useState(() => {
-    try {
-      const saved = localStorage.getItem(`c4_pending_bills_${activeClient}`);
-      const parsed = saved ? JSON.parse(saved) : [];
-      return parsed.map(b => ({
-        ...b,
-        file_preview_url: b.file_preview_url || getCachedPreview(b.id)
-      }));
-    } catch {
-      return [];
-    }
-  });
-
-  const [approvedBills, setApprovedBills] = useState(() => {
-    try {
-      const saved = localStorage.getItem(`c4_approved_bills_${activeClient}`);
-      const parsed = saved ? JSON.parse(saved) : [];
-      return parsed.map(b => ({
-        ...b,
-        file_preview_url: b.file_preview_url || getCachedPreview(b.id)
-      }));
-    } catch {
-      return [];
-    }
-  });
-
-  const [pushedBills, setPushedBills] = useState(() => {
-    try {
-      const saved = localStorage.getItem(`c4_pushed_bills_${activeClient}`);
-      const parsed = saved ? JSON.parse(saved) : [];
-      return parsed.map(b => ({
-        ...b,
-        file_preview_url: b.file_preview_url || getCachedPreview(b.id)
-      }));
-    } catch {
-      return [];
-    }
-  });
-
-  const [itemRules, setItemRules] = useState(() => {
-    try {
-      const saved = localStorage.getItem(`c4_purchase_item_rules_${activeClient}`);
-      return saved ? JSON.parse(saved) : {};
-    } catch {
-      return {};
-    }
-  });
-
-  const [lastGstLedgers, setLastGstLedgers] = useState(() => {
-    try {
-      const saved = localStorage.getItem(`c4_last_gst_ledgers_${activeClient}`);
-      return saved ? JSON.parse(saved) : {};
-    } catch {
-      return {};
-    }
-  });
-
-  const [clientCoa, setClientCoa] = useState(() => {
-    try {
-      const saved = localStorage.getItem(`c4_coa_${activeClient}`);
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
-    }
-  });
-
+  // --- STRICT CLOUD DATA LOADING FROM FIRESTORE ---
   useEffect(() => {
     let isMounted = true;
 
     async function loadCloudPurchaseData() {
       try {
         const [cloudNeedsReview, cloudApproved, cloudPushed, coaData] = await Promise.all([
-          api.getBills(activeClient, "needs_review").catch(() => null),
-          api.getBills(activeClient, "approved").catch(() => null),
-          api.getBills(activeClient, "pushed").catch(() => null),
-          api.getClientCoa(activeClient).catch(() => null)
+          api.getBills(activeClient, "needs_review").catch(() => []),
+          api.getBills(activeClient, "approved").catch(() => []),
+          api.getBills(activeClient, "pushed").catch(() => []),
+          api.getClientCoa(activeClient).catch(() => [])
         ]);
 
         if (!isMounted) return;
 
         if (Array.isArray(cloudNeedsReview)) {
           setPendingBills(cloudNeedsReview.map(b => {
-            if (b.file_preview_url) {
-              previewMemoryCache.set(b.id, b.file_preview_url);
-              try { sessionStorage.setItem(`c4_preview_${b.id}`, b.file_preview_url); } catch {}
-            }
+            if (b.file_preview_url) previewMemoryCache.set(b.id, b.file_preview_url);
             return { ...b, file_preview_url: b.file_preview_url || getCachedPreview(b.id) };
           }));
         }
         if (Array.isArray(cloudApproved)) {
           setApprovedBills(cloudApproved.map(b => {
-            if (b.file_preview_url) {
-              previewMemoryCache.set(b.id, b.file_preview_url);
-              try { sessionStorage.setItem(`c4_preview_${b.id}`, b.file_preview_url); } catch {}
-            }
+            if (b.file_preview_url) previewMemoryCache.set(b.id, b.file_preview_url);
             return { ...b, file_preview_url: b.file_preview_url || getCachedPreview(b.id) };
           }));
         }
         if (Array.isArray(cloudPushed)) {
           setPushedBills(cloudPushed.map(b => {
-            if (b.file_preview_url) {
-              previewMemoryCache.set(b.id, b.file_preview_url);
-              try { sessionStorage.setItem(`c4_preview_${b.id}`, b.file_preview_url); } catch {}
-            }
+            if (b.file_preview_url) previewMemoryCache.set(b.id, b.file_preview_url);
             return { ...b, file_preview_url: b.file_preview_url || getCachedPreview(b.id) };
           }));
         }
-        if (Array.isArray(coaData) && coaData.length > 0) {
+        if (Array.isArray(coaData)) {
           setClientCoa(coaData);
-          localStorage.setItem(`c4_coa_${activeClient}`, JSON.stringify(coaData));
         }
       } catch (err) {
-        console.warn("Using offline bill storage:", err);
+        console.error("Error loading cloud purchase data:", err);
       }
     }
 
@@ -421,44 +344,6 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
           l.category.toLowerCase().includes("supplier"))
     );
   }, [clientCoa]);
-
-  const saveWithoutPreviews = (storageKey, billsArray) => {
-    try {
-      const stripped = (Array.isArray(billsArray) ? billsArray : []).map(b => {
-        if (b.file_preview_url) {
-          previewMemoryCache.set(b.id, b.file_preview_url);
-          try { sessionStorage.setItem(`c4_preview_${b.id}`, b.file_preview_url); } catch {}
-        }
-        return {
-          ...b,
-          file_preview_url: ""
-        };
-      });
-      localStorage.setItem(storageKey, JSON.stringify(stripped));
-    } catch (e) {
-      console.warn("Storage quota limit reached.");
-    }
-  };
-
-  useEffect(() => {
-    saveWithoutPreviews(`c4_pending_bills_${activeClient}`, pendingBills);
-  }, [pendingBills, activeClient]);
-
-  useEffect(() => {
-    saveWithoutPreviews(`c4_approved_bills_${activeClient}`, approvedBills);
-  }, [approvedBills, activeClient]);
-
-  useEffect(() => {
-    saveWithoutPreviews(`c4_pushed_bills_${activeClient}`, pushedBills);
-  }, [pushedBills, activeClient]);
-
-  useEffect(() => {
-    localStorage.setItem(`c4_purchase_item_rules_${activeClient}`, JSON.stringify(itemRules));
-  }, [itemRules, activeClient]);
-
-  useEffect(() => {
-    localStorage.setItem(`c4_last_gst_ledgers_${activeClient}`, JSON.stringify(lastGstLedgers));
-  }, [lastGstLedgers, activeClient]);
 
   const [isUploadingBill, setIsUploadingBill] = useState(false);
   const [uploadProgress, setUploadProgress] = useState("");
@@ -747,7 +632,6 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
 
       if (persistentPreview) {
         previewMemoryCache.set(generatedId, persistentPreview);
-        try { sessionStorage.setItem(`c4_preview_${generatedId}`, persistentPreview); } catch {}
       }
 
       const safeBill = {
@@ -800,7 +684,7 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
       try {
         await api.saveBill(activeClient, "needs_review", safeBill);
       } catch (err) {
-        console.warn("Failed saving bill to Firestore during upload:", err);
+        console.warn("Cloud save failed during upload:", err);
       }
 
       newExtractedBills.push(safeBill);
@@ -951,7 +835,6 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
 
     const newLastGst = { cgst: ledgerName, sgst: ledgerName, igst: ledgerName };
     setLastGstLedgers(newLastGst);
-    localStorage.setItem(`c4_last_gst_ledgers_${activeClient}`, JSON.stringify(newLastGst));
     notify(`Memorized GST Ledger: "${ledgerName}" for future invoices`, "info");
   };
 
@@ -970,7 +853,6 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
 
     const updatedCoa = [...clientCoa, newCreditorLedger];
     setClientCoa(updatedCoa);
-    localStorage.setItem(`c4_coa_${activeClient}`, JSON.stringify(updatedCoa));
 
     if (voucherData) {
       setVoucherData({
@@ -1014,10 +896,10 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
     try {
       await api.saveBill(activeClient, "approved", approvedVoucher);
       await api.deleteBill(activeClient, "needs_review", activeReviewBill.id);
-      notify(`Invoice #${approvedVoucher.supplier_invoice_no} approved & synced to Firestore!`, "success");
+      notify(`Invoice #${approvedVoucher.supplier_invoice_no} approved & synced to Cloud!`, "success");
     } catch (err) {
       console.error(err);
-      notify(`Approved locally, Firestore error: ${err.message}`, "info");
+      notify(`Cloud sync error: ${err.message}`, "error");
     }
 
     if (remainingPending.length > 0) {
@@ -1034,14 +916,12 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
     const billToDeleteId = activeReviewBill.id;
     const remainingPending = (pendingBills || []).filter(b => b.id !== billToDeleteId);
     setPendingBills(remainingPending);
-    setApprovedBills(prev => (Array.isArray(prev) ? prev : []).filter(b => b.id !== billToDeleteId));
 
     try {
       await api.deleteBill(activeClient, "needs_review", billToDeleteId);
-      notify("Invoice deleted from Firestore.", "info");
+      notify("Invoice deleted from Cloud.", "info");
     } catch (err) {
       console.error(err);
-      notify("Deleted locally.", "info");
     }
 
     if (remainingPending.length > 0) {
@@ -1055,14 +935,12 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
   const handleDeleteApprovedBill = async (billId) => {
     const updatedApproved = (approvedBills || []).filter(b => b.id !== billId);
     setApprovedBills(updatedApproved);
-    saveWithoutPreviews(`c4_approved_bills_${activeClient}`, updatedApproved);
 
     try {
       await api.deleteBill(activeClient, "approved", billId);
-      notify("Approved invoice deleted successfully.", "info");
+      notify("Approved invoice deleted from Cloud.", "info");
     } catch (err) {
       console.error(err);
-      notify("Deleted locally from approved list.", "info");
     }
   };
 
@@ -1134,13 +1012,10 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
     const rows = [];
 
     Object.entries(vendorMap).forEach(([vendor, data]) => {
-      // Vendor header summary row
       rows.push([`"${vendor.replace(/"/g, '""')}"`, `""`, `""`, `""`, data.totalPayable]);
-      // Individual invoices below vendor
       data.invoices.forEach(inv => {
         rows.push([`""`, `"${inv.invNo}"`, `"${inv.date}"`, inv.amount, `""`]);
       });
-      // Blank spacer row
       rows.push([`""`, `""`, `""`, `""`, `""`]);
     });
 
@@ -1161,7 +1036,6 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
       return;
     }
 
-    // Map client COA for fast category/head lookup
     const coaCategoryMap = {};
     clientCoa.forEach(l => {
       if (l.name) {
@@ -1201,7 +1075,6 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
     const rows = [];
 
     Object.entries(ledgerCategoryMap).forEach(([category, catData]) => {
-      // Category header row
       rows.push([`"${catData.mainHead}"`, `"${category}"`, `""`, `""`, catData.categoryTotal]);
       Object.entries(catData.ledgers).forEach(([ledgerName, amount]) => {
         rows.push([`""`, `""`, `"${ledgerName}"`, amount, `""`]);
