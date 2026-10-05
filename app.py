@@ -204,13 +204,14 @@ CUSTOM_CSS = """
     }
 
     .zoom-container {
-        overflow: auto;
-        max-height: 700px;
+        overflow: auto !important;
+        max-height: 650px !important;
+        position: relative;
         border: 1px solid #CBD5E1;
         border-radius: 12px;
         background: #525659;
         text-align: center;
-        padding: 10px;
+        padding: 15px;
     }
 
     .stButton>button[kind="primary"] {
@@ -770,7 +771,7 @@ def optimize_file(file_name, raw_bytes):
             return "image/jpeg", raw_bytes
     return "application/pdf", raw_bytes
 
-# THREAD-SAFE INVOICE PROCESSING: Does not call st.session_state inside threads
+# THREAD-SAFE INVOICE PROCESSING
 def process_single_bill(file_name, file_bytes, mime, file_hash, client, ledgers_str, client_name, valid_ledgers, rules_dict):
     prompt = f"""
     Extract invoice details accurately into structured format.
@@ -939,7 +940,7 @@ if st.session_state["active_review_index"] is not None and len(pending_bills_lis
         st.markdown(f"<div style='text-align:center; font-weight:700; color:#0D2240; padding-top:8px;'>Invoice {idx + 1} of {len(pending_bills_list)} ({selected_client})</div>", unsafe_allow_html=True)
     with nav_c3:
         if idx > 0:
-            if st.button("⏮️ Previous", type="secondary", use_container_width=True):
+            if st.button("⏮️️ Previous", type="secondary", use_container_width=True):
                 st.session_state["active_review_index"] = idx - 1
                 st.rerun()
     with nav_c4:
@@ -1120,13 +1121,26 @@ if st.session_state["active_review_index"] is not None and len(pending_bills_lis
             )
 
             st.markdown("<div style='font-weight: 700; color: #0D2240; margin: 16px 0 8px 0;'>Taxes & Round-Off Reconciliation</div>", unsafe_allow_html=True)
+            
+            # Non-ITC Client Restriction Check
+            # Check client profile flags or assume non-itc if specified
+            is_non_itc = False
+            try:
+                # You can check if client name contains or is flagged for Non-ITC
+                is_non_itc = "non-itc" in selected_client.lower() or client_masters.get(selected_client, {}).get("is_non_itc", False)
+            except Exception:
+                pass
+
+            tax_disabled = is_non_itc
+            tax_help = "Disabled for Non-ITC client profile" if is_non_itc else "Tax amount"
+
             t_c1, t_c2, t_c3, t_c4 = st.columns(4)
             with t_c1:
-                v_cgst = st.number_input("CGST (₹)", value=float(bill.get("cgst", 0.0)), step=0.01, format="%.2f")
+                v_cgst = st.number_input("CGST (₹)", value=0.0 if is_non_itc else float(bill.get("cgst", 0.0)), step=0.01, format="%.2f", disabled=tax_disabled, help=tax_help)
             with t_c2:
-                v_sgst = st.number_input("SGST (₹)", value=float(bill.get("sgst", 0.0)), step=0.01, format="%.2f")
+                v_sgst = st.number_input("SGST (₹)", value=0.0 if is_non_itc else float(bill.get("sgst", 0.0)), step=0.01, format="%.2f", disabled=tax_disabled, help=tax_help)
             with t_c3:
-                v_igst = st.number_input("IGST (₹)", value=float(bill.get("igst", 0.0)), step=0.01, format="%.2f")
+                v_igst = st.number_input("IGST (₹)", value=0.0 if is_non_itc else float(bill.get("igst", 0.0)), step=0.01, format="%.2f", disabled=tax_disabled, help=tax_help)
             with t_c4:
                 v_round_off = st.number_input("Round-Off (₹)", value=float(bill.get("round_off", 0.0)), step=0.01, format="%.2f", help="Paisa adjustment to match printed invoice total")
 
