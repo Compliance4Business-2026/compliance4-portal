@@ -13,7 +13,8 @@ import {
   FolderOpen,
   ZoomIn, 
   ZoomOut, 
-  RotateCcw, 
+  RotateCcw,
+  RotateCw, 
   Plus, 
   Trash2, 
   X, 
@@ -116,7 +117,7 @@ function validateGSTIN(gstin) {
   };
 }
 
-function SearchableLedgerSelect({ value, onChange, coaList = [], fallbackOptions = [], placeholder = "Type ledger name..." }) {
+function SearchableLedgerSelect({ value, onChange, coaList = [], fallbackOptions = [], placeholder = "Select ledger (Required)..." }) {
   const [isOpen, setIsOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -197,7 +198,9 @@ function SearchableLedgerSelect({ value, onChange, coaList = [], fallbackOptions
           }}
           onKeyDown={handleKeyDown}
           tabIndex={0}
-          className="w-full text-xs font-semibold border border-slate-300 rounded p-1.5 bg-white text-slate-800 pr-7 focus:outline-none focus:ring-1 focus:ring-slate-900"
+          className={`w-full text-xs font-semibold border rounded p-1.5 bg-white text-slate-800 pr-7 focus:outline-none focus:ring-1 ${
+            !value ? "border-rose-300 bg-rose-50/30 placeholder:text-rose-400" : "border-slate-300 focus:ring-slate-900"
+          }`}
         />
         <Search className="w-3.5 h-3.5 text-slate-400 absolute right-2 top-2.5 pointer-events-none" />
       </div>
@@ -247,17 +250,11 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
   const [clientCoa, setClientCoa] = useState([]);
 
   const clientProfile = useMemo(() => {
-    try {
-      const profiles = JSON.parse(localStorage.getItem("c4_client_profiles") || "{}");
-      return profiles[activeClient] || { isItcEligible: true };
-    } catch {
-      return { isItcEligible: true };
-    }
+    return { isItcEligible: true };
   }, [activeClient]);
 
   const isClientItcEligible = clientProfile.isItcEligible !== false;
 
-  // --- STRICT QUOTA-SAFE CLOUD DATA LOADING FROM FIRESTORE ---
   useEffect(() => {
     let isMounted = true;
 
@@ -352,6 +349,7 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
   const [activeReviewBill, setActiveReviewBill] = useState(null);
   const [voucherMode, setVoucherMode] = useState("accounting");
   const [zoomLevel, setZoomLevel] = useState(1);
+  const [rotation, setRotation] = useState(0);
   const [showAllocationModal, setShowAllocationModal] = useState(false);
   const [voucherData, setVoucherData] = useState(null);
 
@@ -399,7 +397,7 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
   };
 
   const getMemorizedLedgerForItem = (itemNameOrDesc) => {
-    if (!itemNameOrDesc) return null;
+    if (!itemNameOrDesc) return "";
     const cleanKey = itemNameOrDesc.trim().toLowerCase();
     
     if (itemRules[cleanKey]) return itemRules[cleanKey];
@@ -415,7 +413,7 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
         return ledgerName;
       }
     }
-    return null;
+    return ""; // Return blank if unknown instead of guessing
   };
 
   const checkDuplicateInvoice = (invoiceNo, vendorName, currentId = null) => {
@@ -441,8 +439,8 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
     if (!bill) return;
     setActiveReviewBill(bill);
     setZoomLevel(1);
+    setRotation(0);
 
-    const defaultLedger = dynamicExpenseLedgers[0] || "Purchase: General Goods";
     const isNonItcClient = !isClientItcEligible;
     
     const defaultTaxLedger = bill.cgst_ledger || lastGstLedgers.cgst || dynamicGstLedgers[0] || (isNonItcClient ? "GST Expense on Purchase" : "Input CGST");
@@ -508,7 +506,7 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
           const memorized = getMemorizedLedgerForItem(matchName);
           return {
             description: it.description || it.item_name || "Raw Material",
-            ledger_name: memorized || it.ledger_name || defaultLedger,
+            ledger_name: memorized || "", // Blank if unknown
             amount: it.amount || 0,
             isAutoMatched: Boolean(memorized)
           };
@@ -548,8 +546,7 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
     setIsUploadingBill(true);
     let successCount = 0;
     let newExtractedBills = [];
-    let duplicateWarningsCount = 0;
-    const defaultLedger = dynamicExpenseLedgers[0] || "Purchase: General Goods";
+    let duplicateWarningsCount =0;
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
@@ -664,7 +661,7 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
         const memorized = getMemorizedLedgerForItem(matchName);
         return {
           description: it.description || it.item_name || "Supplies",
-          ledger_name: memorized || defaultLedger,
+          ledger_name: memorized, // Blank if no auto-learning match
           amount: parseFloat(it.amount || it.rate) || safeBill.taxable_amount,
           isAutoMatched: Boolean(memorized)
         };
@@ -722,22 +719,16 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
     const igst = parseFloat(updated.igst) || 0;
     
     let rawTotal = subtotal + cgst + sgst + igst;
-    let finalTotal = Math.round(rawTotal);
     
     let roundOffNum = 0;
     if (manualRoundOff !== null && manualRoundOff !== undefined) {
-      if (manualRoundOff === "-" || manualRoundOff === "-.") {
+      if (manualRoundOff === "-" || manualRoundOff === "-." || manualRoundOff === "") {
         roundOffNum = 0;
       } else {
         roundOffNum = parseFloat(manualRoundOff) || 0;
       }
     } else {
-      let autoDiff = parseFloat((finalTotal - rawTotal).toFixed(2));
-      if (Math.abs(autoDiff) <= 2.00) {
-        roundOffNum = autoDiff;
-      } else {
-        roundOffNum = parseFloat(updated.round_off) || 0;
-      }
+      roundOffNum = parseFloat(updated.round_off) || 0;
     }
 
     let grandTotal = rawTotal + roundOffNum;
@@ -756,7 +747,11 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
   };
 
   const validateVoucherBalance = () => {
-    if (!voucherData) return { isBalanced: false, totalDr: 0, totalCr: 0, diff: 0 };
+    if (!voucherData) return { isBalanced: false, totalDr: 0, totalCr: 0, diff: 0, missingLedgers: false };
+
+    // Check if any ledger item is blank
+    const ledgersList = voucherMode === "item" ? (voucherData.items || []) : (voucherData.accounting_ledgers || []);
+    const hasMissingLedgers = ledgersList.some(l => !l.ledger_name && !l.item_name);
 
     const totalCr = parseFloat(voucherData.grand_total) || 0;
     let totalDr = 0;
@@ -775,10 +770,10 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
     const roundOff = parseFloat(voucherData.round_off) || 0;
     let adjustedDr = totalDr + roundOff;
 
-    const diff = Math.abs(adjustedDr - totalCr);
-    const isBalanced = diff <= 2.05;
+    const diff = parseFloat((adjustedDr - totalCr).toFixed(2));
+    const isBalanced = Math.abs(diff) === 0; // Strict zero-tolerance check
 
-    return { isBalanced, totalDr: adjustedDr, totalCr, diff };
+    return { isBalanced, totalDr: adjustedDr, totalCr, diff, hasMissingLedgers };
   };
 
   const handleToggleTaxAsExpense = (checked) => {
@@ -795,13 +790,6 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
       sgst_ledger: sgstTaxLedger,
       igst_ledger: igstTaxLedger
     }));
-
-    notify(
-      checked 
-        ? "Tax routed to GST Expense on Purchase (Non-ITC Scheme)" 
-        : "Tax routed to Balance Sheet Input Tax Credit (Duties & Taxes)",
-      "info"
-    );
   };
 
   const handleLedgerSelection = (idx, newLedger, descriptionOrItemName) => {
@@ -813,13 +801,13 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
     }
     setVoucherData({ ...voucherData, accounting_ledgers: updated });
 
-    if (descriptionOrItemName) {
+    if (descriptionOrItemName && newLedger) {
       const coreKey = extractCoreItemName(descriptionOrItemName) || descriptionOrItemName.trim().toLowerCase();
       setItemRules(prev => ({
         ...prev,
         [coreKey]: newLedger
       }));
-      notify(`Memorized rule for "${descriptionOrItemName}" → ${newLedger}`, "info");
+      notify(`Auto-learning memorized rule for "${descriptionOrItemName}" → ${newLedger}`, "info");
     }
   };
 
@@ -835,7 +823,6 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
 
     const newLastGst = { cgst: ledgerName, sgst: ledgerName, igst: ledgerName };
     setLastGstLedgers(newLastGst);
-    notify(`Memorized GST Ledger: "${ledgerName}" for future invoices`, "info");
   };
 
   const handleCreateNewVendor = () => {
@@ -869,10 +856,17 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
 
   const handlePreApproveCheck = () => {
     const balanceCheck = validateVoucherBalance();
-    if (!balanceCheck.isBalanced) {
-      notify(`Cannot Approve: Voucher is unbalanced! Total Debits (₹${balanceCheck.totalDr.toFixed(2)}) do not match Total Credits (₹${balanceCheck.totalCr.toFixed(2)}). Difference: ₹${balanceCheck.diff.toFixed(2)}`, "error");
+    
+    if (balanceCheck.hasMissingLedgers) {
+      notify("Cannot Approve: One or more item/ledger rows are missing a selected ledger name!", "error");
       return;
     }
+
+    if (!balanceCheck.isBalanced) {
+      notify(`Cannot Approve: Voucher is unbalanced! Total Debits (₹${balanceCheck.totalDr.toFixed(2)}) must equal Total Credits (₹${balanceCheck.totalCr.toFixed(2)}) with zero difference.`, "error");
+      return;
+    }
+
     setShowAllocationModal(true);
   };
 
@@ -1301,7 +1295,7 @@ ${xmlVouchers}
             {!voucherBalanceCheck.isBalanced && (
               <span className="flex items-center gap-1 text-[11px] font-bold text-rose-800 bg-rose-100 px-2 py-0.5 rounded border border-rose-300">
                 <AlertCircle className="w-3 h-3 text-rose-700" />
-                Unbalanced (Dr: ₹{voucherBalanceCheck.totalDr.toFixed(2)} ≠ Cr: ₹{voucherBalanceCheck.totalCr.toFixed(2)})
+                Unbalanced (Dr: ₹{voucherBalanceCheck.totalDr.toFixed(2)} ≠ Cr: ₹{voucherBalanceCheck.totalCr.toFixed(2)} | Diff: ₹{voucherBalanceCheck.diff})
               </span>
             )}
             {duplicateMatch && (
@@ -1348,6 +1342,7 @@ ${xmlVouchers}
         )}
 
         <div className="flex-1 flex overflow-hidden">
+          {/* ZOOMABLE, ROTATABLE & DRAGGABLE IMAGE PREVIEW */}
           <div 
             ref={previewContainerRef}
             onMouseDown={(e) => {
@@ -1390,7 +1385,7 @@ ${xmlVouchers}
             }}
             onTouchEnd={() => setIsDragging(false)}
             className={`w-1/2 bg-slate-200 border-r border-slate-300 relative overflow-auto flex flex-col select-none ${
-              zoomLevel > 1 ? (isDragging ? "cursor-grabbing" : "cursor-grab") : "cursor-default"
+              isDragging ? "cursor-grabbing" : "cursor-grab"
             }`}
           >
             <div className="absolute top-4 right-4 z-20 flex items-center gap-1 bg-white/95 backdrop-blur-sm border border-slate-300 shadow-xs rounded-lg p-1">
@@ -1410,15 +1405,22 @@ ${xmlVouchers}
                 <ZoomOut className="w-4 h-4" />
               </button>
               <button 
-                onClick={() => setZoomLevel(1)}
+                onClick={() => setRotation(prev => (prev + 90) % 360)}
                 className="p-1.5 hover:bg-slate-100 rounded text-slate-600"
-                title="Reset Zoom"
+                title="Rotate 90° Clockwise"
+              >
+                <RotateCw className="w-4 h-4" />
+              </button>
+              <button 
+                onClick={() => { setZoomLevel(1); setRotation(0); }}
+                className="p-1.5 hover:bg-slate-100 rounded text-slate-600"
+                title="Reset View"
               >
                 <RotateCcw className="w-3.5 h-3.5" />
               </button>
             </div>
 
-            <div className="flex-1 p-4 flex justify-center items-start min-h-full">
+            <div className="flex-1 p-8 flex justify-center items-center min-h-full">
               {voucherData.file_preview_url ? (
                 <img
                   src={voucherData.file_preview_url}
@@ -1426,11 +1428,10 @@ ${xmlVouchers}
                   draggable={false}
                   onDragStart={(e) => e.preventDefault()}
                   style={{
-                    transform: `scale(${zoomLevel})`,
-                    transformOrigin: "top center",
+                    transform: `scale(${zoomLevel}) rotate(${rotation}deg)`,
+                    transformOrigin: "center center",
                     maxWidth: zoomLevel === 1 ? "96%" : "none",
-                    marginTop: "8px",
-                    transition: isDragging ? "none" : "transform 0.1s ease-out",
+                    transition: isDragging ? "none" : "transform 0.15s ease-out",
                     userSelect: "none"
                   }}
                   className="bg-white shadow-xl rounded border border-slate-300 pointer-events-auto"
@@ -1472,13 +1473,8 @@ ${xmlVouchers}
                 </button>
               </div>
               <div className="flex items-center gap-2 mb-2">
-                {Object.keys(itemRules).length > 0 && (
-                  <span className="flex items-center gap-1 text-[10px] font-semibold text-indigo-700 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded">
-                    <Sparkles className="w-3 h-3" /> Auto-Learning Active
-                  </span>
-                )}
                 <span className="text-[11px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded">
-                  AI Parsed
+                  Cloud Active
                 </span>
               </div>
             </div>
@@ -1742,7 +1738,7 @@ ${xmlVouchers}
                       onClick={() => {
                         const newLedgers = [...(voucherData.accounting_ledgers || []), {
                           description: "Additional Charge",
-                          ledger_name: dynamicExpenseLedgers[0] || "Purchases",
+                          ledger_name: "", // Starts blank
                           amount: 0
                         }];
                         updateTotals({ ...voucherData, accounting_ledgers: newLedgers });
@@ -1758,7 +1754,7 @@ ${xmlVouchers}
                       <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-semibold">
                         <tr>
                           <th className="p-2.5">Item Description</th>
-                          <th className="p-2.5 w-64">Ledger Name</th>
+                          <th className="p-2.5 w-64">Ledger Name (Required)</th>
                           <th className="p-2.5 w-28">Amount (₹)</th>
                           <th className="p-2.5 w-8"></th>
                         </tr>
@@ -1791,7 +1787,7 @@ ${xmlVouchers}
                                 onChange={(selected) => handleLedgerSelection(idx, selected, it.description)}
                                 coaList={clientCoa}
                                 fallbackOptions={dynamicExpenseLedgers}
-                                placeholder="Type to search COA..."
+                                placeholder="Select ledger..."
                               />
                             </td>
                             <td className="p-2">
@@ -1930,24 +1926,29 @@ ${xmlVouchers}
                 </div>
 
                 <div className="flex items-center justify-between pt-2">
-                  <label className="text-xs text-slate-500">Round Off Adjustment (+ / - ₹):</label>
+                  <label className="text-xs text-slate-500">Round Off Adjustment (+ / - ₹, e.g. 0.5, -0.25):</label>
                   <input
                     type="text"
                     value={voucherData.round_off ?? ""}
                     onChange={(e) => {
                       const val = e.target.value;
-                      if (val === "" || val === "-" || !isNaN(val)) {
-                        updateTotals(voucherData, val === "-" ? "-" : (parseFloat(val) || 0));
+                      if (val === "" || val === "-" || val === "-." || !isNaN(val)) {
+                        updateTotals(voucherData, val);
                       }
                     }}
-                    className="w-28 text-right text-xs font-mono border border-slate-300 rounded p-1 font-semibold text-slate-800"
-                    placeholder="e.g. 0.50 or -0.25"
+                    className="w-32 text-right text-xs font-mono border border-slate-300 rounded p-1 font-semibold text-slate-800"
+                    placeholder="0.00"
                   />
                 </div>
 
                 <div className="flex justify-between items-center text-sm font-bold text-slate-900 pt-3 border-t border-slate-200">
-                  <span>Grand Total:</span>
+                  <span>Grand Total (Total Credits):</span>
                   <span className="font-mono text-base">₹{(voucherData.grand_total || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span>
+                </div>
+
+                <div className="flex justify-between items-center text-xs font-semibold text-slate-600 bg-slate-50 p-2 rounded border border-slate-200">
+                  <span>Total Calculated Debits (Taxable + Taxes + RoundOff):</span>
+                  <span className="font-mono font-bold text-slate-900">₹{voucherBalanceCheck.totalDr.toFixed(2)}</span>
                 </div>
               </div>
             </div>
