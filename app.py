@@ -212,6 +212,14 @@ CUSTOM_CSS = """
         background: #525659;
         text-align: center;
         padding: 15px;
+        cursor: grab;
+    }
+    .zoom-container:active {
+        cursor: grabbing;
+    }
+    .zoom-container img {
+        user-select: none;
+        pointer-events: none;
     }
 
     .stButton>button[kind="primary"] {
@@ -904,6 +912,17 @@ if "approved_bills_active" not in st.session_state:
 pending_bills_list = st.session_state["pending_bills_active"]
 approved_bills_list = st.session_state["approved_bills_active"]
 
+# Dynamic Non-ITC check for active client
+active_profile_data = client_masters.get(selected_client, {})
+if isinstance(active_profile_data, dict):
+    active_gst_scheme = str(active_profile_data.get("gst_scheme", active_profile_data.get("gstScheme", ""))).lower()
+    is_client_non_itc = "non-itc" in active_gst_scheme or "non itc" in active_gst_scheme
+else:
+    is_client_non_itc = "non-itc" in selected_client.lower()
+
+itc_badge_text = "Non-ITC (Restricted)" if is_client_non_itc else "ITC Eligible"
+itc_badge_color = "#D97706" if is_client_non_itc else "#059669"
+
 # 9. Executive Hero Banner
 st.markdown(f"""
 <div class="hero-banner">
@@ -911,7 +930,10 @@ st.markdown(f"""
         <h1 class="hero-title">Compliance4 Business</h1>
         <div class="hero-subtitle">Automated Accounting & Tally Integration Architecture</div>
     </div>
-    <div class="hero-pill">🏷️ {selected_client}</div>
+    <div style="display: flex; gap: 10px; align-items: center;">
+        <span style="background: {itc_badge_color}; color: #FFFFFF; padding: 5px 14px; border-radius: 9999px; font-weight: 700; font-size: 0.78rem;">{itc_badge_text}</span>
+        <div class="hero-pill">🏷️ {selected_client}</div>
+    </div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -940,7 +962,7 @@ if st.session_state["active_review_index"] is not None and len(pending_bills_lis
         st.markdown(f"<div style='text-align:center; font-weight:700; color:#0D2240; padding-top:8px;'>Invoice {idx + 1} of {len(pending_bills_list)} ({selected_client})</div>", unsafe_allow_html=True)
     with nav_c3:
         if idx > 0:
-            if st.button("⏮️️ Previous", type="secondary", use_container_width=True):
+            if st.button("⏮ Previous", type="secondary", use_container_width=True):
                 st.session_state["active_review_index"] = idx - 1
                 st.rerun()
     with nav_c4:
@@ -1122,25 +1144,16 @@ if st.session_state["active_review_index"] is not None and len(pending_bills_lis
 
             st.markdown("<div style='font-weight: 700; color: #0D2240; margin: 16px 0 8px 0;'>Taxes & Round-Off Reconciliation</div>", unsafe_allow_html=True)
             
-            # Non-ITC Client Restriction Check
-            # Check client profile flags or assume non-itc if specified
-            is_non_itc = False
-            try:
-                # You can check if client name contains or is flagged for Non-ITC
-                is_non_itc = "non-itc" in selected_client.lower() or client_masters.get(selected_client, {}).get("is_non_itc", False)
-            except Exception:
-                pass
-
-            tax_disabled = is_non_itc
-            tax_help = "Disabled for Non-ITC client profile" if is_non_itc else "Tax amount"
+            tax_disabled = is_client_non_itc
+            tax_help = "Disabled for Non-ITC client profile" if is_client_non_itc else "Tax amount"
 
             t_c1, t_c2, t_c3, t_c4 = st.columns(4)
             with t_c1:
-                v_cgst = st.number_input("CGST (₹)", value=0.0 if is_non_itc else float(bill.get("cgst", 0.0)), step=0.01, format="%.2f", disabled=tax_disabled, help=tax_help)
+                v_cgst = st.number_input("CGST (₹)", value=0.0 if is_client_non_itc else float(bill.get("cgst", 0.0)), step=0.01, format="%.2f", disabled=tax_disabled, help=tax_help)
             with t_c2:
-                v_sgst = st.number_input("SGST (₹)", value=0.0 if is_non_itc else float(bill.get("sgst", 0.0)), step=0.01, format="%.2f", disabled=tax_disabled, help=tax_help)
+                v_sgst = st.number_input("SGST (₹)", value=0.0 if is_client_non_itc else float(bill.get("sgst", 0.0)), step=0.01, format="%.2f", disabled=tax_disabled, help=tax_help)
             with t_c3:
-                v_igst = st.number_input("IGST (₹)", value=0.0 if is_non_itc else float(bill.get("igst", 0.0)), step=0.01, format="%.2f", disabled=tax_disabled, help=tax_help)
+                v_igst = st.number_input("IGST (₹)", value=0.0 if is_client_non_itc else float(bill.get("igst", 0.0)), step=0.01, format="%.2f", disabled=tax_disabled, help=tax_help)
             with t_c4:
                 v_round_off = st.number_input("Round-Off (₹)", value=float(bill.get("round_off", 0.0)), step=0.01, format="%.2f", help="Paisa adjustment to match printed invoice total")
 
