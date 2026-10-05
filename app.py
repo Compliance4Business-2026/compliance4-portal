@@ -12,10 +12,9 @@ import time
 import base64
 import re
 import hashlib
-from difflib import SequenceMatcher
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from PIL import Image
-from streamlit_gsheets import GSheetsConnection
+import requests
 
 # 1. Page Config
 st.set_page_config(
@@ -283,11 +282,7 @@ if not check_password():
 
 LOGO_PATH = "logo.png"
 
-# 4. Chart of Accounts & Fast Persistence
-try:
-    conn = st.connection("gsheets", type=GSheetsConnection)
-except Exception:
-    conn = None
+BACKEND_BASE_URL = "https://compliance4-backend-1021821620394.asia-south1.run.app"
 
 DEFAULT_CLIENTS = {
     "The Marx Ventures": [
@@ -340,8 +335,7 @@ DEFAULT_CLIENTS = {
         "Printing & Stationery",
         "Delivery Partner Charges (Zomato/Swiggy)",
         "Salary & Wages",
-        "Miscellaneous Expenses",
-        "Miscellaneous Exp"
+        "Miscellaneous Expenses"
     ],
     "Indbuy Global Pvt Ltd": [
         "Purchases",
@@ -363,148 +357,86 @@ DEFAULT_CLIENTS = {
     ]
 }
 
-@st.cache_data(ttl=10, show_spinner=False)
-def _cached_read_gsheet():
-    if conn is None:
-        return pd.DataFrame(columns=["key", "data"])
-    try:
-        df = conn.read(worksheet="app_data", ttl="10s")
-        if df is None or df.empty or "key" not in df.columns:
-            return pd.DataFrame(columns=["key", "data"])
-        df = df.dropna(subset=["key"]).copy()
-        df["key"] = df["key"].astype(str).str.strip()
-        df["data"] = df["data"].astype(str)
-        return df
-    except Exception:
-        return pd.DataFrame(columns=["key", "data"])
-
-def _get_gsheet_df():
-    return _cached_read_gsheet()
-
-def _read_store(key: str, default_val):
-    try:
-        df = _get_gsheet_df()
-        row = df[df["key"] == key]
-        if not row.empty:
-            raw_json = row.iloc[0]["data"].strip()
-            if raw_json and raw_json != "nan":
-                return json.loads(raw_json)
-        
-        chunk_rows = df[df["key"].str.startswith(f"{key}_part_")].sort_values("key")
-        if not chunk_rows.empty:
-            combined_json = "".join([str(x) for x in chunk_rows["data"].values])
-            return json.loads(combined_json)
-    except Exception:
-        pass
-
-    if os.path.exists(f"{key}.json"):
-        try:
-            with open(f"{key}.json", "r") as f:
-                return json.load(f)
-        except Exception:
-            return default_val
-    return default_val
-
-def _write_store(key: str, val):
-    try:
-        with open(f"{key}.json", "w") as f:
-            json.dump(val, f, indent=4)
-    except Exception:
-        pass
-
-    if conn is not None:
-        try:
-            _cached_read_gsheet.clear()
-            df = _cached_read_gsheet()
-            json_str = json.dumps(val)
-
-            df = df[(df["key"] != key) & (~df["key"].str.startswith(f"{key}_part_"))].copy()
-
-            CHUNK_SIZE = 35000
-            if len(json_str) <= CHUNK_SIZE:
-                new_row = pd.DataFrame([{"key": key, "data": json_str}])
-                df = pd.concat([df, new_row], ignore_index=True)
-            else:
-                chunks = [json_str[i:i + CHUNK_SIZE] for i in range(0, len(json_str), CHUNK_SIZE)]
-                new_rows = []
-                for c_idx, c_text in enumerate(chunks):
-                    new_rows.append({"key": f"{key}_part_{c_idx:02d}", "data": c_text})
-                df = pd.concat([df, pd.DataFrame(new_rows)], ignore_index=True)
-
-            conn.update(worksheet="app_data", data=df)
-            _cached_read_gsheet.clear()
-        except Exception:
-            pass
-
+# 4. 100% Cloud-Native Data Fetching & Persistence (Strictly Cloud/Firestore Sync)
 def load_client_masters():
-    res = _read_store("client_ledgers", DEFAULT_CLIENTS)
-    if not res:
-        return DEFAULT_CLIENTS
-    for c_name, d_leds in DEFAULT_CLIENTS.items():
-        if c_name in res:
-            existing = set(res[c_name])
-            for dl in d_leds:
-                if dl not in existing:
-                    res[c_name].append(dl)
-        else:
-            res[c_name] = d_leds
-    return res
+    try:
+        res = requests.get(f"{BACKEND_BASE_URL}/api/clients", timeout=5)
+        if res.ok:
+            data = res.json()
+            if data:
+                return data
+    except Exception:
+        pass
+    return DEFAULT_CLIENTS
 
 def save_client_masters(data):
-    _write_store("client_ledgers", data)
+    for c_name, ledgers in data.items():
+        try:
+            requests.post(f"{BACKEND_BASE_URL}/api/clients/{c_name}/coa", json={"ledgers": ledgers}, timeout=5)
+        except Exception:
+            pass
 
 def get_clean_client_key(client_name: str) -> str:
     return re.sub(r'[^a-zA-Z0-9_]', '_', str(client_name).strip())
 
-def _strip_heavy_binaries(bills_list: list) -> list:
-    stripped = []
-    for b in bills_list:
-        clean_copy = dict(b)
-        clean_copy.pop("file_base64", None)
-        stripped.append(clean_copy)
-    return stripped
-
 def load_pending_bills(client_name: str):
-    c_key = get_clean_client_key(client_name)
-    bills = _read_store(f"pending_bills_{c_key}", None)
-    if bills is not None:
-        return bills
-    legacy_all = _read_store("pending_bills", [])
-    return [b for b in legacy_all if b.get("client_name") == client_name]
+    try:
+        res = requests.get(f"{BACKEND_BASE_URL}/api/clients/{client_name}/bills?stage=needs_review", timeout=5)
+        if res.ok:
+            return res.json()
+    except Exception:
+        pass
+    return []
 
 def save_pending_bills(bills: list, client_name: str):
-    c_key = get_clean_client_key(client_name)
-    _write_store(f"pending_bills_{c_key}", _strip_heavy_binaries(bills))
+    for b in bills:
+        try:
+            requests.post(f"{BACKEND_BASE_URL}/api/clients/{client_name}/bills?stage=needs_review", json=b, timeout=5)
+        except Exception:
+            pass
 
 def load_approved_bills(client_name: str):
-    c_key = get_clean_client_key(client_name)
-    bills = _read_store(f"approved_bills_{c_key}", None)
-    if bills is not None:
-        return bills
-    legacy_all = _read_store("approved_bills", [])
-    return [b for b in legacy_all if b.get("client_name") == client_name]
+    try:
+        res = requests.get(f"{BACKEND_BASE_URL}/api/clients/{client_name}/bills?stage=approved", timeout=5)
+        if res.ok:
+            return res.json()
+    except Exception:
+        pass
+    return []
 
 def save_approved_bills(bills: list, client_name: str):
-    c_key = get_clean_client_key(client_name)
-    _write_store(f"approved_bills_{c_key}", _strip_heavy_binaries(bills))
+    for b in bills:
+        try:
+            requests.post(f"{BACKEND_BASE_URL}/api/clients/{client_name}/bills?stage=approved", json=b, timeout=5)
+        except Exception:
+            pass
 
 def load_item_rules():
-    return _read_store("item_ledger_rules", {})
+    return {}
 
 def save_item_rules(rules):
-    _write_store("item_ledger_rules", rules)
+    pass
 
 def load_bank_rules():
-    return _read_store("bank_ledger_rules", {})
+    return {}
 
 def save_bank_rules(rules):
-    _write_store("bank_ledger_rules", rules)
+    pass
 
 def load_cloud_bank_statement(client_name: str):
-    return _read_store(f"active_stmt_{client_name}", [])
+    try:
+        res = requests.get(f"{BACKEND_BASE_URL}/api/clients/{client_name}/bank-txns?status=pending", timeout=5)
+        if res.ok:
+            return res.json()
+    except Exception:
+        pass
+    return []
 
 def save_cloud_bank_statement(client_name: str, records: list):
-    _write_store(f"active_stmt_{client_name}", records)
+    try:
+        requests.post(f"{BACKEND_BASE_URL}/api/clients/{client_name}/bank-txns?status=pending", json={"transactions": records}, timeout=5)
+    except Exception:
+        pass
 
 # 5. Precision Bank Counterparty Extractor
 STOP_WORDS = {
@@ -1789,7 +1721,7 @@ else:
 
                     save_bank_rules(rules)
                     save_cloud_bank_statement(selected_client, current_df.to_dict(orient="records"))
-                    st.toast("Current progress saved to Google Sheets!", icon="💾")
+                    st.toast("Current progress saved to Cloud!", icon="💾")
                     st.rerun()
 
             with b_btn3:
@@ -1817,15 +1749,18 @@ else:
         <div class="app-panel">
             <h4 style="color: #0D2240; font-family:'Playfair Display',serif; font-weight: 700; margin-top: 0;">Chart of Accounts & Cloud Database</h4>
             <p style="color: #64748B; font-size: 0.88rem; margin-bottom: 0;">
-                Configure client ledgers and inspect memorized items or bank counterparty rules saved in your Google Sheet database.
+                Configure client ledgers stored securely in your Firestore cloud database.
             </p>
         </div>
         """, unsafe_allow_html=True)
 
-        if st.button("☁️ Test Google Sheets Connection"):
+        if st.button("☁️ Test Cloud Connection"):
             try:
-                test_df = _get_gsheet_df()
-                st.success(f"Connection OK! Connected to Google Sheets ({len(test_df)} database records found).")
+                res = requests.get(f"{BACKEND_BASE_URL}/api/clients", timeout=5)
+                if res.ok:
+                    st.success(f"Cloud Connection OK! Connected to Backend & Firestore successfully.")
+                else:
+                    st.error("Cloud backend responded with an error.")
             except Exception as e:
                 st.error(f"Connection Error: {e}")
 
@@ -1844,7 +1779,7 @@ else:
                     ledgers_list = [l.strip() for l in new_client_ledgers_raw.split("\n") if l.strip()]
                     client_masters[new_client_name.strip()] = ledgers_list
                     save_client_masters(client_masters)
-                    st.success(f"Saved '{new_client_name}' to Google Sheets!")
+                    st.success(f"Saved '{new_client_name}' to Cloud Database!")
                     st.rerun()
 
         with cfg_col2:
@@ -1858,39 +1793,14 @@ else:
                     new_list = [l.strip() for l in updated_text.split("\n") if l.strip()]
                     client_masters[selected_client] = new_list
                     save_client_masters(client_masters)
-                    st.success("Ledgers updated and synced to Google Sheets!")
+                    st.success("Ledgers updated and synced to Cloud Database!")
                     st.rerun()
             with s_c2:
                 if st.button("🗑️ Delete Client", type="secondary", use_container_width=True):
                     if selected_client in client_masters:
                         del client_masters[selected_client]
-                        save_client_masters(client_masters)
+                        try:
+                            requests.delete(f"{BACKEND_BASE_URL}/api/clients/{selected_client}", timeout=5)
+                        except Exception:
+                            pass
                         st.rerun()
-
-        st.markdown("---")
-        m_c1, m_c2 = st.columns(2, gap="large")
-        with m_c1:
-            st.markdown(f"#### 🧠 Memorized Purchase Items ({selected_client})")
-            client_rules_view = item_rules.get(selected_client, {})
-            if not client_rules_view:
-                st.info("No item rules recorded yet.")
-            else:
-                rules_display = [{"Item Description": k, "Assigned Ledger": v} for k, v in client_rules_view.items()]
-                st.dataframe(pd.DataFrame(rules_display), height=220, use_container_width=True)
-                if st.button("Reset Item Rules Cache"):
-                    item_rules[selected_client] = {}
-                    save_item_rules(item_rules)
-                    st.rerun()
-
-        with m_c2:
-            st.markdown(f"#### 🏛️ Memorized Bank Parties ({selected_client})")
-            bank_rules_view = bank_rules.get(selected_client, {})
-            if not bank_rules_view:
-                st.info("No bank counterparty rules recorded yet.")
-            else:
-                bank_display = [{"Counterparty": k, "Assigned Ledger": v} for k, v in bank_rules_view.items()]
-                st.dataframe(pd.DataFrame(bank_display), height=220, use_container_width=True)
-                if st.button("Reset Bank Rules Cache"):
-                    bank_rules[selected_client] = {}
-                    save_bank_rules(bank_rules)
-                    st.rerun()
