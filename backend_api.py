@@ -95,8 +95,9 @@ async def extract_invoice(
     # 1. Save file permanently to server storage / GCS bucket
     file_url = ""
     try:
-        if STORAGE_BUCKET_NAME and storage_client:
-            bucket = storage_client.bucket(STORAGE_BUCKET_NAME)
+        s_client = get_storage()
+        if STORAGE_BUCKET_NAME and s_client:
+            bucket = s_client.bucket(STORAGE_BUCKET_NAME)
             blob = bucket.blob(f"invoices/{company_name}/{unique_filename}")
             blob.upload_from_string(file_bytes, content_type=mime_type)
             file_url = blob.public_url
@@ -517,8 +518,9 @@ def login(creds: LoginAuthRequest):
     clean_user = creds.username.strip().lower()
 
     # Check Super Admin
-    admin_doc = db.collection("system_config").document("admin_credentials").get()
-    admin_data = admin_doc.to_dict() if admin_doc.exists else {
+    database = get_db()
+    admin_doc = database.collection("system_config").document("admin_credentials").get() if database else None
+    admin_data = admin_doc.to_dict() if admin_doc and admin_doc.exists else {
         "username": "admin",
         "password": "admin123",
         "fullName": "Super Administrator"
@@ -542,8 +544,8 @@ def login(creds: LoginAuthRequest):
         }
 
     # Query Staff / Client user from Firestore
-    user_ref = db.collection("users").document(clean_user).get()
-    if not user_ref.exists:
+    user_ref = database.collection("users").document(clean_user).get() if database else None
+    if not user_ref or not user_ref.exists:
         raise HTTPException(status_code=401, detail="Invalid username or password")
 
     user_data = user_ref.to_dict()
@@ -557,153 +559,204 @@ def login(creds: LoginAuthRequest):
 # --- 5.2 User Access Management ---
 @app.get("/api/users")
 def get_users():
-    docs = db.collection("users").stream()
+    database = get_db()
+    if not database:
+        return []
+    docs = database.collection("users").stream()
     return [doc.to_dict() for doc in docs]
 
 @app.post("/api/users")
 def save_user(user: Dict[str, Any] = Body(...)):
+    database = get_db()
     username = user.get("username", "").strip().lower()
     if not username:
         raise HTTPException(status_code=400, detail="Username is required")
-    db.collection("users").document(username).set(user)
+    if database:
+        database.collection("users").document(username).set(user)
     return {"status": "success", "username": username}
 
 @app.delete("/api/users/{username}")
 def delete_user(username: str):
-    db.collection("users").document(username.strip().lower()).delete()
+    database = get_db()
+    if database:
+        database.collection("users").document(username.strip().lower()).delete()
     return {"status": "deleted"}
 
 # --- 5.3 Client Entities & COA ---
 @app.get("/api/clients")
 def get_clients():
-    docs = db.collection("client_profiles").stream()
+    database = get_db()
+    if not database:
+        return {}
+    docs = database.collection("client_profiles").stream()
     return {doc.id: doc.to_dict() for doc in docs}
 
 @app.post("/api/clients/{client_name}")
 def save_client_profile(client_name: str, profile: Dict[str, Any] = Body(...)):
-    db.collection("client_profiles").document(client_name.strip()).set(profile)
+    database = get_db()
+    if database:
+        database.collection("client_profiles").document(client_name.strip()).set(profile)
     return {"status": "success"}
 
 @app.delete("/api/clients/{client_name}")
 def delete_client_profile(client_name: str):
-    db.collection("client_profiles").document(client_name.strip()).delete()
-    db.collection("client_coa").document(client_name.strip()).delete()
+    database = get_db()
+    if database:
+        database.collection("client_profiles").document(client_name.strip()).delete()
+        database.collection("client_coa").document(client_name.strip()).delete()
     return {"status": "deleted"}
 
 @app.get("/api/clients/{client_name}/coa")
 def get_client_coa(client_name: str):
-    doc = db.collection("client_coa").document(client_name.strip()).get()
+    database = get_db()
+    if not database:
+        return []
+    doc = database.collection("client_coa").document(client_name.strip()).get()
     return doc.to_dict().get("ledgers", []) if doc.exists else []
 
 @app.post("/api/clients/{client_name}/coa")
 def save_client_coa(client_name: str, payload: Dict[str, Any] = Body(...)):
+    database = get_db()
     ledgers = payload.get("ledgers", [])
-    db.collection("client_coa").document(client_name.strip()).set({"ledgers": ledgers})
+    if database:
+        database.collection("client_coa").document(client_name.strip()).set({"ledgers": ledgers})
     return {"status": "success", "count": len(ledgers)}
 
 # --- 5.4 Purchases & Invoice Workflow ---
 @app.get("/api/clients/{client_name}/bills")
 def get_bills(client_name: str, stage: str = "needs_review"):
-    docs = db.collection("purchases").document(client_name.strip()).collection(stage).stream()
+    database = get_db()
+    if not database:
+        return []
+    docs = database.collection("purchases").document(client_name.strip()).collection(stage).stream()
     return [doc.to_dict() for doc in docs]
 
 @app.post("/api/clients/{client_name}/bills")
 def save_bill(client_name: str, stage: str = "needs_review", bill: Dict[str, Any] = Body(...)):
+    database = get_db()
     bill_id = str(bill.get("id") or f"inv_{int(time.time() * 1000)}")
-    db.collection("purchases").document(client_name.strip()).collection(stage).document(bill_id).set(bill)
+    if database:
+        database.collection("purchases").document(client_name.strip()).collection(stage).document(bill_id).set(bill)
     return {"status": "success", "id": bill_id}
 
 @app.delete("/api/clients/{client_name}/bills/{stage}/{bill_id}")
 def delete_bill(client_name: str, stage: str, bill_id: str):
-    db.collection("purchases").document(client_name.strip()).collection(stage).document(str(bill_id)).delete()
+    database = get_db()
+    if database:
+        database.collection("purchases").document(client_name.strip()).collection(stage).document(str(bill_id)).delete()
     return {"status": "deleted"}
 
 # --- 5.5 Banking & Reconciliation Persistence ---
 @app.get("/api/clients/{client_name}/bank-txns")
 def get_bank_transactions(client_name: str, status: str = "pending"):
-    docs = db.collection("banking").document(client_name.strip()).collection(status).stream()
+    database = get_db()
+    if not database:
+        return []
+    docs = database.collection("banking").document(client_name.strip()).collection(status).stream()
     return [doc.to_dict() for doc in docs]
 
 @app.post("/api/clients/{client_name}/bank-txns")
 def save_bank_transactions(client_name: str, status: str = "pending", payload: Dict[str, Any] = Body(...)):
+    database = get_db()
     txns = payload.get("transactions", [])
-    batch = db.batch()
-    for txn in txns:
-        txn_id = str(txn.get("id") or f"bank_{int(time.time() * 1000)}")
-        ref = db.collection("banking").document(client_name.strip()).collection(status).document(txn_id)
-        batch.set(ref, txn)
-    batch.commit()
+    if database:
+        batch = database.batch()
+        for txn in txns:
+            txn_id = str(txn.get("id") or f"bank_{int(time.time() * 1000)}")
+            ref = database.collection("banking").document(client_name.strip()).collection(status).document(txn_id)
+            batch.set(ref, txn)
+        batch.commit()
     return {"status": "success", "count": len(txns)}
 
 @app.delete("/api/clients/{client_name}/bank-txns/{status}/{txn_id}")
 def delete_bank_transaction(client_name: str, status: str, txn_id: str):
-    db.collection("banking").document(client_name.strip()).collection(status).document(str(txn_id)).delete()
+    database = get_db()
+    if database:
+        database.collection("banking").document(client_name.strip()).collection(status).document(str(txn_id)).delete()
     return {"status": "deleted"}
 
 # --- 5.6 Sales & POS Module Persistence ---
 @app.get("/api/clients/{client_name}/sales")
 def get_sales_records(client_name: str, status: str = "approved"):
-    docs = db.collection("sales").document(client_name.strip()).collection(status).stream()
+    database = get_db()
+    if not database:
+        return []
+    docs = database.collection("sales").document(client_name.strip()).collection(status).stream()
     return [doc.to_dict() for doc in docs]
 
 @app.post("/api/clients/{client_name}/sales")
 def save_sales_record(client_name: str, status: str = "approved", payload: Dict[str, Any] = Body(...)):
+    database = get_db()
     records = payload.get("records")
-    if records is not None and isinstance(records, list):
-        batch = db.batch()
+    if database and records is not None and isinstance(records, list):
+        batch = database.batch()
         for rec in records:
             rec_id = str(rec.get("id") or f"sale_{int(time.time() * 1000)}")
-            ref = db.collection("sales").document(client_name.strip()).collection(status).document(rec_id)
+            ref = database.collection("sales").document(client_name.strip()).collection(status).document(rec_id)
             batch.set(ref, rec)
         batch.commit()
         return {"status": "success", "count": len(records)}
 
     rec_id = str(payload.get("id") or f"sale_{int(time.time() * 1000)}")
-    db.collection("sales").document(client_name.strip()).collection(status).document(rec_id).set(payload)
+    if database:
+        database.collection("sales").document(client_name.strip()).collection(status).document(rec_id).set(payload)
     return {"status": "success", "id": rec_id}
 
 @app.delete("/api/clients/{client_name}/sales/{status}/{record_id}")
 def delete_sales_record(client_name: str, status: str, record_id: str):
-    db.collection("sales").document(client_name.strip()).collection(status).document(str(record_id)).delete()
+    database = get_db()
+    if database:
+        database.collection("sales").document(client_name.strip()).collection(status).document(str(record_id)).delete()
     return {"status": "deleted"}
 
 # --- 5.7 Other Expenses Module Persistence ---
 @app.get("/api/clients/{client_name}/expenses")
 def get_expense_records(client_name: str, status: str = "approved"):
-    docs = db.collection("other_expenses").document(client_name.strip()).collection(status).stream()
+    database = get_db()
+    if not database:
+        return []
+    docs = database.collection("other_expenses").document(client_name.strip()).collection(status).stream()
     return [doc.to_dict() for doc in docs]
 
 @app.post("/api/clients/{client_name}/expenses")
 def save_expense_record(client_name: str, status: str = "approved", payload: Dict[str, Any] = Body(...)):
+    database = get_db()
     expenses = payload.get("expenses")
-    if expenses is not None and isinstance(expenses, list):
-        batch = db.batch()
+    if database and expenses is not None and isinstance(expenses, list):
+        batch = database.batch()
         for exp in expenses:
             exp_id = str(exp.get("id") or f"exp_{int(time.time() * 1000)}")
-            ref = db.collection("other_expenses").document(client_name.strip()).collection(status).document(exp_id)
+            ref = database.collection("other_expenses").document(client_name.strip()).collection(status).document(exp_id)
             batch.set(ref, exp)
         batch.commit()
         return {"status": "success", "count": len(expenses)}
 
     exp_id = str(payload.get("id") or f"exp_{int(time.time() * 1000)}")
-    db.collection("other_expenses").document(client_name.strip()).collection(status).document(exp_id).set(payload)
+    if database:
+        database.collection("other_expenses").document(client_name.strip()).collection(status).document(exp_id).set(payload)
     return {"status": "success", "id": exp_id}
 
 @app.delete("/api/clients/{client_name}/expenses/{status}/{expense_id}")
 def delete_expense_record(client_name: str, status: str, expense_id: str):
-    db.collection("other_expenses").document(client_name.strip()).collection(status).document(str(expense_id)).delete()
+    database = get_db()
+    if database:
+        database.collection("other_expenses").document(client_name.strip()).collection(status).document(str(expense_id)).delete()
     return {"status": "deleted"}
 
 # --- 5.8 Bulk Seeder (Browser localStorage to Firestore) ---
 @app.post("/api/system/seed-from-backup")
 def seed_from_backup(payload: Dict[str, Any] = Body(...)):
-    batch = db.batch()
+    database = get_db()
+    if not database:
+        raise HTTPException(status_code=500, detail="Firestore database unavailable.")
+    
+    batch = database.batch()
 
     if "c4_client_profiles" in payload:
         raw_profiles = payload["c4_client_profiles"]
         profiles = json.loads(raw_profiles) if isinstance(raw_profiles, str) else raw_profiles
         for cname, pdata in profiles.items():
-            ref = db.collection("client_profiles").document(cname.strip())
+            ref = database.collection("client_profiles").document(cname.strip())
             batch.set(ref, pdata)
 
     if "c4_user_accounts" in payload:
@@ -712,14 +765,14 @@ def seed_from_backup(payload: Dict[str, Any] = Body(...)):
         for u in users:
             uname = u.get("username", "").strip().lower()
             if uname:
-                ref = db.collection("users").document(uname)
+                ref = database.collection("users").document(uname)
                 batch.set(ref, u)
 
     for key, val in payload.items():
         if key.startswith("c4_coa_"):
             cname = key.replace("c4_coa_", "").strip()
             ledgers = json.loads(val) if isinstance(val, str) else val
-            ref = db.collection("client_coa").document(cname)
+            ref = database.collection("client_coa").document(cname)
             batch.set(ref, {"ledgers": ledgers})
 
     batch.commit()
