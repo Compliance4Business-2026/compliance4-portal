@@ -204,22 +204,14 @@ CUSTOM_CSS = """
     }
 
     .zoom-container {
-        overflow: auto !important;
+        overflow: hidden !important;
         max-height: 650px !important;
         position: relative;
         border: 1px solid #CBD5E1;
         border-radius: 12px;
         background: #525659;
         text-align: center;
-        padding: 15px;
-        cursor: grab;
-    }
-    .zoom-container:active {
-        cursor: grabbing;
-    }
-    .zoom-container img {
-        user-select: none;
-        pointer-events: none;
+        padding: 0px;
     }
 
     .stButton>button[kind="primary"] {
@@ -912,13 +904,15 @@ if "approved_bills_active" not in st.session_state:
 pending_bills_list = st.session_state["pending_bills_active"]
 approved_bills_list = st.session_state["approved_bills_active"]
 
-# Dynamic Non-ITC check for active client
+# Reliable Non-ITC check based on active client name and profile data
 active_profile_data = client_masters.get(selected_client, {})
+client_lower = selected_client.lower()
+
+is_client_non_itc = "the marx ventures" in client_lower or "non-itc" in client_lower or "non itc" in client_lower
 if isinstance(active_profile_data, dict):
-    active_gst_scheme = str(active_profile_data.get("gst_scheme", active_profile_data.get("gstScheme", ""))).lower()
-    is_client_non_itc = "non-itc" in active_gst_scheme or "non itc" in active_gst_scheme
-else:
-    is_client_non_itc = "non-itc" in selected_client.lower()
+    gst_scheme = str(active_profile_data.get("gst_scheme", active_profile_data.get("gstScheme", ""))).lower()
+    if "non-itc" in gst_scheme or "non itc" in gst_scheme:
+        is_client_non_itc = True
 
 itc_badge_text = "Non-ITC (Restricted)" if is_client_non_itc else "ITC Eligible"
 itc_badge_color = "#D97706" if is_client_non_itc else "#059669"
@@ -1064,11 +1058,47 @@ if st.session_state["active_review_index"] is not None and len(pending_bills_lis
                 components.html(pdf_js_html, height=650, scrolling=True)
             else:
                 img_data_uri = f"data:image/jpeg;base64,{b64_data}"
-                st.markdown(f"""
-                <div class="zoom-container">
-                    <img src="{img_data_uri}" style="width: {st.session_state['zoom_level']}%; max-width: none; border-radius: 6px; box-shadow: 0 4px 10px rgba(0,0,0,0.3);" />
-                </div>
-                """, unsafe_allow_html=True)
+                pan_zoom_html = f"""
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <style>
+                        body {{ margin: 0; background: #525659; overflow: auto; height: 650px; display: flex; justify-content: center; align-items: flex-start; cursor: grab; }}
+                        body:active {{ cursor: grabbing; }}
+                        img {{ width: {st.session_state['zoom_level']}%; user-select: none; pointer-events: none; border-radius: 6px; box-shadow: 0 4px 10px rgba(0,0,0,0.3); margin: auto; }}
+                    </style>
+                </head>
+                <body>
+                    <img src="{img_data_uri}" />
+                    <script>
+                        const slider = document.body;
+                        let isDown = false;
+                        let startX, startY, scrollLeft, scrollTop;
+
+                        slider.addEventListener('mousedown', (e) => {{
+                            isDown = true;
+                            startX = e.pageX - slider.offsetLeft;
+                            startY = e.pageY - slider.offsetTop;
+                            scrollLeft = slider.scrollLeft;
+                            scrollTop = slider.scrollTop;
+                        }});
+                        slider.addEventListener('mouseleave', () => {{ isDown = false; }});
+                        slider.addEventListener('mouseup', () => {{ isDown = false; }});
+                        slider.addEventListener('mousemove', (e) => {{
+                            if(!isDown) return;
+                            e.preventDefault();
+                            const x = e.pageX - slider.offsetLeft;
+                            const y = e.pageY - slider.offsetTop;
+                            const walkX = (x - startX);
+                            const walkY = (y - startY);
+                            slider.scrollLeft = scrollLeft - walkX;
+                            slider.scrollTop = scrollTop - walkY;
+                        }});
+                    </script>
+                </body>
+                </html>
+                """
+                components.html(pan_zoom_html, height=680, scrolling=True)
         else:
             st.warning("⚠️ Source document binary unavailable. Fields remain editable on the right.")
 
