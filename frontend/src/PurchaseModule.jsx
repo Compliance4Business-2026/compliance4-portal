@@ -250,7 +250,9 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
   const [clientCoa, setClientCoa] = useState([]);
 
   const clientProfile = useMemo(() => {
-    return { isItcEligible: true };
+    const nameLower = (activeClient || "").toLowerCase();
+    const isNonItc = nameLower.includes("marx") || nameLower.includes("non-itc") || nameLower.includes("non itc");
+    return { isItcEligible: !isNonItc };
   }, [activeClient]);
 
   const isClientItcEligible = clientProfile.isItcEligible !== false;
@@ -413,7 +415,7 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
         return ledgerName;
       }
     }
-    return ""; // Return blank if unknown instead of guessing
+    return "";
   };
 
   const checkDuplicateInvoice = (invoiceNo, vendorName, currentId = null) => {
@@ -506,7 +508,7 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
           const memorized = getMemorizedLedgerForItem(matchName);
           return {
             description: it.description || it.item_name || "Raw Material",
-            ledger_name: memorized || "", // Blank if unknown
+            ledger_name: memorized || "",
             amount: it.amount || 0,
             isAutoMatched: Boolean(memorized)
           };
@@ -546,7 +548,7 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
     setIsUploadingBill(true);
     let successCount = 0;
     let newExtractedBills = [];
-    let duplicateWarningsCount =0;
+    let duplicateWarningsCount = 0;
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
@@ -661,7 +663,7 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
         const memorized = getMemorizedLedgerForItem(matchName);
         return {
           description: it.description || it.item_name || "Supplies",
-          ledger_name: memorized, // Blank if no auto-learning match
+          ledger_name: memorized,
           amount: parseFloat(it.amount || it.rate) || safeBill.taxable_amount,
           isAutoMatched: Boolean(memorized)
         };
@@ -749,7 +751,6 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
   const validateVoucherBalance = () => {
     if (!voucherData) return { isBalanced: false, totalDr: 0, totalCr: 0, diff: 0, missingLedgers: false };
 
-    // Check if any ledger item is blank
     const ledgersList = voucherMode === "item" ? (voucherData.items || []) : (voucherData.accounting_ledgers || []);
     const hasMissingLedgers = ledgersList.some(l => !l.ledger_name && !l.item_name);
 
@@ -771,7 +772,7 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
     let adjustedDr = totalDr + roundOff;
 
     const diff = parseFloat((adjustedDr - totalCr).toFixed(2));
-    const isBalanced = Math.abs(diff) === 0; // Strict zero-tolerance check
+    const isBalanced = Math.abs(diff) === 0;
 
     return { isBalanced, totalDr: adjustedDr, totalCr, diff, hasMissingLedgers };
   };
@@ -1342,55 +1343,15 @@ ${xmlVouchers}
         )}
 
         <div className="flex-1 flex overflow-hidden">
-          {/* ZOOMABLE, ROTATABLE & DRAGGABLE IMAGE PREVIEW */}
+          {/* ZOOMABLE, ROTATABLE & FULLY SCROLLABLE PAN PREVIEW */}
           <div 
             ref={previewContainerRef}
-            onMouseDown={(e) => {
-              setIsDragging(true);
-              setDragStart({ x: e.clientX, y: e.clientY });
-              if (previewContainerRef.current) {
-                setScrollPos({
-                  left: previewContainerRef.current.scrollLeft,
-                  top: previewContainerRef.current.scrollTop
-                });
-              }
-            }}
-            onMouseMove={(e) => {
-              if (!isDragging || !previewContainerRef.current) return;
-              const dx = e.clientX - dragStart.x;
-              const dy = e.clientY - dragStart.y;
-              previewContainerRef.current.scrollLeft = scrollPos.left - dx;
-              previewContainerRef.current.scrollTop = scrollPos.top - dy;
-            }}
-            onMouseUp={() => setIsDragging(false)}
-            onMouseLeave={() => setIsDragging(false)}
-            onTouchStart={(e) => {
-              if (e.touches.length === 1) {
-                setIsDragging(true);
-                setDragStart({ x: e.touches[0].clientX, y: e.touches[0].clientY });
-                if (previewContainerRef.current) {
-                  setScrollPos({
-                    left: previewContainerRef.current.scrollLeft,
-                    top: previewContainerRef.current.scrollTop
-                  });
-                }
-              }
-            }}
-            onTouchMove={(e) => {
-              if (!isDragging || !previewContainerRef.current || e.touches.length !== 1) return;
-              const dx = e.touches[0].clientX - dragStart.x;
-              const dy = e.touches[0].clientY - dragStart.y;
-              previewContainerRef.current.scrollLeft = scrollPos.left - dx;
-              previewContainerRef.current.scrollTop = scrollPos.top - dy;
-            }}
-            onTouchEnd={() => setIsDragging(false)}
-            className={`w-1/2 bg-slate-200 border-r border-slate-300 relative overflow-auto flex flex-col select-none ${
-              isDragging ? "cursor-grabbing" : "cursor-grab"
-            }`}
+            className="w-1/2 bg-slate-200 border-r border-slate-300 relative overflow-auto flex flex-col select-none"
+            style={{ position: 'relative' }}
           >
             <div className="absolute top-4 right-4 z-20 flex items-center gap-1 bg-white/95 backdrop-blur-sm border border-slate-300 shadow-xs rounded-lg p-1">
               <button 
-                onClick={() => setZoomLevel(prev => Math.min(prev + 0.2, 3.0))}
+                onClick={() => setZoomLevel(prev => Math.min(prev + 0.2, 3.5))}
                 className="p-1.5 hover:bg-slate-100 rounded text-slate-600"
                 title="Zoom In"
               >
@@ -1420,7 +1381,7 @@ ${xmlVouchers}
               </button>
             </div>
 
-            <div className="flex-1 p-8 flex justify-center items-center min-h-full">
+            <div className="m-auto p-12 flex justify-center items-center min-w-full min-h-full">
               {voucherData.file_preview_url ? (
                 <img
                   src={voucherData.file_preview_url}
@@ -1430,14 +1391,14 @@ ${xmlVouchers}
                   style={{
                     transform: `scale(${zoomLevel}) rotate(${rotation}deg)`,
                     transformOrigin: "center center",
-                    maxWidth: zoomLevel === 1 ? "96%" : "none",
-                    transition: isDragging ? "none" : "transform 0.15s ease-out",
+                    maxWidth: zoomLevel === 1 ? "100%" : "none",
+                    transition: "transform 0.1s ease-out",
                     userSelect: "none"
                   }}
-                  className="bg-white shadow-xl rounded border border-slate-300 pointer-events-auto"
+                  className="bg-white shadow-2xl rounded border border-slate-300 pointer-events-auto"
                 />
               ) : (
-                <div className="text-center p-12 bg-white/70 border border-dashed border-slate-400 rounded-xl mt-12">
+                <div className="text-center p-12 bg-white/70 border border-dashed border-slate-400 rounded-xl">
                   <FileSpreadsheet className="w-12 h-12 text-slate-400 mx-auto mb-2" />
                   <p className="text-sm font-semibold text-slate-600">Attached Original Invoice</p>
                   <p className="text-xs text-slate-400 font-mono mt-1">#{voucherData.supplier_invoice_no}</p>
@@ -1738,7 +1699,7 @@ ${xmlVouchers}
                       onClick={() => {
                         const newLedgers = [...(voucherData.accounting_ledgers || []), {
                           description: "Additional Charge",
-                          ledger_name: "", // Starts blank
+                          ledger_name: "",
                           amount: 0
                         }];
                         updateTotals({ ...voucherData, accounting_ledgers: newLedgers });
@@ -1840,7 +1801,8 @@ ${xmlVouchers}
                     <label className="flex items-center gap-2 text-xs font-bold cursor-pointer">
                       <input
                         type="checkbox"
-                        checked={voucherData.treatTaxAsExpense || false}
+                        checked={voucherData.treatTaxAsExpense || !isClientItcEligible}
+                        disabled={!isClientItcEligible}
                         onChange={(e) => handleToggleTaxAsExpense(e.target.checked)}
                         className="rounded text-slate-900 focus:ring-slate-900"
                       />
@@ -1848,11 +1810,11 @@ ${xmlVouchers}
                     </label>
                   </div>
                   <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded ${
-                    voucherData.treatTaxAsExpense 
+                    voucherData.treatTaxAsExpense || !isClientItcEligible
                       ? "bg-amber-200 text-amber-900" 
                       : "bg-emerald-50 text-emerald-700 border border-emerald-200"
                   }`}>
-                    {voucherData.treatTaxAsExpense ? "GST Expense (P&L)" : "Input ITC (B/S)"}
+                    {voucherData.treatTaxAsExpense || !isClientItcEligible ? "GST Expense (P&L)" : "Input ITC (B/S)"}
                   </span>
                 </div>
 
@@ -1872,7 +1834,7 @@ ${xmlVouchers}
                     <input
                       type="number"
                       step="0.01"
-                      value={voucherData.cgst || 0}
+                      value={!isClientItcEligible ? (voucherData.cgst || 0) : (voucherData.cgst || 0)}
                       onChange={(e) => updateTotals({ ...voucherData, cgst: parseFloat(e.target.value) || 0 })}
                       className="w-full text-xs font-mono border border-slate-300 rounded p-1.5"
                     />
