@@ -18,198 +18,102 @@ export const api = {
   },
 
   // ==========================================
-  // 2. Client Profiles (Smart Local/Cloud Merge)
+  // 2. Client Profiles (100% Cloud-Native)
   // ==========================================
   async getClients() {
-    let cloudClients = {};
-    try {
-      const res = await fetch(`${BACKEND_BASE}/api/clients`);
-      if (res.ok) {
-        cloudClients = await res.json();
-      }
-    } catch (err) {
-      console.warn("Cloud client fetch skipped, relying on local profiles:", err);
-    }
-
-    const localClients = JSON.parse(localStorage.getItem("c4_client_profiles") || "{}");
-    const mergedClients = { ...cloudClients, ...localClients };
-    localStorage.setItem("c4_client_profiles", JSON.stringify(mergedClients));
-
-    return mergedClients;
+    const res = await fetch(`${BACKEND_BASE}/api/clients`);
+    if (!res.ok) throw new Error("Failed to fetch clients from cloud");
+    return await res.json();
   },
 
   async saveClientProfile(clientName, profile) {
-    await fetch(`${BACKEND_BASE}/api/clients/${encodeURIComponent(clientName)}`, {
+    const res = await fetch(`${BACKEND_BASE}/api/clients/${encodeURIComponent(clientName)}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(profile)
     });
-    const local = JSON.parse(localStorage.getItem("c4_client_profiles") || "{}");
-    local[clientName] = profile;
-    localStorage.setItem("c4_client_profiles", JSON.stringify(local));
+    if (!res.ok) throw new Error("Failed to save client profile to cloud");
+    return await res.json();
   },
 
   async deleteClientProfile(clientName) {
-    await fetch(`${BACKEND_BASE}/api/clients/${encodeURIComponent(clientName)}`, {
+    const res = await fetch(`${BACKEND_BASE}/api/clients/${encodeURIComponent(clientName)}`, {
       method: "DELETE"
     });
-    const local = JSON.parse(localStorage.getItem("c4_client_profiles") || "{}");
-    delete local[clientName];
-    localStorage.setItem("c4_client_profiles", JSON.stringify(local));
+    if (!res.ok) throw new Error("Failed to delete client profile from cloud");
   },
 
   // ==========================================
-  // 3. Chart of Accounts (COA)
+  // 3. Chart of Accounts (COA - Cloud Only)
   // ==========================================
   async getClientCoa(clientName) {
-    try {
-      const res = await fetch(`${BACKEND_BASE}/api/clients/${encodeURIComponent(clientName)}/coa`);
-      if (!res.ok) throw new Error("Failed to fetch COA");
-      const data = await res.json();
-      return Array.isArray(data) ? data : [];
-    } catch (err) {
-      console.warn("Falling back to local COA:", err);
-      return JSON.parse(localStorage.getItem(`c4_coa_${clientName}`) || "[]");
-    }
+    const res = await fetch(`${BACKEND_BASE}/api/clients/${encodeURIComponent(clientName)}/coa`);
+    if (!res.ok) throw new Error("Failed to fetch COA from cloud");
+    const data = await res.json();
+    return Array.isArray(data) ? data : [];
   },
 
   async saveClientCoa(clientName, ledgers) {
-    await fetch(`${BACKEND_BASE}/api/clients/${encodeURIComponent(clientName)}/coa`, {
+    const res = await fetch(`${BACKEND_BASE}/api/clients/${encodeURIComponent(clientName)}/coa`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ ledgers })
     });
-    localStorage.setItem(`c4_coa_${clientName}`, JSON.stringify(ledgers));
+    if (!res.ok) throw new Error("Failed to save COA to cloud");
+    return await res.json();
   },
 
   // ==========================================
-  // 4. User Accounts
+  // 4. User Accounts (Cloud Only)
   // ==========================================
   async getUsers() {
-    try {
-      const res = await fetch(`${BACKEND_BASE}/api/users`);
-      if (!res.ok) throw new Error("Failed to fetch users");
-      return await res.json();
-    } catch {
-      return JSON.parse(localStorage.getItem("c4_user_accounts") || "[]");
-    }
+    const res = await fetch(`${BACKEND_BASE}/api/users`);
+    if (!res.ok) throw new Error("Failed to fetch users from cloud");
+    return await res.json();
   },
 
   async saveUser(user) {
-    await fetch(`${BACKEND_BASE}/api/users`, {
+    const res = await fetch(`${BACKEND_BASE}/api/users`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(user)
     });
-    const localUsers = JSON.parse(localStorage.getItem("c4_user_accounts") || "[]");
-    const updated = [user, ...localUsers.filter(u => u.username !== user.username)];
-    localStorage.setItem("c4_user_accounts", JSON.stringify(updated));
+    if (!res.ok) throw new Error("Failed to save user to cloud");
+    return await res.json();
   },
 
   async deleteUser(username) {
-    await fetch(`${BACKEND_BASE}/api/users/${encodeURIComponent(username)}`, {
+    const res = await fetch(`${BACKEND_BASE}/api/users/${encodeURIComponent(username)}`, {
       method: "DELETE"
     });
-    const localUsers = JSON.parse(localStorage.getItem("c4_user_accounts") || "[]");
-    localStorage.setItem("c4_user_accounts", JSON.stringify(localUsers.filter(u => u.username !== username)));
+    if (!res.ok) throw new Error("Failed to delete user from cloud");
   },
 
   // ==========================================
-  // 5. Purchases Workflow & Gemini AI Extraction
+  // 5. Purchases Workflow & Gemini AI Extraction (Cloud Only)
   // ==========================================
   async getBills(clientName, stage = "needs_review") {
-    const cacheMap = {
-      needs_review: `c4_pending_bills_${clientName}`,
-      approved: `c4_approved_bills_${clientName}`,
-      pushed: `c4_pushed_bills_${clientName}`
-    };
-    const cacheKey = cacheMap[stage] || `c4_pending_bills_${clientName}`;
-
-    const localData = JSON.parse(localStorage.getItem(cacheKey) || "[]");
-    
-    try {
-      const res = await fetch(`${BACKEND_BASE}/api/clients/${encodeURIComponent(clientName)}/bills?stage=${stage}`);
-      if (res.ok) {
-        const cloudData = await res.json();
-        if (Array.isArray(cloudData) && cloudData.length > 0) {
-          const merged = [...cloudData];
-          localData.forEach(localItem => {
-            if (!merged.some(m => m.id === localItem.id)) {
-              merged.push(localItem);
-            }
-          });
-
-          // FIX: Strip heavy preview base64 strings before caching locally to prevent QuotaExceededError
-          try {
-            const lightweightMerged = merged.map(b => ({ ...b, file_preview_url: "" }));
-            localStorage.setItem(cacheKey, JSON.stringify(lightweightMerged));
-          } catch (e) {
-            console.warn("Local storage quota reached, skipping local cache update:", e);
-          }
-
-          return merged;
-        }
-      }
-    } catch (err) {
-      console.warn(`Cloud fetch skipped, using local cache for bills (${stage}):`, err);
-    }
-
-    return localData;
+    const res = await fetch(`${BACKEND_BASE}/api/clients/${encodeURIComponent(clientName)}/bills?stage=${stage}`);
+    if (!res.ok) throw new Error(`Failed to fetch ${stage} bills from cloud`);
+    const data = await res.json();
+    return Array.isArray(data) ? data : [];
   },
 
   async saveBill(clientName, stage, bill) {
-    const cacheMap = {
-      needs_review: `c4_pending_bills_${clientName}`,
-      approved: `c4_approved_bills_${clientName}`,
-      pushed: `c4_pushed_bills_${clientName}`
-    };
-    const cacheKey = cacheMap[stage] || `c4_pending_bills_${clientName}`;
-
-    try {
-      const existing = JSON.parse(localStorage.getItem(cacheKey) || "[]");
-      const cleanedBill = { ...bill, file_preview_url: "" };
-      const updated = [cleanedBill, ...existing.filter(b => b.id !== bill.id)];
-      const lightweightUpdated = updated.map(b => ({ ...b, file_preview_url: "" }));
-      localStorage.setItem(cacheKey, JSON.stringify(lightweightUpdated));
-    } catch (e) {
-      console.error("Local bill cache write error:", e);
-    }
-
-    try {
-      await fetch(`${BACKEND_BASE}/api/clients/${encodeURIComponent(clientName)}/bills?stage=${stage}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(bill)
-      });
-    } catch (err) {
-      console.warn("Cloud bill sync warning (saved securely in local storage):", err);
-    }
-    
-    return bill;
+    const res = await fetch(`${BACKEND_BASE}/api/clients/${encodeURIComponent(clientName)}/bills?stage=${stage}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(bill)
+    });
+    if (!res.ok) throw new Error("Failed to save bill to cloud");
+    return await res.json();
   },
 
   async deleteBill(clientName, stage, billId) {
-    const cacheMap = {
-      needs_review: `c4_pending_bills_${clientName}`,
-      approved: `c4_approved_bills_${clientName}`,
-      pushed: `c4_pushed_bills_${clientName}`
-    };
-    const cacheKey = cacheMap[stage] || `c4_pending_bills_${clientName}`;
-
-    try {
-      const existing = JSON.parse(localStorage.getItem(cacheKey) || "[]");
-      localStorage.setItem(cacheKey, JSON.stringify(existing.filter(b => b.id !== billId)));
-    } catch (e) {
-      console.error("Local bill cache delete error:", e);
-    }
-
-    try {
-      await fetch(`${BACKEND_BASE}/api/clients/${encodeURIComponent(clientName)}/bills/${stage}/${billId}`, {
-        method: "DELETE"
-      });
-    } catch (err) {
-      console.warn("Cloud delete bill warning:", err);
-    }
+    const res = await fetch(`${BACKEND_BASE}/api/clients/${encodeURIComponent(clientName)}/bills/${stage}/${billId}`, {
+      method: "DELETE"
+    });
+    if (!res.ok) throw new Error("Failed to delete bill from cloud");
   },
 
   async extractInvoice(file, companyName) {
@@ -231,18 +135,13 @@ export const api = {
   },
 
   // ==========================================
-  // 6. Banking & Reconciliation Workflow
+  // 6. Banking & Reconciliation Workflow (Cloud Only)
   // ==========================================
   async getBankTxns(clientName, status = "pending") {
-    try {
-      const res = await fetch(`${BACKEND_BASE}/api/clients/${encodeURIComponent(clientName)}/bank-txns?status=${status}`);
-      if (!res.ok) throw new Error("Failed to fetch bank transactions");
-      return await res.json();
-    } catch (err) {
-      console.warn(`Falling back to local storage for bank transactions (${status}):`, err);
-      const cacheKey = `c4_bank_txns_${clientName}_${status}`;
-      return JSON.parse(localStorage.getItem(cacheKey) || "[]");
-    }
+    const res = await fetch(`${BACKEND_BASE}/api/clients/${encodeURIComponent(clientName)}/bank-txns?status=${status}`);
+    if (!res.ok) throw new Error("Failed to fetch bank transactions from cloud");
+    const data = await res.json();
+    return Array.isArray(data) ? data : [];
   },
 
   async saveBankTxns(clientName, status = "pending", transactions = []) {
@@ -251,29 +150,25 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ transactions })
     });
-    if (!res.ok) throw new Error("Failed to save bank transactions to Firestore");
+    if (!res.ok) throw new Error("Failed to save bank transactions to cloud");
     return await res.json();
   },
 
   async deleteBankTxn(clientName, status, txnId) {
-    await fetch(`${BACKEND_BASE}/api/clients/${encodeURIComponent(clientName)}/bank-txns/${status}/${txnId}`, {
+    const res = await fetch(`${BACKEND_BASE}/api/clients/${encodeURIComponent(clientName)}/bank-txns/${status}/${txnId}`, {
       method: "DELETE"
     });
+    if (!res.ok) throw new Error("Failed to delete bank transaction from cloud");
   },
 
   // ==========================================
-  // 7. Sales & POS Workflow
+  // 7. Sales & POS Workflow (Cloud Only)
   // ==========================================
   async getSales(clientName, status = "approved") {
-    try {
-      const res = await fetch(`${BACKEND_BASE}/api/clients/${encodeURIComponent(clientName)}/sales?status=${status}`);
-      if (!res.ok) throw new Error("Failed to fetch sales records");
-      return await res.json();
-    } catch (err) {
-      console.warn(`Falling back to local storage for sales (${status}):`, err);
-      const cacheKey = `c4_sales_${clientName}_${status}`;
-      return JSON.parse(localStorage.getItem(cacheKey) || "[]");
-    }
+    const res = await fetch(`${BACKEND_BASE}/api/clients/${encodeURIComponent(clientName)}/sales?status=${status}`);
+    if (!res.ok) throw new Error("Failed to fetch sales records from cloud");
+    const data = await res.json();
+    return Array.isArray(data) ? data : [];
   },
 
   async saveSale(clientName, status = "approved", record = {}) {
@@ -282,31 +177,25 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(record)
     });
-    if (!res.ok) throw new Error("Failed to save sales record to Firestore");
+    if (!res.ok) throw new Error("Failed to save sales record to cloud");
     return await res.json();
   },
 
   async deleteSale(clientName, status, recordId) {
-    await fetch(`${BACKEND_BASE}/api/clients/${encodeURIComponent(clientName)}/sales/${status}/${recordId}`, {
+    const res = await fetch(`${BACKEND_BASE}/api/clients/${encodeURIComponent(clientName)}/sales/${status}/${recordId}`, {
       method: "DELETE"
     });
+    if (!res.ok) throw new Error("Failed to delete sales record from cloud");
   },
 
   // ==========================================
-  // 8. Other Expenses Workflow
+  // 8. Other Expenses Workflow (Cloud Only)
   // ==========================================
   async getExpenses(clientName, status = "approved") {
-    try {
-      const res = await fetch(`${BACKEND_BASE}/api/clients/${encodeURIComponent(clientName)}/expenses?status=${status}`);
-      if (!res.ok) throw new Error("Failed to fetch expense records");
-      const data = await res.json();
-      return Array.isArray(data) ? data.filter(item => item.status !== "VOID") : [];
-    } catch (err) {
-      console.warn(`Falling back to local storage for expenses (${status}):`, err);
-      const cacheKey = `c4_other_expenses_${clientName}_${status}`;
-      const data = JSON.parse(localStorage.getItem(cacheKey) || "[]");
-      return Array.isArray(data) ? data.filter(item => item.status !== "VOID") : [];
-    }
+    const res = await fetch(`${BACKEND_BASE}/api/clients/${encodeURIComponent(clientName)}/expenses?status=${status}`);
+    if (!res.ok) throw new Error("Failed to fetch expense records from cloud");
+    const data = await res.json();
+    return Array.isArray(data) ? data.filter(item => item.status !== "VOID") : [];
   },
 
   async saveExpense(clientName, status = "approved", record = {}) {
@@ -315,87 +204,59 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(record)
     });
-    if (!res.ok) throw new Error("Failed to save expense record to Firestore");
+    if (!res.ok) throw new Error("Failed to save expense record to cloud");
     return await res.json();
   },
 
   async deleteExpense(clientName, status, recordId) {
-    await fetch(`${BACKEND_BASE}/api/clients/${encodeURIComponent(clientName)}/expenses/${status}/${recordId}`, {
+    const res = await fetch(`${BACKEND_BASE}/api/clients/${encodeURIComponent(clientName)}/expenses/${status}/${recordId}`, {
       method: "DELETE"
     });
+    if (!res.ok) throw new Error("Failed to delete expense record from cloud");
   },
 
   async voidExpenseVoucher(clientName, expenseId, userEmail, reason) {
-    try {
-      await fetch(`${BACKEND_BASE}/api/clients/${encodeURIComponent(clientName)}/expenses/void/${expenseId}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ performed_by: userEmail, reason: reason })
-      });
-    } catch (err) {
-      console.warn("Backend void endpoint not active, cleaning local cache.");
-    }
-
-    try {
-      const pushedKey = `c4_other_expenses_pushed_${clientName}`;
-      const approvedKey = `c4_other_expenses_${clientName}`;
-      
-      const pushedLocal = JSON.parse(localStorage.getItem(pushedKey) || "[]");
-      const approvedLocal = JSON.parse(localStorage.getItem(approvedKey) || "[]");
-
-      localStorage.setItem(pushedKey, JSON.stringify(pushedLocal.filter(e => e.id !== expenseId)));
-      localStorage.setItem(approvedKey, JSON.stringify(approvedLocal.filter(e => e.id !== expenseId)));
-    } catch (e) {
-      console.error("Local cache cleanup error:", e);
-    }
-
-    return { success: true };
+    const res = await fetch(`${BACKEND_BASE}/api/clients/${encodeURIComponent(clientName)}/expenses/void/${expenseId}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ performed_by: userEmail, reason: reason })
+    });
+    if (!res.ok) throw new Error("Failed to void expense voucher on cloud");
+    return await res.json();
   },
 
   // ==========================================
-  // 10. Dashboard & Financial Analytics Summary
+  // 9. Dashboard & Financial Analytics Summary
   // ==========================================
   async getDashboardSummary(clientName) {
-    try {
-      const [bills, sales, bankTxns, expenses] = await Promise.all([
-        this.getBills(clientName, "approved").catch(() => []),
-        this.getSales(clientName, "approved").catch(() => []),
-        this.getBankTxns(clientName, "reconciled").catch(() => []),
-        this.getExpenses(clientName, "approved").catch(() => [])
-      ]);
+    const [bills, sales, bankTxns, expenses] = await Promise.all([
+      this.getBills(clientName, "approved").catch(() => []),
+      this.getSales(clientName, "approved").catch(() => []),
+      this.getBankTxns(clientName, "reconciled").catch(() => []),
+      this.getExpenses(clientName, "approved").catch(() => [])
+    ]);
 
-      const totalPurchases = bills.reduce((acc, b) => acc + (parseFloat(b.grand_total || b.taxable_amount) || 0), 0);
-      const totalSales = sales.reduce((acc, s) => acc + (parseFloat(s.grandTotal || s.taxableAmount) || 0), 0);
-      const totalExpenses = expenses
-        .filter(e => e.status !== "VOID")
-        .reduce((acc, e) => acc + (parseFloat(e.grandTotal || e.taxableAmount || e.amount) || 0), 0);
+    const totalPurchases = bills.reduce((acc, b) => acc + (parseFloat(b.grand_total || b.taxable_amount) || 0), 0);
+    const totalSales = sales.reduce((acc, s) => acc + (parseFloat(s.grandTotal || s.taxableAmount) || 0), 0);
+    const totalExpenses = expenses
+      .filter(e => e.status !== "VOID")
+      .reduce((acc, e) => acc + (parseFloat(e.grandTotal || e.taxableAmount || e.amount) || 0), 0);
+    
+    const totalBankReceipts = bankTxns
+      .filter(t => t.type === "Receipt")
+      .reduce((acc, t) => acc + (parseFloat(t.amount) || 0), 0);
       
-      const totalBankReceipts = bankTxns
-        .filter(t => t.type === "Receipt")
-        .reduce((acc, t) => acc + (parseFloat(t.amount) || 0), 0);
-        
-      const totalBankPayments = bankTxns
-        .filter(t => t.type === "Payment")
-        .reduce((acc, t) => acc + (parseFloat(t.amount) || 0), 0);
+    const totalBankPayments = bankTxns
+      .filter(t => t.type === "Payment")
+      .reduce((acc, t) => acc + (parseFloat(t.amount) || 0), 0);
 
-      return {
-        totalPurchases,
-        totalSales,
-        totalExpenses,
-        totalBankReceipts,
-        totalBankPayments,
-        netOperatingMargin: totalSales - (totalPurchases + totalExpenses)
-      };
-    } catch (err) {
-      console.warn("Failed to compute dashboard analytics from cloud:", err);
-      return {
-        totalPurchases: 0,
-        totalSales: 0,
-        totalExpenses: 0,
-        totalBankReceipts: 0,
-        totalBankPayments: 0,
-        netOperatingMargin: 0
-      };
-    }
+    return {
+      totalPurchases,
+      totalSales,
+      totalExpenses,
+      totalBankReceipts,
+      totalBankPayments,
+      netOperatingMargin: totalSales - (totalPurchases + totalExpenses)
+    };
   }
 };
