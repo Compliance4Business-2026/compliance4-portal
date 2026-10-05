@@ -29,18 +29,29 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Initialize Google Cloud Firestore and Storage safely
-try:
-    db = firestore.Client()
-except Exception as e:
-    print(f"Firestore Client init warning: {e}")
-    db = None
+# Lazy initialization for Firestore and Storage to prevent startup blocking
+_db = None
+_storage_client = None
 
-try:
-    storage_client = storage.Client()
-except Exception as e:
-    print(f"Storage Client init warning: {e}")
-    storage_client = None
+def get_db():
+    global _db
+    if _db is None:
+        try:
+            _db = firestore.Client()
+        except Exception as e:
+            print(f"Firestore Client init warning: {e}")
+            _db = None
+    return _db
+
+def get_storage():
+    global _storage_client
+    if _storage_client is None:
+        try:
+            _storage_client = storage.Client()
+        except Exception as e:
+            print(f"Storage Client init warning: {e}")
+            _storage_client = None
+    return _storage_client
 
 # Local or Cloud Storage configuration for uploaded files
 UPLOAD_DIR = "/tmp/compliance4_uploads"
