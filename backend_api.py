@@ -16,6 +16,7 @@ import openpyxl
 import pandas as pd
 from PIL import Image
 from google.cloud import firestore, storage
+import uvicorn
 
 # Initialize FastAPI App
 app = FastAPI(title="Compliance4 Accounting Portal API", version="2.0.0")
@@ -712,3 +713,7 @@ def seed_from_backup(payload: Dict[str, Any] = Body(...)):
 
     batch.commit()
     return {"status": "success", "message": "All profiles, COAs, and users successfully committed to Firestore"}
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 8080))
+    uvicorn.run("backend_api:app", host="0.0.0.0", port=port)
