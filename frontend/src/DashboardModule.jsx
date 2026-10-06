@@ -413,81 +413,53 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
     };
   }, [filteredNormalSales, filteredPosJournals, filteredPurchases, filteredOverheads, filteredBankTransactions, plBreakdown, sundryCreditorNames]);
 
-  // --- GRANULAR SUPPLIER-WISE & CATEGORY-WISE DOWNLOAD HANDLERS ---
-  const handleDownloadDynamicPL = async () => {
-    try {
-      const coa = await api.getClientCoa(activeClient).catch(() => clientCoa);
-      
-      const coaCategoryMap = {};
-      coa.forEach(l => {
-        if (l.name) {
-          coaCategoryMap[l.name.toLowerCase().trim()] = {
-            category: l.category || "General Expenses",
-            mainHead: l.statementType === "P&L" ? "Indirect Expenses" : "Operating Expenses"
-          };
-        }
-      });
+  // --- GRANULAR CATEGORY-WISE P&L DOWNLOAD (FEATURE 4) ---
+  const handleDownloadDynamicPL = () => {
+    const rows = [
+      [`"STATEMENT OF PROFIT AND LOSS (${selectedPeriod})"`, `""`, `""`],
+      [`"Client Entity:","${activeClient}"`, `""`, `""`],
+      [`"Generated On:","${new Date().toLocaleDateString("en-IN")}"`, `""`, `""`],
+      [],
+      ["SCHEDULE / CATEGORY NAME", "TYPE", "AMOUNT (₹)"],
+      ["I. Revenue from Operations (Net Sales)", "Sales Register", kpiData.totalRevenue.toFixed(2)],
+      ["Less: Cost of Goods Sold / Purchases (COGS)", "Direct Inventory Purchases", `-${plBreakdown.directCogs.toFixed(2)}`],
+      ["GROSS PROFIT (I – COGS)", `${((kpiData.totalRevenue > 0 ? (kpiData.totalRevenue - plBreakdown.directCogs) / kpiData.totalRevenue : 0) * 100).toFixed(1)}% GP`, (kpiData.totalRevenue - plBreakdown.directCogs).toFixed(2)]
+    ];
 
-      const ledgerCategoryMap = {};
-      filteredPurchases.forEach(b => {
-        const ledgers = b.accounting_ledgers || [{ ledger_name: dynamicExpenseLedgers[0] || "Purchases", amount: b.taxable_amount || b.grand_total || 0 }];
-        ledgers.forEach(l => {
-          const lName = l.ledger_name || "General Purchase";
-          const amt = parseFloat(l.amount || 0);
-          const meta = coaCategoryMap[lName.toLowerCase().trim()] || { category: "Miscellaneous Expenses", mainHead: "Indirect Expenses" };
-          const catKey = meta.category;
-
-          if (!ledgerCategoryMap[catKey]) {
-            ledgerCategoryMap[catKey] = {
-              mainHead: meta.mainHead,
-              ledgers: {},
-              categoryTotal: 0
-            };
-          }
-          if (!ledgerCategoryMap[catKey].ledgers[lName]) {
-            ledgerCategoryMap[catKey].ledgers[lName] = 0;
-          }
-          ledgerCategoryMap[catKey].ledgers[lName] += amt;
-          ledgerCategoryMap[catKey].categoryTotal += amt;
-        });
-      });
-
-      const headers = ["Main Head", "Category Name", "Ledger Name", "Ledger Amount (₹)", "Category Total (₹)"];
-      const rows = [
-        `"${activeClient} - Category & Main-Head P&L Statement (${selectedPeriod})"`,
-        `"Generated On","${new Date().toLocaleDateString("en-IN")}"`,
-        ``,
-        headers.join(",")
-      ];
-
-      Object.entries(ledgerCategoryMap).forEach(([category, catData]) => {
-        rows.push([`"${catData.mainHead}"`, `"${category}"`, `""`, `""`, catData.categoryTotal].join(","));
-        Object.entries(catData.ledgers).forEach(([ledgerName, amount]) => {
-          rows.push([`""`, `""`, `"${ledgerName}"`, amount.toFixed(2), `""`].join(","));
-        });
-        rows.push(``);
-      });
-
-      rows.push(`"Net Operating Profit / (Loss)","","","","${kpiData.netProfit.toFixed(2)}"`);
-
-      const blob = new Blob([rows.join("\n")], { type: "text/csv;charset=utf-8;" });
-      const link = document.createElement("a");
-      link.href = URL.createObjectURL(blob);
-      link.download = `Profit_Loss_Category_Wise_${activeClient.replace(/\s+/g, "_")}_${selectedPeriod}.csv`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-    } catch (err) {
-      console.error("Export error:", err);
-      alert("Failed to generate P&L statement.");
+    if (plBreakdown.otherIncomeTotal > 0) {
+      rows.push(["Add: Other / Non-Operating Income", "Non-Operating Income", `+${plBreakdown.otherIncomeTotal.toFixed(2)}`]);
     }
+
+    rows.push(["II. Indirect Operating Expenses (Client P&L Heads)", "Uploaded COA", ""]);
+
+    const indirectEntries = Object.entries(plBreakdown.indirectCategories);
+    if (indirectEntries.length === 0) {
+      rows.push(["No indirect operating expenses recorded", "Uploaded COA", "0.00"]);
+    } else {
+      indirectEntries.forEach(([cat, amt]) => {
+        rows.push([`  • ${cat}`, "P&L Indirect Overhead", `-${amt.toFixed(2)}`]);
+      });
+    }
+
+    rows.push(["Total Indirect Expenses", "-", `-${plBreakdown.totalIndirect.toFixed(2)}`]);
+    rows.push([]);
+    rows.push(["NET OPERATING PROFIT / (LOSS)", `${kpiData.netMargin.toFixed(1)}% NP Margin`, kpiData.netProfit.toFixed(2)]);
+
+    const csvContent = "data:text/csv;charset=utf-8," + rows.map(e => e.map(val => `"${String(val || "").replace(/"/g, '""')}"`).join(",")).join("\n");
+    const link = document.createElement("a");
+    link.href = encodeURI(csvContent);
+    link.download = `Profit_Loss_Category_Wise_${activeClient.replace(/\s+/g, "_")}_${selectedPeriod.replace(/\s+/g, "_")}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
 
+  // --- SUPPLIER-WISE AP & CUSTOMER-WISE AR REPORTS (FEATURE 5) ---
   const handleDownloadARAPReport = (type = "AR") => {
     const isAR = type === "AR";
     
     if (!isAR) {
-      // SUPPLIER-WISE AP EXPORT WITH INVOICES BELOW EACH VENDOR
+      // SUPPLIER-WISE AP REPORT WITH INVOICES UNDER EACH VENDOR
       const vendorMap = {};
       filteredPurchases.forEach(b => {
         const vendor = b.vendor_name || "Unassigned Vendor";
@@ -503,48 +475,84 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
         vendorMap[vendor].totalPayable += grandTotal;
       });
 
-      const headers = ["Vendor / Supplier Name", "Invoice Number", "Invoice Date", "Invoice Amount (₹)", "Total Vendor Payable (₹)"];
+      const headers = ["SUPPLIER / VENDOR NAME", "INVOICE NUMBER", "INVOICE DATE", "INVOICE AMOUNT (₹)", "TOTAL VENDOR OUTSTANDING (₹)"];
       const rows = [
-        `"Accounts Payable (AP) Supplier-Wise Report (${selectedPeriod})"`,
-        `"Client","${activeClient}"`,
-        `"Generated On","${new Date().toLocaleDateString("en-IN")}"`,
-        ``,
-        headers.join(",")
+        [`"ACCOUNTS PAYABLE (SUNDRY CREDITORS REPORT - ${selectedPeriod})"`, `""`, `""`, `""`, `""`],
+        [`"Client:","${activeClient}"`, `""`, `""`, `""`, `""`],
+        [`"Generated On:","${new Date().toLocaleDateString("en-IN")}"`, `""`, `""`, `""`, `""`],
+        [],
+        headers
       ];
 
       Object.entries(vendorMap).forEach(([vendor, data]) => {
-        rows.push([`"${vendor.replace(/"/g, '""')}"`, `""`, `""`, `""`, data.totalPayable.toFixed(2)].join(","));
-        data.invoices.forEach(inv => {
-          rows.push([`""`, `"${inv.invNo}"`, `"${inv.date}"`, inv.amount.toFixed(2), `""`].join(","));
+        data.invoices.forEach((inv, idx) => {
+          rows.push([
+            idx === 0 ? vendor : "",
+            inv.invNo,
+            inv.date,
+            inv.amount.toFixed(2),
+            idx === 0 ? data.totalPayable.toFixed(2) : ""
+          ]);
         });
-        rows.push(``);
+        rows.push([]);
       });
 
-      const blob = new Blob([rows.join("\n")], { type: "text/csv;charset=utf-8;" });
+      rows.push(["", "", "", "TOTAL AP OUTSTANDING:", kpiData.accountsPayable.toFixed(2)]);
+
+      const csvContent = "data:text/csv;charset=utf-8," + rows.map(e => e.map(val => `"${String(val || "").replace(/"/g, '""')}"`).join(",")).join("\n");
       const link = document.createElement("a");
-      link.href = URL.createObjectURL(blob);
-      link.download = `Accounts_Payable_Supplier_Wise_${activeClient.replace(/\s+/g, "_")}_${selectedPeriod}.csv`;
+      link.href = encodeURI(csvContent);
+      link.download = `Accounts_Payable_Supplier_Wise_${activeClient.replace(/\s+/g, "_")}_${selectedPeriod.replace(/\s+/g, "_")}.csv`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
       return;
     }
 
-    // AR Report
-    const headers = ["Party / Ledger Name", "Reference", "Status", "Amount Due (₹)"];
+    // CUSTOMER-WISE AR REPORT WITH INVOICES UNDER EACH CUSTOMER
+    const customerMap = {};
+    filteredNormalSales.forEach(s => {
+      const cust = s.customer_name || s.party_name || "Walk-in Customer";
+      if (!customerMap[cust]) {
+        customerMap[cust] = { invoices: [], totalReceivable: 0 };
+      }
+      const grandTotal = parseFloat(s.grand_total || s.taxableAmount || 0);
+      customerMap[cust].invoices.push({
+        invNo: s.invoice_number || "N/A",
+        date: s.invoiceDate || s.date || "N/A",
+        amount: grandTotal
+      });
+      customerMap[cust].totalReceivable += grandTotal;
+    });
+
+    const headers = ["CUSTOMER / DEBTOR NAME", "INVOICE NUMBER", "INVOICE DATE", "INVOICE AMOUNT (₹)", "TOTAL CUSTOMER RECEIVABLE (₹)"];
     const rows = [
-      `"ACCOUNTS RECEIVABLE (AR) REPORT (${selectedPeriod})"`,
-      `"Client","${activeClient}"`,
-      `"Generated On","${new Date().toLocaleDateString("en-IN")}"`,
-      ``,
-      headers.join(","),
-      `"Outstanding Balance Total","Summary","Active","${kpiData.accountsReceivable.toFixed(2)}"`
+      [`"ACCOUNTS RECEIVABLE (SUNDRY DEBTORS REPORT - ${selectedPeriod})"`, `""`, `""`, `""`, `""`],
+      [`"Client:","${activeClient}"`, `""`, `""`, `""`, `""`],
+      [`"Generated On:","${new Date().toLocaleDateString("en-IN")}"`, `""`, `""`, `""`, `""`],
+      [],
+      headers
     ];
 
-    const blob = new Blob([rows.join("\n")], { type: "text/csv;charset=utf-8;" });
+    Object.entries(customerMap).forEach(([cust, data]) => {
+      data.invoices.forEach((inv, idx) => {
+        rows.push([
+          idx === 0 ? cust : "",
+          inv.invNo,
+          inv.date,
+          inv.amount.toFixed(2),
+          idx === 0 ? data.totalReceivable.toFixed(2) : ""
+        ]);
+      });
+      rows.push([]);
+    });
+
+    rows.push(["", "", "", "TOTAL AR RECEIVABLE:", kpiData.accountsReceivable.toFixed(2)]);
+
+    const csvContent = "data:text/csv;charset=utf-8," + rows.map(e => e.map(val => `"${String(val || "").replace(/"/g, '""')}"`).join(",")).join("\n");
     const link = document.createElement("a");
-    link.href = URL.createObjectURL(blob);
-    link.download = `AR_Report_${activeClient.replace(/\s+/g, "_")}_${selectedPeriod}.csv`;
+    link.href = encodeURI(csvContent);
+    link.download = `Accounts_Receivable_Customer_Wise_${activeClient.replace(/\s+/g, "_")}_${selectedPeriod.replace(/\s+/g, "_")}.csv`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -707,19 +715,19 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
 
             <button
               onClick={handleDownloadDynamicPL}
-              className="flex items-center gap-1.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold px-3.5 py-2 rounded-lg transition shadow-xs"
+              className="flex items-center gap-1.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold px-3.5 py-2 rounded-lg transition shadow-xs cursor-pointer"
             >
               <Download className="w-3.5 h-3.5" /> Download P&L Statement
             </button>
             <button
               onClick={() => handleDownloadARAPReport("AR")}
-              className="flex items-center gap-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs font-bold px-3.5 py-2 rounded-lg transition"
+              className="flex items-center gap-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs font-bold px-3.5 py-2 rounded-lg transition cursor-pointer"
             >
               <Download className="w-3.5 h-3.5" /> Download AR Report
             </button>
             <button
               onClick={() => handleDownloadARAPReport("AP")}
-              className="flex items-center gap-1.5 bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 text-xs font-bold px-3.5 py-2 rounded-lg transition"
+              className="flex items-center gap-1.5 bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 text-xs font-bold px-3.5 py-2 rounded-lg transition cursor-pointer"
             >
               <Download className="w-3.5 h-3.5" /> Download AP Report
             </button>
@@ -813,158 +821,4 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
             <div className="flex items-center gap-2">
               <Scale className="w-4 h-4 text-slate-700" />
               <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
-                Statement of Profit and Loss ({selectedPeriod === "Custom" ? `${customStartDate} to ${customEndDate}` : selectedPeriod})
-              </h3>
-            </div>
-            <span className="text-[11px] text-slate-400 font-medium">
-              Schedule III Classified by Client COA
-            </span>
-          </div>
-
-          <table className="w-full text-left text-xs">
-            <thead className="bg-white border-b border-slate-100 text-slate-400 font-semibold uppercase text-[10px]">
-              <tr>
-                <th className="py-2.5 px-6">Schedule / Category Name</th>
-                <th className="py-2.5 px-6">Type</th>
-                <th className="py-2.5 px-6 text-right">Amount (₹)</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 font-medium text-slate-700 text-xs">
-              <tr className="hover:bg-slate-50/50">
-                <td className="py-2.5 px-6 font-bold text-slate-900">I. Revenue from Operations (Net Sales)</td>
-                <td className="py-2.5 px-6 font-mono text-slate-400 text-[11px]">Sales Register</td>
-                <td className="py-2.5 px-6 text-right font-mono font-bold text-slate-900">
-                  ₹{kpiData.totalRevenue.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                </td>
-              </tr>
-
-              <tr className="hover:bg-slate-50/50">
-                <td className="py-2 px-6 pl-9 text-slate-600">Less: Cost of Goods Sold / Purchases (COGS)</td>
-                <td className="py-2 px-6 font-mono text-slate-400 text-[11px]">Direct Inventory Purchases</td>
-                <td className="py-2 px-6 text-right font-mono text-rose-600">
-                  -₹{plBreakdown.directCogs.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                </td>
-              </tr>
-
-              <tr className="bg-slate-50/80 font-bold border-y border-slate-200">
-                <td className="py-2.5 px-6 text-slate-900 font-black">GROSS PROFIT (I – COGS)</td>
-                <td className="py-2.5 px-6 font-mono text-indigo-700 text-[11px]">
-                  {grossMargin.toFixed(1)}% GP
-                </td>
-                <td className="py-2.5 px-6 text-right font-mono font-black text-slate-900">
-                  ₹{grossProfit.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                </td>
-              </tr>
-
-              {plBreakdown.otherIncomeTotal > 0 && (
-                <tr className="hover:bg-slate-50/50 bg-emerald-50/30">
-                  <td className="py-2 px-6 font-semibold text-emerald-800">Add: Other / Non-Operating Income</td>
-                  <td className="py-2 px-6 font-mono text-emerald-600 text-[11px]">Non-Operating Income</td>
-                  <td className="py-2 px-6 text-right font-mono font-bold text-emerald-700">
-                    +₹{plBreakdown.otherIncomeTotal.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                  </td>
-                </tr>
-              )}
-
-              <tr className="bg-white">
-                <td colSpan="3" className="py-1.5 px-6 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                  II. Indirect Operating Expenses (Client P&L Heads)
-                </td>
-              </tr>
-
-              {Object.keys(plBreakdown.indirectCategories).length === 0 ? (
-                <tr>
-                  <td className="py-1.5 px-6 pl-9 text-slate-400 italic">No indirect operating expenses recorded</td>
-                  <td className="py-1.5 px-6 font-mono text-slate-400 text-[11px]">Uploaded COA</td>
-                  <td className="py-1.5 px-6 text-right font-mono text-slate-400">₹0.00</td>
-                </tr>
-              ) : (
-                Object.entries(plBreakdown.indirectCategories).map(([cat, amt]) => (
-                  <tr key={cat} className="hover:bg-slate-50/50">
-                    <td className="py-1.5 px-6 pl-9 text-slate-700">{cat}</td>
-                    <td className="py-1.5 px-6 font-mono text-slate-400 text-[11px]">P&L Indirect Overhead</td>
-                    <td className="py-1.5 px-6 text-right font-mono text-rose-600">
-                      -₹{amt.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                    </td>
-                  </tr>
-                ))
-              )}
-
-              <tr className="border-t border-slate-100 font-semibold text-slate-700">
-                <td className="py-2 px-6 text-slate-800">Total Indirect Expenses</td>
-                <td className="py-2 px-6 text-slate-400">-</td>
-                <td className="py-2 px-6 text-right font-mono text-rose-600 font-bold">
-                  -₹{plBreakdown.totalIndirect.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                </td>
-              </tr>
-            </tbody>
-          </table>
-
-          <div className="bg-slate-900 text-white font-bold text-xs px-6 py-3.5 flex items-center justify-between border-t-2 border-slate-900 shrink-0">
-            <span className="font-black uppercase tracking-wider text-xs">
-              NET OPERATING PROFIT / (LOSS)
-            </span>
-            <span className="font-mono text-emerald-400 text-xs">
-              {kpiData.netMargin.toFixed(1)}% NP Margin
-            </span>
-            <span className="font-mono font-black text-base text-emerald-400">
-              {kpiData.netProfit < 0 ? "-" : ""}₹{Math.abs(kpiData.netProfit).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-            </span>
-          </div>
-        </div>
-
-        {/* 3. BOTTOM: 3 EXPANDED LINE GRAPHS (LAST 6 MONTHS) */}
-        <div className="grid grid-cols-3 gap-4 shrink-0 pb-2">
-          <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex flex-col justify-between">
-            <div className="flex items-center justify-between pb-1 border-b border-slate-100">
-              <div>
-                <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
-                  <Activity className="w-4 h-4 text-emerald-600" /> Sales Trend Line
-                </h4>
-                <p className="text-[10px] text-slate-400">Monthly Turnover (Last 6 Months)</p>
-              </div>
-              <span className="text-xs font-mono font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded">
-                ₹{last6MonthsData.reduce((acc, m) => acc + m.sales, 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}
-              </span>
-            </div>
-            {renderLineChart(last6MonthsData, "sales", "#10b981", "#10b981")}
-          </div>
-
-          <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex flex-col justify-between">
-            <div className="flex items-center justify-between pb-1 border-b border-slate-100">
-              <div>
-                <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
-                  <Activity className="w-4 h-4 text-amber-600" /> Total Cost Trend Line
-                </h4>
-                <p className="text-[10px] text-slate-400">COGS Purchases + Overheads</p>
-              </div>
-              <span className="text-xs font-mono font-bold text-amber-700 bg-amber-50 px-2.5 py-1 rounded">
-                ₹{last6MonthsData.reduce((acc, m) => acc + m.cost, 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}
-              </span>
-            </div>
-            {renderLineChart(last6MonthsData, "cost", "#f59e0b", "#f59e0b")}
-          </div>
-
-          <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex flex-col justify-between">
-            <div className="flex items-center justify-between pb-1 border-b border-slate-100">
-              <div>
-                <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
-                  <Activity className="w-4 h-4 text-indigo-600" /> Net Profit Trend Line
-                </h4>
-                <p className="text-[10px] text-slate-400">Bottom-Line Margin per Month</p>
-              </div>
-              <span className={`text-xs font-mono font-bold px-2.5 py-1 rounded ${
-                kpiData.netProfit >= 0 ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"
-              }`}>
-                {last6MonthsData.reduce((acc, m) => acc + m.netProfit, 0) >= 0 ? "+" : ""}
-                ₹{last6MonthsData.reduce((acc, m) => acc + m.netProfit, 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}
-              </span>
-            </div>
-            {renderLineChart(last6MonthsData, "netProfit", "#6366f1", "#6366f1")}
-          </div>
-        </div>
-
-      </div>
-    </div>
-  );
-}
+                Statement of
