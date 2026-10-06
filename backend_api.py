@@ -652,7 +652,14 @@ def get_bills(client_name: str, stage: str = "needs_review"):
     if not database:
         return []
     docs = database.collection("purchases").document(client_name.strip()).collection(stage).stream()
-    return [doc.to_dict() for doc in docs]
+    
+    bills = []
+    for doc in docs:
+        b_data = doc.to_dict()
+        if "file_preview_url" in b_data and b_data["file_preview_url"] and b_data["file_preview_url"].startswith("data:image"):
+            b_data["file_preview_url"] = "" 
+        bills.append(b_data)
+    return bills
 
 @app.post("/api/clients/{client_name}/bills")
 def save_bill(client_name: str, stage: str = "needs_review", bill: Dict[str, Any] = Body(...)):
