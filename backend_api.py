@@ -21,9 +21,16 @@ import uvicorn
 # Initialize FastAPI App
 app = FastAPI(title="Compliance4 Accounting Portal API", version="2.0.0")
 
+# 100% Secure CORS Configuration to Prevent Domain Blocking & net::ERR_FAILED
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "https://app.compliance4business.in",
+        "https://compliance4-portal.vercel.app",
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "*"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -517,7 +524,6 @@ async def push_bank_voucher_to_tally(payload: dict = Body(...)):
 def login(creds: LoginAuthRequest):
     clean_user = creds.username.strip().lower()
 
-    # Check Super Admin
     database = get_db()
     admin_doc = database.collection("system_config").document("admin_credentials").get() if database else None
     admin_data = admin_doc.to_dict() if admin_doc and admin_doc.exists else {
@@ -543,7 +549,6 @@ def login(creds: LoginAuthRequest):
             }
         }
 
-    # Query Staff / Client user from Firestore
     user_ref = database.collection("users").document(clean_user).get() if database else None
     if not user_ref or not user_ref.exists:
         raise HTTPException(status_code=401, detail="Invalid username or password")
@@ -604,6 +609,7 @@ def delete_client_profile(client_name: str):
     if database:
         database.collection("client_profiles").document(client_name.strip()).delete()
         database.collection("client_coa").document(client_name.strip()).delete()
+        database.collection("item_rules").document(client_name.strip()).delete()
     return {"status": "deleted"}
 
 @app.get("/api/clients/{client_name}/coa")
@@ -621,6 +627,23 @@ def save_client_coa(client_name: str, payload: Dict[str, Any] = Body(...)):
     if database:
         database.collection("client_coa").document(client_name.strip()).set({"ledgers": ledgers})
     return {"status": "success", "count": len(ledgers)}
+
+# --- NEW: 5.3.1 Item-Learning / Memorization Rules Persistence ---
+@app.get("/api/clients/{client_name}/item-rules")
+def get_item_rules(client_name: str):
+    database = get_db()
+    if not database:
+        return {}
+    doc = database.collection("item_rules").document(client_name.strip()).get()
+    return doc.to_dict().get("rules", {}) if doc.exists else {}
+
+@app.post("/api/clients/{client_name}/item-rules")
+def save_item_rules(client_name: str, payload: Dict[str, Any] = Body(...)):
+    database = get_db()
+    rules = payload.get("rules", {})
+    if database:
+        database.collection("item_rules").document(client_name.strip()).set({"rules": rules})
+    return {"status": "success", "count": len(rules)}
 
 # --- 5.4 Purchases & Invoice Workflow ---
 @app.get("/api/clients/{client_name}/bills")
