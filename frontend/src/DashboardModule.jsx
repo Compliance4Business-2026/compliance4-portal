@@ -828,3 +828,26 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
               Schedule III Classified by Client COA
             </span>
           </div>
+          <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex flex-col justify-between">
+            <div className="flex items-center justify-between pb-1 border-b border-slate-100">
+              <div>
+                <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
+                  <Activity className="w-4 h-4 text-indigo-600" /> Net Profit Trend Line
+                </h4>
+                <p className="text-[10px] text-slate-400">Bottom-Line Margin per Month</p>
+              </div>
+              <span className={`text-xs font-mono font-bold px-2.5 py-1 rounded ${
+                kpiData.netProfit >= 0 ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"
+              }`}>
+                {last6MonthsData.reduce((acc, m) => acc + m.netProfit, 0) >= 0 ? "+" : ""}
+                ₹{last6MonthsData.reduce((acc, m) => acc + m.netProfit, 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}
+              </span>
+            </div>
+            {renderLineChart(last6MonthsData, "netProfit", "#6366f1", "#6366f1")}
+          </div>
+        </div>
+
+      </div>
+    </div>
+  );
+}
