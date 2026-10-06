@@ -821,4 +821,10 @@ export default function DashboardModule({ activeClient = "Pansuria Confectionery
             <div className="flex items-center gap-2">
               <Scale className="w-4 h-4 text-slate-700" />
               <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
-                Statement of
+                Statement of Profit and Loss ({selectedPeriod === "Custom" ? `${customStartDate} to ${customEndDate}` : selectedPeriod})
+              </h3>
+            </div>
+            <span className="text-[11px] text-slate-400 font-medium">
+              Schedule III Classified by Client COA
+            </span>
+          </div>
