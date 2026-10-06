@@ -1086,8 +1086,27 @@ export default function PurchaseModule({ activeClient = "Pansuria Confectionery 
   };
 
   const handleDownloadExcel = () => {
-    handleDownloadAccountsPayableSupplierWise();
-    handleDownloadProfitAndLossCategoryWise();
+    if (!Array.isArray(approvedBills) || approvedBills.length === 0) {
+      notify("No approved invoices available for export.", "error");
+      return;
+    }
+
+    const headers = ["Vendor Name", "Invoice Number", "Ledger Allocation", "Total Amount (₹)"];
+    const rows = approvedBills.map(b => [
+      `"${(b.vendor_name || "").replace(/"/g, '""')}"`,
+      `"${(b.supplier_invoice_no || b.invoice_number || "").replace(/"/g, '""')}"`,
+      `"${(b.accounting_ledgers?.[0]?.ledger_name || "Purchase: General Goods").replace(/"/g, '""')}"`,
+      parseFloat(b.grand_total || 0)
+    ]);
+
+    const csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows.map(e => e.join(","))].join("\n");
+    const link = document.createElement("a");
+    link.href = encodeURI(csvContent);
+    link.download = `Approved_Invoices_${activeClient.replace(/\s+/g, "_")}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    notify("Exported Approved Invoices successfully!", "success");
   };
 
   const buildSingleXmlVoucher = (b) => {
