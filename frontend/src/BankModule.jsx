@@ -236,19 +236,22 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
     }
   });
 
-  // Bank Balances Map stored per account ledger name
-  const [bankBalancesMap, setBankBalancesMap] = useState(() => {
+  // Bank Opening Balances Map stored per account ledger name
+  const [bankOpeningBalances, setBankOpeningBalances] = useState(() => {
     try {
-      const saved = localStorage.getItem(`c4_bank_balances_map_${activeClient}`);
+      const saved = localStorage.getItem(`c4_bank_opening_balances_${activeClient}`);
       return saved ? JSON.parse(saved) : {};
     } catch {
       return {};
     }
   });
 
+  const [isEditingOpeningBalance, setIsEditingOpeningBalance] = useState(false);
+  const [tempOpeningBalanceInput, setTempOpeningBalanceInput] = useState("");
+
   useEffect(() => {
-    localStorage.setItem(`c4_bank_balances_map_${activeClient}`, JSON.stringify(bankBalancesMap));
-  }, [bankBalancesMap, activeClient]);
+    localStorage.setItem(`c4_bank_opening_balances_${activeClient}`, JSON.stringify(bankOpeningBalances));
+  }, [bankOpeningBalances, activeClient]);
 
   const availableBankLedgers = useMemo(() => {
     if (clientCoa && clientCoa.length > 0) {
@@ -277,12 +280,11 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
     }
   }, [availableBankLedgers]);
 
-  // LIVE BANK BALANCE (EXACT CLOSING BALANCE FROM STATEMENT LAST DATE FOR THIS BANK ACCOUNT)
+  // LIVE BANK BALANCE = Opening Balance +/- All Receipts/Payments for Selected Bank Account
   const currentBankBalance = useMemo(() => {
-    if (bankBalancesMap[selectedBankLedger] !== undefined) {
-      return bankBalancesMap[selectedBankLedger];
-    }
-    let balance = 0;
+    const opening = parseFloat(bankOpeningBalances[selectedBankLedger] || 0);
+    let balance = opening;
+    
     const bankTxns = [...transactions, ...approvedTransactions, ...pushedTransactions].filter(
       (t) => (t.bankLedger || selectedBankLedger) === selectedBankLedger
     );
@@ -292,19 +294,20 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
       else balance -= amt;
     });
     return balance;
-  }, [bankBalancesMap, transactions, approvedTransactions, pushedTransactions, selectedBankLedger]);
+  }, [bankOpeningBalances, transactions, approvedTransactions, pushedTransactions, selectedBankLedger]);
 
-  // --- FETCH BANK TRANSACTIONS & COA DIRECTLY FROM FIRESTORE ---
+  // --- FETCH BANK TRANSACTIONS, COA & PERSISTENT RULES FROM FIRESTORE / DRIVE ---
   useEffect(() => {
     let isMounted = true;
 
     async function loadCloudBankingData() {
       try {
-        const [cloudPending, cloudApproved, cloudPushed, coaData] = await Promise.all([
+        const [cloudPending, cloudApproved, cloudPushed, coaData, cloudRules] = await Promise.all([
           api.getBankTxns(activeClient, "pending").catch(() => null),
           api.getBankTxns(activeClient, "reconciled").catch(() => null),
           api.getBankTxns(activeClient, "pushed").catch(() => null),
-          api.getClientCoa(activeClient).catch(() => null)
+          api.getClientCoa(activeClient).catch(() => null),
+          api.getBankRules ? api.getBankRules(activeClient).catch(() => null) : Promise.resolve(null)
         ]);
 
         if (!isMounted) return;
@@ -324,6 +327,10 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
         if (Array.isArray(coaData) && coaData.length > 0) {
           setClientCoa(coaData);
           localStorage.setItem(`c4_coa_${activeClient}`, JSON.stringify(coaData));
+        }
+        if (cloudRules && typeof cloudRules === "object") {
+          setNarrativeRules(cloudRules);
+          localStorage.setItem(`c4_bank_rules_${activeClient}`, JSON.stringify(cloudRules));
         }
       } catch (err) {
         console.warn("Using offline fallback for banking:", err);
@@ -437,11 +444,9 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
     notify(`Exported ${bankFilteredApproved.length} approved transactions to CSV!`, "success");
   };
 
-  // ROBUST DATE FORMATTER TO ENSURE DD/MM/YYYY
   const formatDisplayDate = (rawDate) => {
     if (!rawDate) return "";
     const s = String(rawDate).trim();
-    // If it's already in DD/MM/YYYY or YYYY-MM-DD format
     if (s.includes("/")) {
       const parts = s.split(" ")[0].split("/");
       if (parts.length === 3) {
@@ -452,13 +457,11 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
       const parts = s.split(" ")[0].split("-");
       if (parts.length === 3) {
         if (parts[0].length === 4) {
-          // YYYY-MM-DD -> DD/MM/YYYY
           return `${parts[2].padStart(2, "0")}/${parts[1].padStart(2, "0")}/${parts[0]}`;
         }
         return `${parts[0].padStart(2, "0")}/${parts[1].padStart(2, "0")}/${parts[2]}`;
       }
     }
-    // Fallback Date object parser
     const d = new Date(rawDate);
     if (!isNaN(d.getTime())) {
       const day = String(d.getDate()).padStart(2, "0");
@@ -521,7 +524,6 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
           const balIdx = headers.findIndex((h) => h.includes("bal") || h.includes("balance"));
 
           const parsedRows = [];
-          let lastExtractedBalance = 0;
 
           const parseCleanAmount = (rawVal) => {
             if (rawVal === undefined || rawVal === null || rawVal === "") return 0;
@@ -556,11 +558,6 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
 
             let withdrawal = withIdx !== -1 ? parseCleanAmount(cells[withIdx]) : 0;
             let deposit = depIdx !== -1 ? parseCleanAmount(cells[depIdx]) : 0;
-            const rowBalance = balIdx !== -1 ? parseCleanAmount(cells[balIdx]) : 0;
-
-            if (rowBalance !== 0) {
-              lastExtractedBalance = rowBalance;
-            }
 
             if (withdrawal === 0 && deposit === 0) continue;
 
@@ -579,13 +576,6 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
               allocatedLedger: matched || (type === "Receipt" ? "Sales: Direct UPI Collection" : "Tea & Refreshment Expenses"),
               isAutoMatched: Boolean(matched)
             });
-          }
-
-          if (lastExtractedBalance !== 0) {
-            setBankBalancesMap(prev => ({
-              ...prev,
-              [selectedBankLedger]: lastExtractedBalance
-            }));
           }
 
           if (parsedRows.length === 0) {
@@ -623,13 +613,12 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
   const handleLedgerSelectAndAutoApprove = async (tx, newLedger) => {
     if (!newLedger) return;
 
+    let updatedRules = { ...narrativeRules };
     if (tx.narration && tx.narration.trim().length > 3) {
       const cleanPattern = tx.narration.trim().split(" ")[0].toLowerCase();
       if (cleanPattern.length >= 3) {
-        setNarrativeRules((prev) => ({
-          ...prev,
-          [cleanPattern]: newLedger
-        }));
+        updatedRules[cleanPattern] = newLedger;
+        setNarrativeRules(updatedRules);
       }
     }
 
@@ -647,7 +636,10 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
     try {
       await api.saveBankTxns(activeClient, "reconciled", [approvedTx]);
       await api.deleteBankTxn(activeClient, "pending", tx.id);
-      notify(`Assigned "${newLedger}" & auto-approved to Firestore!`, "success");
+      if (api.saveBankRules) {
+        await api.saveBankRules(activeClient, updatedRules).catch(() => null);
+      }
+      notify(`Assigned "${newLedger}" & auto-approved!`, "success");
     } catch (err) {
       console.error(err);
       notify(`Approved locally, cloud sync error: ${err.message}`, "info");
@@ -681,7 +673,7 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
     try {
       await api.saveBankTxns(activeClient, "pending", [tx]);
       await api.deleteBankTxn(activeClient, "reconciled", tx.id);
-      notify("Transaction reverted to Needs Review tab in Firestore.", "info");
+      notify("Transaction reverted to Needs Review tab.", "info");
     } catch (err) {
       console.error(err);
       notify("Reverted locally.", "info");
@@ -696,7 +688,7 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
     try {
       await api.saveBankTxns(activeClient, "reconciled", [approvedTx]);
       await api.deleteBankTxn(activeClient, "pending", tx.id);
-      notify("Transaction approved & moved to Firestore Approved queue!", "success");
+      notify("Transaction approved & moved to Approved queue!", "success");
     } catch (err) {
       console.error(err);
       notify("Approved locally.", "info");
@@ -709,7 +701,7 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
     );
     if (bankPending.length === 0) return;
 
-    const toApprove = bankPending.map((t) => ({ ...t, bankLedger: tx.bankLedger || selectedBankLedger, approvedAt: new Date().toLocaleString() }));
+    const toApprove = bankPending.map((t) => ({ ...t, bankLedger: t.bankLedger || selectedBankLedger, approvedAt: new Date().toLocaleString() }));
     const remainingPending = transactions.filter(
       (t) => (t.bankLedger || selectedBankLedger) !== selectedBankLedger
     );
@@ -723,7 +715,7 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
       for (const t of bankPending) {
         await api.deleteBankTxn(activeClient, "pending", t.id).catch(() => null);
       }
-      notify(`Approved all transactions for [${selectedBankLedger}] & synced!`, "success");
+      notify(`Approved all transactions for [${selectedBankLedger}]!`, "success");
     } catch (err) {
       console.error(err);
       notify("Approved locally.", "info");
@@ -764,10 +756,8 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
     notify("Transaction dismissed.", "info");
   };
 
-  // 100% TALLY-COMPLIANT SINGLE VOUCHER XML GENERATOR
   const buildSingleXmlVoucher = (tx) => {
     const rawDate = tx.date || "29/09/2026";
-    // Convert DD/MM/YYYY to YYYYMMDD for Tally
     const dateParts = rawDate.split("/");
     const tallyDate = dateParts.length === 3 ? `${dateParts[2]}${dateParts[1]}${dateParts[0]}` : "20260929";
     
@@ -791,7 +781,6 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
           <NARRATION>${narration} [Synced via Compliance4]</NARRATION>
           <ISINVOICE>No</ISINVOICE>
 
-          <!-- BANK LEDGER -->
           <ALLLEDGERENTRIES.LIST>
             <LEDGERNAME>${bankLedger}</LEDGERNAME>
             <ISDEEMEDPOSITIVE>${isReceipt ? "Yes" : "No"}</ISDEEMEDPOSITIVE>
@@ -801,7 +790,6 @@ export default function BankModule({ activeClient = "Pansuria Confectionery & Fo
             <AMOUNT>${isReceipt ? `-${amountVal}` : amountVal}</AMOUNT>
           </ALLLEDGERENTRIES.LIST>
 
-          <!-- ALLOCATED / COUNTER LEDGER -->
           <ALLLEDGERENTRIES.LIST>
             <LEDGERNAME>${allocatedLedger}</LEDGERNAME>
             <ISDEEMEDPOSITIVE>${isReceipt ? "No" : "Yes"}</ISDEEMEDPOSITIVE>
@@ -904,12 +892,9 @@ ${xmlVoucher}
       await api.saveBankTxns(activeClient, "pushed", [pushedRecord]).catch(() => null);
       await api.deleteBankTxn(activeClient, "reconciled", tx.id).catch(() => null);
 
-      notify(`Transaction #${tx.id} synced to Tally & recorded in Firestore!`, "success");
-    } catch (err) {
-      notify(
-        "Could not connect to Tally Prime on Port 9000. Please ensure Tally Prime is open with XML/ODBC enabled.",
-        "error"
-      );
+      notify(`Transaction #${tx.id} synced to Tally & recorded!`, "success");
+    } catch {
+      notify("Could not connect to Tally Prime on Port 9000. Please ensure Tally Prime is open with XML/ODBC enabled.", "error");
     }
   };
 
@@ -928,7 +913,7 @@ ${xmlVoucher}
         await pushVoucherToTallyXml(tx);
         successfullyPushed.push({ ...tx, pushedAt: new Date().toLocaleString() });
         pushedCount++;
-      } catch (err) {
+      } catch {
         break;
       }
     }
@@ -943,13 +928,10 @@ ${xmlVoucher}
         await api.deleteBankTxn(activeClient, "reconciled", pushed.id).catch(() => null);
       }
 
-      notify(`Pushed ${pushedCount} transactions for [${selectedBankLedger}] to Tally Prime!`, "success");
+      notify(`Pushed ${pushedCount} transactions to Tally Prime!`, "success");
       setBankSubTab("pushed");
     } else {
-      notify(
-        "Tally Prime is offline on Port 9000. No transactions were moved.",
-        "error"
-      );
+      notify("Tally Prime is offline on Port 9000. No transactions were moved.", "error");
     }
 
     setIsSyncing(false);
@@ -988,11 +970,7 @@ ${xmlVoucher}
       }
 
       if (!groups[monthYear]) {
-        groups[monthYear] = {
-          monthLabel: monthYear,
-          transactions: [],
-          totalAmount: 0
-        };
+        groups[monthYear] = { monthLabel: monthYear, transactions: [], totalAmount: 0 };
       }
 
       groups[monthYear].transactions.push(tx);
@@ -1046,19 +1024,57 @@ ${xmlVoucher}
                 ))}
               </select>
             </div>
-            <div className="border-l border-slate-200 pl-3 text-right">
-              <span className="block text-[9px] font-bold text-slate-400 uppercase leading-none">Live Balance</span>
-              <span className={`text-xs font-mono font-black ${currentBankBalance >= 0 ? "text-emerald-700" : "text-rose-600"}`}>
-                ₹{currentBankBalance.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-              </span>
+            
+            {/* OPENING BALANCE & LIVE BALANCE */}
+            <div className="border-l border-slate-200 pl-3 text-right flex flex-col justify-center">
+              <div className="flex items-center gap-1.5 justify-end">
+                <span className="text-[9px] font-bold text-slate-400 uppercase leading-none">Opening:</span>
+                {isEditingOpeningBalance ? (
+                  <div className="flex items-center gap-1">
+                    <input
+                      type="number"
+                      value={tempOpeningBalanceInput}
+                      onChange={(e) => setTempOpeningBalanceInput(e.target.value)}
+                      className="w-20 text-[11px] font-mono border border-slate-300 rounded px-1 py-0.5"
+                      placeholder="0.00"
+                    />
+                    <button
+                      onClick={() => {
+                        setBankOpeningBalances(prev => ({ ...prev, [selectedBankLedger]: parseFloat(tempOpeningBalanceInput) || 0 }));
+                        setIsEditingOpeningBalance(false);
+                        notify("Opening balance updated!", "success");
+                      }}
+                      className="bg-slate-900 text-white text-[10px] px-1.5 py-0.5 rounded"
+                    >
+                      Save
+                    </button>
+                  </div>
+                ) : (
+                  <span 
+                    onClick={() => {
+                      setTempOpeningBalanceInput(bankOpeningBalances[selectedBankLedger] || 0);
+                      setIsEditingOpeningBalance(true);
+                    }}
+                    className="text-[11px] font-mono font-bold text-slate-700 cursor-pointer hover:underline"
+                    title="Click to edit opening balance"
+                  >
+                    ₹{Number(bankOpeningBalances[selectedBankLedger] || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })} ✏️
+                  </span>
+                )}
+              </div>
+              <div className="mt-0.5">
+                <span className="text-[9px] font-bold text-slate-400 uppercase leading-none">Live Balance: </span>
+                <span className={`text-xs font-mono font-black ${currentBankBalance >= 0 ? "text-emerald-700" : "text-rose-600"}`}>
+                  ₹{currentBankBalance.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                </span>
+              </div>
             </div>
           </div>
 
           {approvedTransactions.filter(t => (t.bankLedger || selectedBankLedger) === selectedBankLedger).length > 0 && (
             <button
               onClick={handleDownloadApprovedExcel}
-              className="flex items-center gap-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 text-xs font-semibold px-3 py-2 rounded-lg transition"
-              title="Download CSV of all approved transactions"
+              className="flex items-center gap-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 text-xs font-semibold px-3 py-2 rounded-lg transition cursor-pointer"
             >
               <Download className="w-3.5 h-3.5" /> Export Approved (Excel)
             </button>
@@ -1066,19 +1082,16 @@ ${xmlVoucher}
 
           <button
             onClick={handleDownloadXML}
-            className="flex items-center gap-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 text-xs font-semibold px-3 py-2 rounded-lg transition border border-blue-200"
-            title="Download Tally-compliant XML import file"
+            className="flex items-center gap-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 text-xs font-semibold px-3 py-2 rounded-lg transition border border-blue-200 cursor-pointer"
           >
             <FileCode className="w-3.5 h-3.5" /> Download Tally XML
           </button>
 
           <button
             onClick={handleDownloadTemplate}
-            className="flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold px-3.5 py-2 rounded-lg transition"
-            title="Download CSV Statement Template"
+            className="flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold px-3.5 py-2 rounded-lg transition cursor-pointer"
           >
-            <Download className="w-3.5 h-3.5" />
-            Download Template
+            <Download className="w-3.5 h-3.5" /> Download Template
           </button>
 
           <input
@@ -1092,7 +1105,7 @@ ${xmlVoucher}
           <button
             onClick={() => fileInputRef.current?.click()}
             disabled={isUploading}
-            className="flex items-center gap-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold px-4 py-2 rounded-lg transition shadow-xs disabled:opacity-50"
+            className="flex items-center gap-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold px-4 py-2 rounded-lg transition shadow-xs disabled:opacity-50 cursor-pointer"
           >
             <Upload className="w-3.5 h-3.5" />
             {isUploading ? "Processing..." : "Upload Bank Statement"}
@@ -1105,54 +1118,42 @@ ${xmlVoucher}
         <div className="flex items-center gap-6">
           <button
             onClick={() => setBankSubTab("needs_review")}
-            className={`pb-3 text-xs font-bold transition flex items-center gap-2 border-b-2 ${
+            className={`pb-3 text-xs font-bold transition flex items-center gap-2 border-b-2 cursor-pointer ${
               bankSubTab === "needs_review"
                 ? "border-slate-900 text-slate-900"
                 : "border-transparent text-slate-400 hover:text-slate-600"
             }`}
           >
             Needs Review
-            <span
-              className={`px-1.5 py-0.5 rounded-full text-[10px] ${
-                bankSubTab === "needs_review" ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600"
-              }`}
-            >
+            <span className={`px-1.5 py-0.5 rounded-full text-[10px] ${bankSubTab === "needs_review" ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600"}`}>
               {transactions.filter(t => (t.bankLedger || selectedBankLedger) === selectedBankLedger).length}
             </span>
           </button>
 
           <button
             onClick={() => setBankSubTab("approved")}
-            className={`pb-3 text-xs font-bold transition flex items-center gap-2 border-b-2 ${
+            className={`pb-3 text-xs font-bold transition flex items-center gap-2 border-b-2 cursor-pointer ${
               bankSubTab === "approved"
                 ? "border-slate-900 text-slate-900"
                 : "border-transparent text-slate-400 hover:text-slate-600"
             }`}
           >
             Approved Transactions
-            <span
-              className={`px-1.5 py-0.5 rounded-full text-[10px] ${
-                bankSubTab === "approved" ? "bg-emerald-600 text-white" : "bg-slate-100 text-slate-600"
-              }`}
-            >
+            <span className={`px-1.5 py-0.5 rounded-full text-[10px] ${bankSubTab === "approved" ? "bg-emerald-600 text-white" : "bg-slate-100 text-slate-600"}`}>
               {approvedTransactions.filter(t => (t.bankLedger || selectedBankLedger) === selectedBankLedger).length}
             </span>
           </button>
 
           <button
             onClick={() => setBankSubTab("pushed")}
-            className={`pb-3 text-xs font-bold transition flex items-center gap-2 border-b-2 ${
+            className={`pb-3 text-xs font-bold transition flex items-center gap-2 border-b-2 cursor-pointer ${
               bankSubTab === "pushed"
                 ? "border-slate-900 text-slate-900"
                 : "border-transparent text-slate-400 hover:text-slate-600"
             }`}
           >
             Pushed to Tally
-            <span
-              className={`px-1.5 py-0.5 rounded-full text-[10px] ${
-                bankSubTab === "pushed" ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-600"
-              }`}
-            >
+            <span className={`px-1.5 py-0.5 rounded-full text-[10px] ${bankSubTab === "pushed" ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-600"}`}>
               {pushedTransactions.filter(t => (t.bankLedger || selectedBankLedger) === selectedBankLedger).length}
             </span>
           </button>
@@ -1164,17 +1165,15 @@ ${xmlVoucher}
             <>
               <button
                 onClick={handleDiscardAll}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-md text-xs font-semibold transition"
-                title="Discard all pending transactions for this bank"
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-md text-xs font-semibold transition cursor-pointer"
               >
                 <Trash2 className="w-3.5 h-3.5" /> Discard All
               </button>
-
               <button
                 onClick={handleApproveAll}
-                className="flex items-center gap-1.5 px-3.5 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-md text-xs font-semibold shadow-xs transition"
+                className="flex items-center gap-1.5 px-3.5 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-md text-xs font-semibold shadow-xs transition cursor-pointer"
               >
-                <Check className="w-3.5 h-3.5" /> Approve All ({transactions.filter(t => (t.bankLedger || selectedBankLedger) === selectedBankLedger).length})
+                <Check className="w-3.5 h-3.5" /> Approve All
               </button>
             </>
           )}
@@ -1183,26 +1182,24 @@ ${xmlVoucher}
             <>
               <button
                 onClick={handleDiscardAll}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-md text-xs font-semibold transition"
-                title="Discard all approved transactions for this bank"
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-md text-xs font-semibold transition cursor-pointer"
               >
                 <Trash2 className="w-3.5 h-3.5" /> Discard All
               </button>
-
               <button
                 onClick={handlePushAllApproved}
                 disabled={isSyncing}
-                className="flex items-center gap-1.5 px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-md text-xs font-bold shadow-xs transition disabled:opacity-50"
+                className="flex items-center gap-1.5 px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-md text-xs font-bold shadow-xs transition disabled:opacity-50 cursor-pointer"
               >
                 <Send className="w-3.5 h-3.5" />
-                {isSyncing ? "Pushing to Tally..." : `Push All to Tally (${approvedTransactions.filter(t => (t.bankLedger || selectedBankLedger) === selectedBankLedger).length})`}
+                {isSyncing ? "Pushing to Tally..." : "Push All to Tally"}
               </button>
             </>
           )}
         </div>
       </div>
 
-      {/* TABLE VIEW WITH EXACT COLUMN SEQUENCE REQUESTED */}
+      {/* TABLE VIEW */}
       <div className="flex-1 p-8 overflow-y-auto">
         {bankSubTab !== "pushed" && (
           <>
@@ -1213,7 +1210,7 @@ ${xmlVoucher}
                   No transactions in {bankSubTab === "needs_review" ? "Needs Review" : "Approved"} for [{selectedBankLedger}]
                 </p>
                 <p className="text-xs text-slate-400 mt-1 max-w-sm">
-                  Upload bank statements in <strong>Excel (.xlsx, .xls)</strong> or <strong>CSV</strong> format while this account is selected.
+                  Upload bank statements in <strong>Excel</strong> or <strong>CSV</strong> format while this account is selected.
                 </p>
               </div>
             ) : (
@@ -1232,18 +1229,11 @@ ${xmlVoucher}
                   <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
                     {displayedList.map((tx) => (
                       <tr key={tx.id} className="hover:bg-slate-50/70 transition">
-                        {/* 1) Date */}
-                        <td className="py-3 px-4 whitespace-nowrap text-slate-900 font-mono font-bold">
-                          {tx.date}
-                        </td>
-
-                        {/* 2) Full Description (Uncropped) */}
+                        <td className="py-3 px-4 whitespace-nowrap text-slate-900 font-mono font-bold">{tx.date}</td>
                         <td className="py-3 px-4 text-slate-900 font-medium">
                           <div className="break-words whitespace-normal leading-relaxed">{tx.narration}</div>
                           <div className="font-mono text-[10px] text-slate-400 mt-0.5">Ref: {tx.refNo}</div>
                         </td>
-
-                        {/* 3) Receipt / Payment */}
                         <td className="py-3 px-4 whitespace-nowrap">
                           {tx.type === "Receipt" ? (
                             <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
@@ -1255,13 +1245,9 @@ ${xmlVoucher}
                             </span>
                           )}
                         </td>
-
-                        {/* 4) Amount */}
                         <td className="py-3 px-4 text-right whitespace-nowrap font-mono font-bold text-slate-900">
                           ₹{Number(tx.amount || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                         </td>
-
-                        {/* 5) Ledger Allocation */}
                         <td className="py-3 px-4 relative overflow-visible">
                           {bankSubTab === "needs_review" ? (
                             <div className="flex items-center gap-1.5">
@@ -1291,44 +1277,24 @@ ${xmlVoucher}
                                   placeholder="Type to re-allocate..."
                                 />
                               </div>
-                              <button
-                                onClick={() => setEditingApprovedId(null)}
-                                className="text-slate-400 hover:text-slate-600 text-xs px-1"
-                              >
-                                Cancel
-                              </button>
+                              <button onClick={() => setEditingApprovedId(null)} className="text-slate-400 hover:text-slate-600 text-xs px-1">Cancel</button>
                             </div>
                           ) : (
                             <div className="flex items-center gap-2">
-                              <span className="bg-slate-100 text-slate-800 px-2.5 py-1 rounded text-xs font-semibold">
-                                {tx.allocatedLedger}
-                              </span>
-                              <button
-                                onClick={() => setEditingApprovedId(tx.id)}
-                                className="p-1 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition"
-                                title="Change Assigned Ledger"
-                              >
+                              <span className="bg-slate-100 text-slate-800 px-2.5 py-1 rounded text-xs font-semibold">{tx.allocatedLedger}</span>
+                              <button onClick={() => setEditingApprovedId(tx.id)} className="p-1 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition cursor-pointer" title="Change Assigned Ledger">
                                 <Edit2 className="w-3.5 h-3.5" />
                               </button>
                             </div>
                           )}
                         </td>
-
-                        {/* 6) Action */}
                         <td className="py-3 px-4 text-center whitespace-nowrap">
                           {bankSubTab === "needs_review" && (
                             <div className="inline-flex items-center gap-1.5">
-                              <button
-                                onClick={() => handleApproveSingle(tx)}
-                                className="px-3 py-1 bg-slate-900 hover:bg-slate-800 text-white rounded font-semibold text-[11px] shadow-xs transition"
-                              >
+                              <button onClick={() => handleApproveSingle(tx)} className="px-3 py-1 bg-slate-900 hover:bg-slate-800 text-white rounded font-semibold text-[11px] shadow-xs transition cursor-pointer">
                                 Approve
                               </button>
-                              <button
-                                onClick={() => handleDeleteNeedsReview(tx.id)}
-                                className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded transition"
-                                title="Dismiss Transaction"
-                              >
+                              <button onClick={() => handleDeleteNeedsReview(tx.id)} className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded transition cursor-pointer" title="Dismiss">
                                 <Trash2 className="w-3.5 h-3.5" />
                               </button>
                             </div>
@@ -1336,24 +1302,13 @@ ${xmlVoucher}
 
                           {bankSubTab === "approved" && (
                             <div className="inline-flex items-center gap-1.5">
-                              <button
-                                onClick={() => handlePushSingle(tx)}
-                                className="inline-flex items-center gap-1 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-[11px] px-3 py-1 rounded shadow-xs transition"
-                              >
+                              <button onClick={() => handlePushSingle(tx)} className="inline-flex items-center gap-1 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-[11px] px-3 py-1 rounded shadow-xs transition cursor-pointer">
                                 <Send className="w-3.5 h-3.5" /> Push
                               </button>
-                              <button
-                                onClick={() => handleRevertToReview(tx)}
-                                className="p-1 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition"
-                                title="Move back to Needs Review"
-                              >
+                              <button onClick={() => handleRevertToReview(tx)} className="p-1 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition cursor-pointer" title="Move back to Needs Review">
                                 <RotateCcw className="w-3.5 h-3.5" />
                               </button>
-                              <button
-                                onClick={() => handleDeleteApproved(tx.id)}
-                                className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded transition"
-                                title="Remove from Approved"
-                              >
+                              <button onClick={() => handleDeleteApproved(tx.id)} className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded transition cursor-pointer" title="Remove">
                                 <Trash2 className="w-3.5 h-3.5" />
                               </button>
                             </div>
@@ -1375,26 +1330,15 @@ ${xmlVoucher}
               <div className="bg-white border border-slate-200 rounded-xl shadow-xs p-16 text-center">
                 <FileSpreadsheet className="w-8 h-8 text-blue-300 mx-auto mb-2" />
                 <p className="text-sm font-semibold text-slate-700">No transactions pushed to Tally for [{selectedBankLedger}] yet</p>
-                <p className="text-xs text-slate-400 mt-0.5">
-                  Transactions pushed to Tally Prime will be organized into monthly folders here.
-                </p>
               </div>
             ) : (
               groupedPushedTransactions.map((group) => {
                 const isExpanded = expandedFolders[group.monthLabel] !== false;
-
                 return (
                   <div key={group.monthLabel} className="bg-white border border-slate-200 rounded-xl shadow-xs overflow-hidden">
-                    <div
-                      onClick={() => toggleFolder(group.monthLabel)}
-                      className="px-6 py-4 bg-slate-50/80 hover:bg-slate-100/80 border-b border-slate-200 flex items-center justify-between cursor-pointer transition select-none"
-                    >
+                    <div onClick={() => toggleFolder(group.monthLabel)} className="px-6 py-4 bg-slate-50/80 hover:bg-slate-100/80 border-b border-slate-200 flex items-center justify-between cursor-pointer transition select-none">
                       <div className="flex items-center gap-3">
-                        {isExpanded ? (
-                          <FolderOpen className="w-5 h-5 text-indigo-600" />
-                        ) : (
-                          <Folder className="w-5 h-5 text-slate-400" />
-                        )}
+                        {isExpanded ? <FolderOpen className="w-5 h-5 text-indigo-600" /> : <Folder className="w-5 h-5 text-slate-400" />}
                         <div>
                           <h4 className="text-xs font-bold text-slate-900 tracking-wide uppercase flex items-center gap-2">
                             {group.monthLabel}
@@ -1402,21 +1346,12 @@ ${xmlVoucher}
                               {group.transactions.length} entries
                             </span>
                           </h4>
-                          <p className="text-[11px] text-slate-500 mt-0.5">
-                            Bank activity for {group.monthLabel}
-                          </p>
                         </div>
                       </div>
-
                       <div className="flex items-center gap-4">
                         <div className="text-right">
                           <span className="text-[10px] uppercase font-bold text-slate-400">Total Volume</span>
-                          <p className="text-sm font-black font-mono text-slate-900">
-                            ₹{Number(group.totalAmount || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                          </p>
-                        </div>
-                        <div className="p-1 rounded bg-white border border-slate-200 text-slate-500">
-                          {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                          <p className="text-sm font-black font-mono text-slate-900">₹{Number(group.totalAmount || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</p>
                         </div>
                       </div>
                     </div>
@@ -1429,37 +1364,27 @@ ${xmlVoucher}
                             <th className="px-6 py-3">Full Description</th>
                             <th className="px-6 py-3">Type</th>
                             <th className="px-6 py-3 font-mono text-right">Amount (₹)</th>
-                            <th className="px-6 py-3">Allocated Ledger (COA)</th>
+                            <th className="px-6 py-3">Allocated Ledger</th>
                             <th className="px-6 py-3 text-right">Status</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100">
                           {group.transactions.map((tx, idx) => (
                             <tr key={tx.id || idx} className="hover:bg-slate-50/60 transition">
-                              <td className="px-6 py-3.5 font-mono text-slate-900 font-bold whitespace-nowrap">
-                                {tx.date}
-                              </td>
+                              <td className="px-6 py-3.5 font-mono text-slate-900 font-bold whitespace-nowrap">{tx.date}</td>
                               <td className="px-6 py-3.5 text-slate-900">
                                 <div className="break-words whitespace-normal leading-relaxed">{tx.narration}</div>
                                 <div className="font-mono text-[10px] text-slate-400 mt-0.5">Ref: {tx.refNo}</div>
                               </td>
                               <td className="px-6 py-3.5 whitespace-nowrap">
                                 {tx.type === "Receipt" ? (
-                                  <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
-                                    <ArrowDownLeft className="w-3 h-3 text-emerald-600" /> Receipt
-                                  </span>
+                                  <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">Receipt</span>
                                 ) : (
-                                  <span className="inline-flex items-center gap-1 text-[11px] font-bold text-rose-700 bg-rose-50 px-2 py-0.5 rounded border border-rose-200">
-                                    <ArrowUpRight className="w-3 h-3 text-rose-600" /> Payment
-                                  </span>
+                                  <span className="inline-flex items-center gap-1 text-[11px] font-bold text-rose-700 bg-rose-50 px-2 py-0.5 rounded border border-rose-200">Payment</span>
                                 )}
                               </td>
-                              <td className="px-6 py-3.5 font-mono font-bold text-slate-800 text-right">
-                                ₹{Number(tx.amount || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                              </td>
-                              <td className="px-6 py-3.5 font-semibold text-indigo-900">
-                                {tx.allocatedLedger}
-                              </td>
+                              <td className="px-6 py-3.5 font-mono font-bold text-slate-800 text-right">₹{Number(tx.amount || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
+                              <td className="px-6 py-3.5 font-semibold text-indigo-900">{tx.allocatedLedger}</td>
                               <td className="px-6 py-3.5 text-right">
                                 <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded">
                                   <Check className="w-3 h-3" /> In Tally
@@ -1479,16 +1404,8 @@ ${xmlVoucher}
       </div>
 
       {notification && (
-        <div
-          className={`fixed bottom-6 right-6 px-4 py-2.5 rounded-lg text-white text-xs font-semibold flex items-center gap-2 shadow-lg transition-all z-50 ${
-            notification.type === "error" ? "bg-rose-600" : "bg-slate-900"
-          }`}
-        >
-          {notification.type === "error" ? (
-            <AlertCircle className="w-4 h-4" />
-          ) : (
-            <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-          )}
+        <div className={`fixed bottom-6 right-6 px-4 py-2.5 rounded-lg text-white text-xs font-semibold flex items-center gap-2 shadow-lg transition-all z-50 ${notification.type === "error" ? "bg-rose-600" : "bg-slate-900"}`}>
+          {notification.type === "error" ? <AlertCircle className="w-4 h-4" /> : <CheckCircle2 className="w-4 h-4 text-emerald-400" />}
           {notification.msg}
         </div>
       )}
