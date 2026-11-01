@@ -60,7 +60,6 @@ def get_storage():
             _storage_client = None
     return _storage_client
 
-# Local or Cloud Storage configuration for uploaded files
 UPLOAD_DIR = "/tmp/compliance4_uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 STORAGE_BUCKET_NAME = os.getenv("STORAGE_BUCKET_NAME", "")
@@ -99,7 +98,6 @@ async def extract_invoice(
     file_extension = os.path.splitext(file.filename)[1] or ".pdf"
     unique_filename = f"inv_{int(time.time() * 1000)}_{os.urandom(4).hex()}{file_extension}"
 
-    # 1. Save file permanently to server storage / GCS bucket
     file_url = ""
     try:
         s_client = get_storage()
@@ -120,20 +118,19 @@ async def extract_invoice(
             f.write(file_bytes)
         file_url = f"/api/files/{unique_filename}"
 
-    # 2. Extract data via Gemini AI with structured invoice breakdown and smart two-tier resolution
     prompt = """
     You are an expert accountant processing purchase bills and supplier invoices. Carefully examine the image layout.
-    1. VENDOR NAME: Find the main business/supplier name printed at the top center or header (e.g., 'SHREE CHAMUNDA VEGETABLE & FRUIT SUPPLIERS'). Ignore file names.
-    2. INVOICE NUMBER: Look for bill no, invoice no, or reference code (e.g., 'GB/2504').
-    3. ITEMS & TOTALS: Extract every line item with its description, quantity, rate, and amount. Sum up to the correct grand total.
+    1. VENDOR NAME: Find the main business/supplier name printed at the top center or header.
+    2. INVOICE NUMBER: Look for bill no, invoice no, or reference code.
+    3. ITEMS & TOTALS: Extract every line item with its description, quantity, rate, and amount.
     
     Return ONLY a valid raw JSON object without markdown or code fences:
     {
       "vendor_name": "String",
-      "vendor_gstin": "String (15-char GSTIN if available, else '')",
+      "vendor_gstin": "String",
       "invoice_number": "String",
       "invoice_date": "YYYY-MM-DD",
-      "place_of_supply": "String (e.g. Gujarat)",
+      "place_of_supply": "String",
       "taxable_amount": Float,
       "cgst": Float,
       "sgst": Float,
@@ -176,41 +173,35 @@ async def extract_invoice(
                 img = Image.open(io.BytesIO(file_bytes))
                 if img.mode in ("RGBA", "P"):
                     img = img.convert("RGB")
-                
                 max_width = 1200
                 if img.width > max_width:
                     ratio = max_width / float(img.width)
                     new_height = int(float(img.height) * ratio)
                     img = img.resize((max_width, new_height), Image.Resampling.LANCZOS)
-                
                 output_io = io.BytesIO()
                 img.save(output_io, format="JPEG", quality=80)
                 compressed_bytes = output_io.getvalue()
                 comp_mime = "image/jpeg"
 
             extracted_data = call_gemini(compressed_bytes, comp_mime)
-
             if not extracted_data.get("vendor_name") or extracted_data.get("vendor_name") in ["", "Unknown"]:
-                raise ValueError("Low-res extraction missed vendor name, triggering high-res fallback.")
-
+                raise ValueError("Low-res extraction missed vendor name.")
         except Exception as low_res_err:
-            print(f"Low-res extraction attempt failed or insufficient, falling back to original HD: {low_res_err}")
+            print(f"Fallback to HD: {low_res_err}")
             extracted_data = call_gemini(file_bytes, mime_type)
 
         extracted_data["id"] = f"inv_{int(datetime.now().timestamp() * 1000)}"
         extracted_data["voucher_type"] = "Purchase"
         extracted_data["supplier_invoice_no"] = extracted_data.get("invoice_number", "")
         extracted_data["bill_date"] = extracted_data.get("invoice_date", datetime.now().strftime("%Y-%m-%d"))
-        extracted_data["file_preview_url"] = file_url  # Permanent file reference URL
+        extracted_data["file_preview_url"] = file_url
 
         return extracted_data
-
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Gemini invoice extraction failed: {str(e)}")
 
 @app.get("/api/files/{filename}")
 async def serve_uploaded_file(filename: str):
-    """Serve locally stored invoice files permanently."""
     file_path = os.path.join(UPLOAD_DIR, filename)
     if os.path.exists(file_path):
         return FileResponse(file_path)
@@ -519,11 +510,9 @@ async def push_bank_voucher_to_tally(payload: dict = Body(...)):
 # ROUTE 5: FIRESTORE DATA PERSISTENCE & MULTI-TENANT SYNC
 # ==============================================================================
 
-# --- 5.1 Central Authentication ---
 @app.post("/api/auth/login")
 def login(creds: LoginAuthRequest):
     clean_user = creds.username.strip().lower()
-
     database = get_db()
     admin_doc = database.collection("system_config").document("admin_credentials").get() if database else None
     admin_data = admin_doc.to_dict() if admin_doc and admin_doc.exists else {
@@ -539,29 +528,17 @@ def login(creds: LoginAuthRequest):
             "fullName": admin_data.get("fullName", "Super Administrator"),
             "role": "admin",
             "allowedClients": "ALL",
-            "permissions": {
-                "dashboard": "edit", "sales": "edit", "purchases": "edit",
-                "otherExpenses": "edit", "banking": "edit", "settings": "edit"
-            },
-            "salesSubPerms": {
-                "allowNormal": True, "allowPos": True,
-                "allowedDocTypes": ["Tax Invoice", "Bill of Supply", "Export Invoice"]
-            }
+            "permissions": {"dashboard": "edit", "sales": "edit", "purchases": "edit", "otherExpenses": "edit", "banking": "edit", "settings": "edit"}
         }
 
     user_ref = database.collection("users").document(clean_user).get() if database else None
     if not user_ref or not user_ref.exists:
         raise HTTPException(status_code=401, detail="Invalid username or password")
-
     user_data = user_ref.to_dict()
     if user_data.get("password") != creds.password:
         raise HTTPException(status_code=401, detail="Invalid username or password")
-    if not user_data.get("isActive", True):
-        raise HTTPException(status_code=403, detail="Account is deactivated")
-
     return user_data
 
-# --- 5.2 User Access Management ---
 @app.get("/api/users")
 def get_users():
     database = get_db()
@@ -587,7 +564,7 @@ def delete_user(username: str):
         database.collection("users").document(username.strip().lower()).delete()
     return {"status": "deleted"}
 
-# --- 5.3 Client Entities & COA ---
+# --- Client Entities & COAC (Supports both /api/clients and /api/clients/{name}) ---
 @app.get("/api/clients")
 def get_clients():
     database = get_db()
@@ -596,12 +573,17 @@ def get_clients():
     docs = database.collection("client_profiles").stream()
     return {doc.id: doc.to_dict() for doc in docs}
 
+@app.post("/api/clients")
 @app.post("/api/clients/{client_name}")
-def save_client_profile(client_name: str, profile: Dict[str, Any] = Body(...)):
+def save_client_profile(profile: Dict[str, Any] = Body(...), client_name: Optional[str] = None):
     database = get_db()
+    target_name = client_name or profile.get("name") or profile.get("client_name")
+    if not target_name:
+        raise HTTPException(status_code=400, detail="Client name is required")
+        
     if database:
-        database.collection("client_profiles").document(client_name.strip()).set(profile)
-    return {"status": "success"}
+        database.collection("client_profiles").document(target_name.strip()).set(profile)
+    return {"status": "success", "client": target_name}
 
 @app.delete("/api/clients/{client_name}")
 def delete_client_profile(client_name: str):
@@ -628,7 +610,6 @@ def save_client_coa(client_name: str, payload: Dict[str, Any] = Body(...)):
         database.collection("client_coa").document(client_name.strip()).set({"ledgers": ledgers})
     return {"status": "success", "count": len(ledgers)}
 
-# --- NEW: 5.3.1 Item-Learning / Memorization Rules Persistence ---
 @app.get("/api/clients/{client_name}/item-rules")
 def get_item_rules(client_name: str):
     database = get_db()
@@ -645,14 +626,13 @@ def save_item_rules(client_name: str, payload: Dict[str, Any] = Body(...)):
         database.collection("item_rules").document(client_name.strip()).set({"rules": rules})
     return {"status": "success", "count": len(rules)}
 
-# --- 5.4 Purchases & Invoice Workflow ---
+# --- Purchases & Invoices ---
 @app.get("/api/clients/{client_name}/bills")
 def get_bills(client_name: str, stage: str = "needs_review"):
     database = get_db()
     if not database:
         return []
     docs = database.collection("purchases").document(client_name.strip()).collection(stage).stream()
-    
     bills = []
     for doc in docs:
         b_data = doc.to_dict()
@@ -676,7 +656,7 @@ def delete_bill(client_name: str, stage: str, bill_id: str):
         database.collection("purchases").document(client_name.strip()).collection(stage).document(str(bill_id)).delete()
     return {"status": "deleted"}
 
-# --- 5.5 Banking & Reconciliation Persistence ---
+# --- Banking & Reconciliation Persistence ---
 @app.get("/api/clients/{client_name}/bank-txns")
 def get_bank_transactions(client_name: str, status: str = "pending"):
     database = get_db()
@@ -705,7 +685,24 @@ def delete_bank_transaction(client_name: str, status: str, txn_id: str):
         database.collection("banking").document(client_name.strip()).collection(status).document(str(txn_id)).delete()
     return {"status": "deleted"}
 
-# --- 5.6 Sales & POS Module Persistence ---
+# --- Persistent Bank Rules / Learning ---
+@app.get("/api/clients/{client_name}/bank-rules")
+def get_bank_rules(client_name: str):
+    database = get_db()
+    if not database:
+        return {}
+    doc = database.collection("bank_rules").document(client_name.strip()).get()
+    return doc.to_dict().get("rules", {}) if doc.exists else {}
+
+@app.post("/api/clients/{client_name}/bank-rules")
+def save_bank_rules(client_name: str, payload: Dict[str, Any] = Body(...)):
+    database = get_db()
+    rules = payload.get("rules", {})
+    if database:
+        database.collection("bank_rules").document(client_name.strip()).set({"rules": rules})
+    return {"status": "success", "count": len(rules)}
+
+# --- Sales & POS Module Persistence ---
 @app.get("/api/clients/{client_name}/sales")
 def get_sales_records(client_name: str, status: str = "approved"):
     database = get_db()
@@ -739,7 +736,7 @@ def delete_sales_record(client_name: str, status: str, record_id: str):
         database.collection("sales").document(client_name.strip()).collection(status).document(str(record_id)).delete()
     return {"status": "deleted"}
 
-# --- 5.7 Other Expenses Module Persistence ---
+# --- Other Expenses Module Persistence ---
 @app.get("/api/clients/{client_name}/expenses")
 def get_expense_records(client_name: str, status: str = "approved"):
     database = get_db()
@@ -773,7 +770,7 @@ def delete_expense_record(client_name: str, status: str, expense_id: str):
         database.collection("other_expenses").document(client_name.strip()).collection(status).document(str(expense_id)).delete()
     return {"status": "deleted"}
 
-# --- 5.8 Bulk Seeder (Browser localStorage to Firestore) ---
+# --- Bulk Seeder (Browser localStorage to Firestore) ---
 @app.post("/api/system/seed-from-backup")
 def seed_from_backup(payload: Dict[str, Any] = Body(...)):
     database = get_db()
